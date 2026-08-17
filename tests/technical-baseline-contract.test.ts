@@ -4,7 +4,7 @@ import {
   TECHNICAL_BASELINE_COLUMNS, booleanCell, exactContractValues, normalizeIdentity,
   numericCell, reconcileRows, rowFromCells, rowIdentities, sourceRow24, validateHeaders,
 } from "../lib/technical-baseline-contract.js";
-import { allContractValues, hostOnlyRow, productOnTwoPlatforms } from "./technical-baseline-fixtures.js";
+import { allContractValues, hostOnlyRow, productAcrossTwoReleases, productOnTwoPlatforms } from "./technical-baseline-fixtures.js";
 
 test("retains the exact 24-column contract, including # and every Notes column", () => {
   const row = sourceRow24(allContractValues as Record<string, string>, 2);
@@ -28,6 +28,14 @@ test("normalizes identities without conflating distinct deployments", () => {
   assert.equal(first.release, second.release);
   assert.equal(first.product, second.product);
   assert.notEqual(first.deployment, second.deployment);
+});
+
+test("retains one canonical product identity while distinguishing its release occurrences", () => {
+  const prior = rowIdentities(productAcrossTwoReleases[0]);
+  const current = rowIdentities(productAcrossTwoReleases[1]);
+  assert.equal(prior.product, current.product);
+  assert.notEqual(prior.release, current.release);
+  assert.notEqual(prior.deployment, current.deployment);
 });
 
 test("host-only rows remain valid source occurrences", () => {
