@@ -1,0 +1,3 @@
+CREATE TABLE `source_occurrence_review` (`id` text PRIMARY KEY NOT NULL, `program_id` text NOT NULL REFERENCES `program`(`id`), `release_name` text NOT NULL, `source_key` text NOT NULL, `status` text DEFAULT 'not_reviewed' NOT NULL, `reviewed_at` text, `note` text, `created_at` text NOT NULL, `updated_at` text NOT NULL, CONSTRAINT `source_occurrence_review_status` CHECK (`status` IN ('not_reviewed','reviewed','follow_up')));
+CREATE UNIQUE INDEX `source_occurrence_review_identity_uq` ON `source_occurrence_review` (`program_id`,`release_name`,`source_key`);
+CREATE INDEX `source_occurrence_review_status_ix` ON `source_occurrence_review` (`program_id`,`status`,`reviewed_at`);

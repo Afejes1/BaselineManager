@@ -1,7 +1,7 @@
 import { booleanCell, numericCell, type TechnicalBaselineColumn, type TechnicalBaselineRow } from "./technical-baseline-contract.js";
 
 export type QualityLevel = "ready" | "review" | "issue";
-export type QualityLabel = "Complete" | "Review" | "Blocking";
+export type QualityLabel = "Pass" | "Warning" | "Blocking";
 export type QualityIssue = {
   severity: "review" | "blocking";
   field: TechnicalBaselineColumn;
@@ -24,7 +24,7 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   if (hasProduct && !present(row.LongName)) add("review", "LongName", "Add the canonical product name; ShortName is treated as an alias.");
   if ((hasProduct || hasHost) && !present(row.Tier)) add("review", "Tier", "Assign the configuration tier.");
   if ((hasProduct || hasHost) && !present(row.Resource)) add("review", "Resource", "Assign the platform or resource beneath the tier.");
-  if (present(row["HW_Storage (GB)"]) && !present(row.HW_Storage_Type)) add("review", "HW_Storage_Type", "Storage capacity is reported, but its storage type is blank.");
+  if (present(row["HW_Storage (GB)"]) && !present(row.HW_Storage_Type)) add("review", "HW_Storage_Type", `Storage capacity is ${String(row["HW_Storage (GB)"]).trim()} GB, but Storage type is blank.`);
   if (booleanCell(row.Containerized) === true && !present(row["Container Technology"])) add("review", "Container Technology", "Identify the technology used by this containerized deployment.");
 
   for (const field of ["HW_Storage (GB)", "HW_CPU_CORES", "HW_RAM (GB)"] as const) {
@@ -32,6 +32,6 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   }
 
   const level: QualityLevel = issues.some((issue) => issue.severity === "blocking") ? "issue" : issues.length ? "review" : "ready";
-  const label: QualityLabel = level === "ready" ? "Complete" : level === "review" ? "Review" : "Blocking";
+  const label: QualityLabel = level === "ready" ? "Pass" : level === "review" ? "Warning" : "Blocking";
   return { level, label, issues };
 }

@@ -63,8 +63,25 @@ export const sourceRows24 = sqliteTable("source_row_24", {
   releaseId: text("release_id").references(() => releases.id), baselineId: text("baseline_id").references(() => configurationBaselines.id), configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id), productId: text("product_id").references(() => products.id), deploymentId: text("deployment_id").references(() => deployments.id), materializationStatus: text("materialization_status").notNull().default("unreviewed"), ...timestamps,
 }, (t) => [uniqueIndex("source_row_package_key_uq").on(t.sourcePackageId, t.sourceKey), uniqueIndex("source_row_package_number_uq").on(t.sourcePackageId, t.rowNumber), index("source_row_review_ix").on(t.sourcePackageId, t.materializationStatus, t.rowNumber), index("source_row_release_ix").on(t.releaseId, t.baselineId)]);
 
+// Steward review is governed application metadata. It is intentionally kept
+// outside source_row_24 so the retained workbook projection stays unchanged.
+export const sourceOccurrenceReviews = sqliteTable("source_occurrence_review", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseName: text("release_name").notNull(),
+  sourceKey: text("source_key").notNull(),
+  status: text("status").notNull().default("not_reviewed"),
+  reviewedAt: text("reviewed_at"),
+  note: text("note"),
+  ...timestamps,
+}, (t) => [
+  check("source_occurrence_review_status", sql`${t.status} IN ('not_reviewed','reviewed','follow_up')`),
+  uniqueIndex("source_occurrence_review_identity_uq").on(t.programId, t.releaseName, t.sourceKey),
+  index("source_occurrence_review_status_ix").on(t.programId, t.status, t.reviewedAt),
+]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
 
-export const schema = { programs, sourcePackages, sourceRows24, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, auditEvents };
+export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, auditEvents };

@@ -10,13 +10,13 @@ const complete = {
   Containerized:"Yes", "Container Technology":"Kubernetes", Notes:"A source note is not a validation failure.",
 };
 
-test("notes do not change a complete row into review", () => {
-  assert.deepEqual(dataQualityFor(complete), { level:"ready", label:"Complete", issues:[] });
+test("notes do not change a passing row into a warning", () => {
+  assert.deepEqual(dataQualityFor(complete), { level:"ready", label:"Pass", issues:[] });
 });
 
 test("missing hierarchy values produce field-specific review reasons", () => {
   const quality = dataQualityFor({ ...complete, Tier:"", Resource:"" });
-  assert.equal(quality.label, "Review");
+  assert.equal(quality.label, "Warning");
   assert.deepEqual(quality.issues.map((issue) => issue.field), ["Tier", "Resource"]);
 });
 
@@ -26,8 +26,8 @@ test("missing ReleaseName blocks materialization", () => {
   assert.ok(quality.issues.some((issue) => issue.field === "ReleaseName" && issue.severity === "blocking"));
 });
 
-test("a valid host-only source row can be complete", () => {
-  assert.equal(dataQualityFor(hostOnlyRow).label, "Complete");
+test("a valid host-only source row can pass automated checks", () => {
+  assert.equal(dataQualityFor(hostOnlyRow).label, "Pass");
 });
 
 test("reported storage capacity without a type requires review", () => {
