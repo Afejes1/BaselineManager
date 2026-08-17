@@ -1,0 +1,84 @@
+import { env } from "cloudflare:workers";
+import { TECHNICAL_BASELINE_COLUMNS } from "../../../../lib/technical-baseline-contract";
+
+type Cell = string | number | boolean | null | undefined;
+type IncomingRow = Record<string, Cell>;
+
+const nowIso = () => new Date().toISOString();
+const cell = (value: Cell) => value == null ? null : String(value);
+const normalized = (value: Cell) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g," ").toLowerCase();
+function stableId(kind: string, ...parts: Cell[]) {
+  const input = parts.map(normalized).join("|"); let hash = 2166136261;
+  for (let index=0; index<input.length; index++) { hash ^= input.charCodeAt(index); hash = Math.imul(hash,16777619); }
+  return `${kind}-${(hash>>>0).toString(16).padStart(8,"0")}`;
+}
+function isReview(row: IncomingRow) { return !normalized(row["#"]) || !normalized(row.ReleaseName) || (!normalized(row.LongName) && !normalized(row.ShortName)); }
+
+export async function GET() {
+  try {
+    const result = await env.DB.prepare("SELECT raw_payload FROM source_row_24 ORDER BY updated_at DESC, row_number ASC LIMIT 5000").all<{raw_payload:string}>();
+    return Response.json({ rows: result.results.map((row) => JSON.parse(row.raw_payload)) });
+  } catch (error) {
+    return Response.json({ rows: [], error: error instanceof Error ? error.message : "Baseline storage is unavailable." }, { status:500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json() as { fileName?:string; sheetName?:string; rows?:IncomingRow[] };
+    if (!body.fileName || !Array.isArray(body.rows)) return Response.json({ error:"fileName and rows are required" }, { status:400 });
+    for (const row of body.rows) {
+      const keys = Object.keys(row);
+      if (keys.length !== 24 || TECHNICAL_BASELINE_COLUMNS.some((column,index) => keys[index] !== column)) return Response.json({ error:"Every row must preserve the exact 24-column contract." }, { status:400 });
+    }
+
+    const db = env.DB;
+    const now = nowIso();
+    const asOf = now.slice(0,10);
+    const programId = "program-jsf";
+    const packageFingerprint = JSON.stringify(body.rows);
+    const packageId = stableId("pkg", body.fileName, packageFingerprint);
+    const statements: D1PreparedStatement[] = [];
+    const seen = new Set<string>();
+    const add = (key:string, sql:string, ...params:unknown[]) => { if (!seen.has(key)) { seen.add(key); statements.push(db.prepare(sql).bind(...params)); } };
+
+    add("program", "INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at", programId,"Joint Strike Fighter","F-35 technical baseline program","America/New_York",now,now);
+    add("package", "INSERT INTO source_package (id,program_id,source_system,file_name,sheet_name,content_hash,received_at,status,row_count,accepted_count,exception_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET received_at=excluded.received_at,status=excluded.status,row_count=excluded.row_count,accepted_count=excluded.accepted_count,exception_count=excluded.exception_count,updated_at=excluded.updated_at", packageId,programId,"24-column-xlsx",body.fileName,body.sheetName??null,stableId("hash",packageFingerprint),now,"materialized",body.rows.length,body.rows.filter(r=>!isReview(r)).length,body.rows.filter(isReview).length,now,now);
+
+    body.rows.forEach((row,rowIndex) => {
+      const releaseName = cell(row.ReleaseName) || "Unassigned";
+      const releaseId = stableId("release",releaseName);
+      const baselineId = stableId("baseline",releaseId,asOf);
+      const tierName = cell(row.Tier) || "Unassigned";
+      const resourceName = cell(row.Resource) || "Unassigned";
+      const hostName = cell(row.HW_Host) || "Unassigned";
+      const tierId = stableId("tier",tierName);
+      const resourceId = stableId("resource",tierId,resourceName);
+      const hostId = stableId("host",resourceId,hostName);
+      const productName = cell(row.LongName) || cell(row.ShortName);
+      const productId = productName ? stableId("product",productName) : null;
+      const oem = cell(row.OEM);
+      const orgId = oem ? stableId("org",oem) : null;
+      const deploymentId = productId ? stableId("deploy",productId,hostId) : null;
+      const sourceRowId = stableId("row",packageId,rowIndex+2);
+
+      add(`release:${releaseId}`, "INSERT INTO release (id,program_id,code,normalized_code,name,normalized_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", releaseId,programId,releaseName,normalized(releaseName),releaseName,normalized(releaseName),"reported",now,now);
+      add(`baseline:${baselineId}`, "INSERT INTO configuration_baseline (id,program_id,release_id,name,normalized_name,maturity,as_of,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at", baselineId,programId,releaseId,`${releaseName} Reported`,normalized(`${releaseName} Reported`),"reported",asOf,"working",now,now);
+      if (orgId) add(`org:${orgId}`, "INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", orgId,programId,oem,normalized(oem),"supplier",now,now);
+      add(`node:${tierId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", tierId,programId,null,"tier",tierName,normalized(tierName),now,now);
+      add(`node:${resourceId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", resourceId,programId,tierId,"resource",resourceName,normalized(resourceName),now,now);
+      add(`node:${hostId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", hostId,programId,resourceId,"host",hostName,normalized(hostName),now,now);
+      if (productId) add(`product:${productId}`, "INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,owner_organization_id=excluded.owner_organization_id,updated_at=excluded.updated_at", productId,programId,productName,normalized(productName),cell(row.ShortName),cell(row.TechStackType),cell(row["Software Type"]),orgId,now,now);
+      if (productId && orgId) add(`supplier:${productId}:${orgId}`, "INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at", productId,orgId,"supplier",now,now);
+      if (deploymentId && productId) add(`deployment:${deploymentId}`, "INSERT INTO deployment (id,program_id,product_id,configuration_node_id,environment,site,deployment_role,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET deployment_role=excluded.deployment_role,updated_at=excluded.updated_at", deploymentId,programId,productId,hostId,"unknown","unknown",cell(row.TechStackType),now,now);
+      statements.push(db.prepare("INSERT INTO source_row_24 (id,source_package_id,source_key,row_number,row_hash,raw_payload,release_name,tier,resource,tech_stack_type,short_name,hw_host,hw_storage_type,hw_storage_gb,hw_cpu_cores,hw_ram_gb,sw_language,software_type,oem,containerized,container_technology,container_type,long_name,notes,capability_notes,notes_1,notes_2,notes_3,notes_4,release_id,baseline_id,configuration_node_id,product_id,deployment_id,materialization_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET raw_payload=excluded.raw_payload,materialization_status=excluded.materialization_status,updated_at=excluded.updated_at").bind(sourceRowId,packageId,cell(row["#"]),rowIndex+2,stableId("hash",JSON.stringify(row)),JSON.stringify(row),cell(row.ReleaseName),cell(row.Tier),cell(row.Resource),cell(row.TechStackType),cell(row.ShortName),cell(row.HW_Host),cell(row.HW_Storage_Type),cell(row["HW_Storage (GB)"]),cell(row.HW_CPU_CORES),cell(row["HW_RAM (GB)"]),cell(row["SW Language"]),cell(row["Software Type"]),oem,cell(row.Containerized),cell(row["Container Technology"]),cell(row["Container Type"]),cell(row.LongName),cell(row.Notes),cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]),cell(row["Notes.1"]),cell(row["Notes.2"]),cell(row["Notes.3"]),cell(row["Notes.4"]),releaseId,baselineId,hostId,productId,deploymentId,isReview(row)?"review":"materialized",now,now));
+      add(`node-state:${baselineId}:${hostId}`, "INSERT INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_row_id=excluded.source_row_id,storage_type=excluded.storage_type,storage_gb=excluded.storage_gb,cpu_cores=excluded.cpu_cores,ram_gb=excluded.ram_gb,state_notes=excluded.state_notes,updated_at=excluded.updated_at", stableId("node-state",baselineId,hostId),programId,baselineId,hostId,sourceRowId,cell(row.HW_Storage_Type),Number(row["HW_Storage (GB)"])||null,Number(row.HW_CPU_CORES)||null,Number(row["HW_RAM (GB)"])||null,cell(row.Notes),now,now);
+      if (deploymentId) add(`deploy-state:${baselineId}:${deploymentId}`, "INSERT INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,presence,status,containerized,container_technology,container_type,language,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_row_id=excluded.source_row_id,containerized=excluded.containerized,container_technology=excluded.container_technology,container_type=excluded.container_type,language=excluded.language,notes=excluded.notes,updated_at=excluded.updated_at", stableId("deploy-state",baselineId,deploymentId),programId,baselineId,deploymentId,sourceRowId,"present",isReview(row)?"review":"reported",cell(row.Containerized),cell(row["Container Technology"]),cell(row["Container Type"]),cell(row["SW Language"]),cell(row.Notes),now,now);
+    });
+    statements.push(db.prepare("INSERT INTO audit_event (id,program_id,action,entity_kind,entity_id,after_payload,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),programId,"import_materialized","source_package",packageId,JSON.stringify({fileName:body.fileName,rowCount:body.rows.length}),now));
+    await db.batch(statements);
+    return Response.json({ packageId, rows:body.rows.length, normalized:true }, { status:201 });
+  } catch (error) {
+    return Response.json({ error:error instanceof Error ? error.message : "Import failed without changing the baseline." }, { status:500 });
+  }
+}
