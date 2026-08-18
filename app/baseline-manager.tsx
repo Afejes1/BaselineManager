@@ -520,23 +520,43 @@ export function BaselineManager() {
                         <td><input type="checkbox" checked={checked.has(index)} onClick={(event) => event.stopPropagation()} onChange={() => toggleChecked(index)} aria-label={`Select ${text(row.LongName) || key} in ${text(row.ReleaseName)}`} /></td>
                         <td className="mono">{key}</td>
                         <td>
-                          <Link href={`/releases/${encodeURIComponent(text(row.ReleaseName) || "Unassigned")}`} className="row-nav-link">
+                          <Link
+                            href={`/releases/${encodeURIComponent(text(row.ReleaseName) || "Unassigned")}`}
+                            className="row-nav-link"
+                            onClick={(event) => event.stopPropagation()}
+                          >
                             <span className="release-chip">{text(row.ReleaseName) || "Unassigned"}</span>
                           </Link>
                         </td>
                         <td>
-                          <Link href={`/products/${encodeURIComponent(productIdentityKey(row))}`} className="row-nav-link">
+                          <Link
+                            href={`/products/${encodeURIComponent(productIdentityKey(row))}`}
+                            className="row-nav-link"
+                            onClick={(event) => event.stopPropagation()}
+                          >
                             <strong>{text(row.ShortName) || "Unnamed"}</strong><small>{text(row.LongName) || "Canonical name missing"}</small>
                           </Link>
                         </td>
                         <td>
-                          <Link href={`/configuration/${encodeURIComponent(configNodeIdentity(row))}`} className="row-nav-link">
+                          <Link
+                            href={`/configuration/${encodeURIComponent(configNodeIdentity(row))}`}
+                            className="row-nav-link"
+                            onClick={(event) => event.stopPropagation()}
+                          >
                             <strong>{text(row.Tier) || "Unassigned"}</strong><small>{text(row.Resource) || "Resource missing"}</small>
                           </Link>
                         </td>
                         <td className="mono">{text(row.HW_Host) || "—"}</td>
                         <td>{text(row.TechStackType) || "—"}</td>
-                        <td><Link href={`/organizations/${encodeURIComponent(text(row.OEM) || "Unassigned")}`} className="row-nav-link">{text(row.OEM) || "—"}</Link></td>
+                        <td>
+                          <Link
+                            href={`/organizations/${encodeURIComponent(text(row.OEM) || "Unassigned")}`}
+                            className="row-nav-link"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {text(row.OEM) || "—"}
+                          </Link>
+                        </td>
                         <td>{text(row.Containerized) === "Yes" ? `${text(row.Containerized)} · ${text(row["Container Technology"])}` : text(row.Containerized) || "—"}</td>
                         <td><Mark quality={quality} /></td>
                         <td><span className={`review-mark review-${rowReview.status}`}>{manualReviewLabel(rowReview.status)}</span><small>{reviewDate(rowReview.reviewedAt)}</small></td>
