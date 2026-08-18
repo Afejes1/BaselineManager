@@ -11,7 +11,10 @@ export type BaselineRecordMeta = {
   materializationStatus: string;
   baseline: { name: string | null; maturity: string | null; asOf: string | null };
   source: { fileName: string | null };
+  releaseId: string | null;
   productId: string | null;
+  configurationNodeId: string | null;
+  deploymentId: string | null;
 };
 
 export type ManagedRecord24 = Record24 & { __meta: BaselineRecordMeta };
@@ -30,7 +33,10 @@ export function managedRows(payload: ApiResponse): ManagedRecord24[] {
     materializationStatus: record.materializationStatus,
     baseline: record.baseline,
     source: record.source,
+    releaseId: record.releaseId,
     productId: record.productId,
+    configurationNodeId: record.configurationNodeId,
+    deploymentId: record.deploymentId,
   } }));
 }
 

@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "test": "npm run build && npm run test:contract",
-    "test:contract": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/technical-baseline-contract.test.ts tests/technical-baseline-fixtures.ts tests/xlsx-roundtrip.test.ts tests/baseline-scope.test.ts tests/baseline-quality.test.ts lib/technical-baseline-contract.ts lib/baseline-scope.ts lib/baseline-quality.ts && node --test .test-dist/tests/*.test.js",
+    "test:contract": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/technical-baseline-contract.test.ts tests/technical-baseline-fixtures.ts tests/xlsx-roundtrip.test.ts tests/baseline-scope.test.ts tests/baseline-quality.test.ts tests/release-analysis.test.ts lib/technical-baseline-contract.ts lib/baseline-scope.ts lib/baseline-quality.ts lib/release-analysis.ts lib/topology-model.ts && node --test .test-dist/tests/*.test.js",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },

@@ -1,308 +1,80 @@
 "use client";
 
-import Link from "../../../components/app-link";
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import {
-  configNodeIdentity,
-  getReleases,
-  getReleaseSummary,
-  productDisplayName,
-  productIdentityKey,
-  releaseComparisonSummary,
-  supplierIdentity,
-  text,
-} from "../../../lib/baseline-data";
+import Link from "../../../components/app-link";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { TopologyStack } from "../../../components/topology-stack";
 import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { compareReleases, releaseNames, releaseOverview, type Placement, type ReleaseDelta } from "../../../lib/release-analysis";
+import { useGovernancePortfolio } from "../../../lib/governance-client";
+import { displayStatus } from "../../../lib/governance-model";
+import { useTopologyExtensions } from "../../../lib/topology-client";
 
-function decodeRelease(raw: string) {
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
-}
+type Tab = "dashboard" | "topology" | "compare";
+type EditMode = "host" | "deployment" | null;
 
-function uniqueCount(items: string[]) {
-  return new Set(items.filter(Boolean)).size;
-}
+function decode(raw: string) { try { return decodeURIComponent(raw); } catch { return raw; } }
+const labelForDelta = (kind: ReleaseDelta["kind"]) => ({ product_added: "Product added", product_removed: "Product removed", deployment_added: "Deployment added", deployment_removed: "Deployment removed", deployment_moved: "Deployment moved", configuration_changed: "Configuration changed" })[kind];
 
 export default function ReleaseDetailPage() {
   const params = useParams<{ release?: string }>();
-  const releaseName = decodeRelease(params.release ?? "");
-  const { rows } = useBaselineWorkspace();
-  const [query, setQuery] = useState("");
+  const releaseName = decode(params.release ?? "");
+  const { rows, loading: baselineLoading, error: baselineError } = useBaselineWorkspace();
+  const releaseRows = useMemo(() => rows.filter((row) => String(row.ReleaseName || "").trim() === releaseName), [releaseName, rows]);
+  const releaseId = releaseRows[0]?.__meta.releaseId || undefined;
+  const { extensions, loading: topologyLoading, error: topologyError, mutate: mutateTopology } = useTopologyExtensions(releaseId);
+  const { portfolio } = useGovernancePortfolio();
+  const releases = useMemo(() => releaseNames(rows), [rows]);
+  const previousDefault = releases[Math.max(0, releases.indexOf(releaseName) - 1)] || "";
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const [comparisonRelease, setComparisonRelease] = useState("");
+  const [editMode, setEditMode] = useState<EditMode>(null);
+  const [selectedPlacement, setSelectedPlacement] = useState<Placement | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const effectiveComparisonRelease = comparisonRelease || (previousDefault !== releaseName ? previousDefault : "");
 
+  const overview = useMemo(() => releaseOverview(rows, releaseName), [releaseName, rows]);
+  const deltas = useMemo(() => effectiveComparisonRelease && effectiveComparisonRelease !== releaseName ? compareReleases(rows, effectiveComparisonRelease, releaseName) : [], [effectiveComparisonRelease, releaseName, rows]);
+  const deltaCounts = useMemo(() => deltas.reduce((counts, item) => ({ ...counts, [item.kind]: (counts[item.kind] || 0) + 1 }), {} as Partial<Record<ReleaseDelta["kind"], number>>), [deltas]);
+  const recordsFor = (delta: ReleaseDelta) => portfolio?.records.filter((record) => record.links.some((link) => delta.anchorIds.some((anchor) => anchor.kind === link.entityKind && anchor.id === link.entityId))) || [];
 
-  const allReleases = useMemo(() => getReleases(rows), [rows]);
-  const releaseRows = useMemo(() => rows.filter((row) => text(row.ReleaseName) === releaseName), [rows, releaseName]);
-  const comparison = useMemo(() => releaseComparisonSummary(rows, releaseName), [rows, releaseName]);
-
-  const summary = useMemo(() => getReleaseSummary(rows, releaseName), [rows, releaseName]);
-
-  const productList = useMemo(() => {
-    const byProduct = new Map<string, {
-      id: string;
-      canonical: string;
-      shortName: string;
-      supplier: string;
-      tiers: Set<string>;
-      hosts: Set<string>;
-      rows: Record24[];
-      issues: number;
-    }>();
-
-    for (const row of releaseRows) {
-      const key = productIdentityKey(row);
-      const existing = byProduct.get(key);
-      if (!existing) {
-        byProduct.set(key, {
-          id: key,
-          canonical: productDisplayName(row),
-          shortName: text(row.ShortName).trim(),
-          supplier: text(row.OEM).trim() || "Unassigned",
-          tiers: new Set([text(row.Tier)]),
-          hosts: new Set([text(row.HW_Host)]),
-          rows: [row],
-          issues: text(row.HW_Storage_Type) === "" && text(row["HW_Storage (GB)"]) ? 1 : 0,
-        });
-        continue;
-      }
-
-      existing.rows.push(row);
-      const storageValue = text(row.HW_Storage_Type) === "" && text(row["HW_Storage (GB)"]) ? 1 : 0;
-      existing.issues += storageValue;
-      existing.tiers.add(text(row.Tier));
-      existing.hosts.add(text(row.HW_Host));
-      if (text(row.LongName).trim()) existing.canonical = productDisplayName(row);
-      if (text(row.OEM).trim()) existing.supplier = text(row.OEM).trim();
-      if (text(row.ShortName).trim() && !existing.shortName) existing.shortName = text(row.ShortName).trim();
-    }
-
-    return Array.from(byProduct.values())
-      .map((item) => ({
-        ...item,
-        shortName: item.shortName || item.canonical,
-      }))
-      .sort((left, right) => left.canonical.localeCompare(right.canonical));
-  }, [releaseRows]);
-
-  const configNodes = useMemo(() => {
-    const values = releaseRows.map((row) => configNodeIdentity(row));
-    return values
-      .filter(Boolean)
-      .filter((value, index, all) => all.indexOf(value) === index)
-      .slice(0, 12);
-  }, [releaseRows]);
-
-  const filteredProducts = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return productList;
-    return productList.filter((product) => {
-      const textMatch = `${product.canonical} ${product.shortName} ${product.supplier}`.toLowerCase();
-      return textMatch.includes(normalized);
-    });
-  }, [productList, query]);
-
-  const supplierRows = useMemo(() => {
-    const suppliers = new Map<string, { id: string; name: string; rowCount: number; products: Set<string> }>();
-    for (const row of releaseRows) {
-      const name = text(row.OEM).trim() || "Unassigned";
-      const id = supplierIdentity(name);
-      const productId = productIdentityKey(row);
-      const existing = suppliers.get(id);
-      if (!existing) {
-        suppliers.set(id, { id, name, rowCount: 1, products: new Set([productId]) });
-      } else {
-        existing.rowCount += 1;
-        existing.products.add(productId);
-      }
-    }
-    return Array.from(suppliers.values())
-      .map((supplier) => ({
-        ...supplier,
-        productCount: supplier.products.size,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [releaseRows]);
-
-  const capabilityRows = useMemo(() => {
-    const capabilities = new Map<string, { id: string; name: string; products: Set<string>; rows: number }>();
-    for (const row of releaseRows) {
-      const name = text(row["Technical Capability Satisfied by this SW/Tech - Notes"]).trim() || "Unspecified";
-      const id = name.toLowerCase();
-      const productId = productIdentityKey(row);
-      const existing = capabilities.get(id);
-      if (!existing) {
-        capabilities.set(id, { id, name, products: new Set([productId]), rows: 1 });
-      } else {
-        existing.rows += 1;
-        existing.products.add(productId);
-      }
-    }
-    return Array.from(capabilities.values())
-      .map((capability) => ({
-        ...capability,
-        productCount: capability.products.size,
-      }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [releaseRows]);
-
-  const supplierIdentifiers = useMemo(() => releaseRows.map((row) => supplierIdentity(text(row.OEM).trim())), [releaseRows]);
-  const supplierCount = useMemo(() => uniqueCount(supplierIdentifiers), [supplierIdentifiers]);
-
-  if (!summary) {
-    return (
-      <DomainPageShell
-        title={`Release ${releaseName}`}
-        subtitle="No records currently match this release in the working dataset."
-        releaseScope="Release context unavailable"
-      >
-        <section className="domain-list">
-          <div className="domain-card">
-            <h3>Release not present</h3>
-            <p className="entity-meta">No source rows are currently marked with this release name.</p>
-            <p className="entity-actions"><Link href="/releases">Return to release overview</Link></p>
-          </div>
-        </section>
-      </DomainPageShell>
-    );
+  function openHost(placement: Placement) {
+    const profile = extensions.hostProfiles.find((item) => item.releaseId === placement.releaseId && item.configurationNodeId === placement.configurationNodeId);
+    setSelectedPlacement(placement); setEditMode("host"); setForm({ installationLocation: profile?.installationLocation || "", facilityOrEnclave: profile?.facilityOrEnclave || "", equipmentRack: profile?.equipmentRack || "", hardwareBlade: profile?.hardwareBlade || "", virtualizationPlatform: profile?.virtualizationPlatform || "", sourceReference: profile?.sourceReference || "", notes: profile?.notes || "" });
+  }
+  function openDeployment(placement: Placement) {
+    const profile = extensions.deploymentProfiles.find((item) => item.baselineOccurrenceId === placement.occurrenceId);
+    setSelectedPlacement(placement); setEditMode("deployment"); setForm({ virtualMachine: profile?.virtualMachine || "", containerInstance: profile?.containerInstance || "", applicationVersion: profile?.applicationVersion || "", installationIdentifier: profile?.installationIdentifier || "", deploymentRole: profile?.deploymentRole || "", sourceReference: profile?.sourceReference || "", notes: profile?.notes || "" });
+  }
+  async function saveProfile() {
+    if (!selectedPlacement || !editMode) return;
+    setSaving(true);
+    try { await mutateTopology(editMode === "host" ? "save_host_profile" : "save_deployment_profile", { baselineOccurrenceId: selectedPlacement.occurrenceId, ...form }); setEditMode(null); setNotice("Government-managed topology detail saved. It remains outside the 24-column export."); }
+    catch (reason) { setNotice(reason instanceof Error ? reason.message : "Topology detail could not be saved."); }
+    finally { setSaving(false); }
+  }
+  function evidenceHref(delta: ReleaseDelta) {
+    const parameters = new URLSearchParams();
+    const anchor = delta.anchorIds.find((item) => item.kind === "release"); if (anchor) parameters.set("releaseId", anchor.id);
+    const product = delta.anchorIds.find((item) => item.kind === "product"); if (product) parameters.set("productId", product.id);
+    const node = delta.anchorIds.find((item) => item.kind === "configuration_node"); if (node) parameters.set("configurationNodeId", node.id);
+    const occurrence = delta.anchorIds.find((item) => item.kind === "occurrence"); if (occurrence) parameters.set("occurrenceId", occurrence.id);
+    return `/evidence?${parameters.toString()}`;
   }
 
-  return (
-    <DomainPageShell
-      title={`Release ${releaseName}`}
-      subtitle={`Compared against ${comparison.previous ?? "first available"} release context`}
-      releaseScope={`${summary.rows} rows · ${summary.rows === 1 ? "one row" : `${summary.rows} rows`} in baseline`}
-      actions={(
-        <label className="search" style={{ width: "280px" }}>
-          <span>⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter products in this release" />
-        </label>
-      )}
-    >
-      <div className="summary">
-        <div className="metric">
-          <span>Release baseline</span>
-          <strong>{releaseName}</strong>
-          <small>{summary.rows} source rows · {allReleases.length} releases total</small>
-        </div>
-        <div className="metric"><span>Product lineage</span><strong>{summary.products}</strong><small>{supplierCount} suppliers</small></div>
-        <div className="metric"><span>Quality</span><strong>{summary.issues + summary.warnings}</strong><small>{summary.issues} blocking · {summary.warnings} warnings</small></div>
-        <div className="metric metric-alert"><span>Scope</span><strong>{summary.rows}</strong><small>{configNodes.length} configuration nodes</small></div>
-      </div>
+  if (baselineLoading) return <DomainPageShell title="Release workspace" subtitle="Loading the governed technical baseline…" releaseScope="Loading"><section className="domain-section"><p className="empty">Loading release data…</p></section></DomainPageShell>;
+  if (baselineError || !releaseRows.length) return <DomainPageShell title={`Release ${releaseName}`} subtitle={baselineError || "No current source occurrences match this release."} releaseScope="Not available" actions={<Link href="/releases">Back to releases</Link>}><section className="domain-section"><article className="domain-card empty-state"><h3>Release not present</h3><p>Choose a release materialized from the 24-column workbook.</p></article></section></DomainPageShell>;
 
-      {(comparison.previous || comparison.added.length || comparison.removed.length) ? (
-        <section className="domain-card domain-comparison">
-          <h3>Release comparison</h3>
-          <div className="comparison-grid">
-            <p><strong>Previous:</strong> {comparison.previous ?? "None (first configured release)"}</p>
-            <p><strong>Added products:</strong> {comparison.added.length ? comparison.added.join(", ") : "No new products"}</p>
-            <p><strong>Removed products:</strong> {comparison.removed.length ? comparison.removed.join(", ") : "No removals from previous"} </p>
-          </div>
-          <div className="entity-actions"><Link href="/releases">All releases</Link></div>
-        </section>
-      ) : null}
-
-      <section className="domain-section">
-        <div className="section-heading"><h3>Products in {releaseName}</h3><span>{filteredProducts.length} of {summary.products}</span></div>
-        <section className="domain-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>Alias</th>
-                <th>Supplier</th>
-                <th>Tiers</th>
-                <th>Hosts</th>
-                <th>Rows</th>
-                <th>Issues</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredProducts.map((product) => (
-                <tr key={product.id}>
-                  <td><strong><Link href={`/products/${encodeURIComponent(product.id)}`}>{product.canonical}</Link></strong></td>
-                  <td>{product.shortName}</td>
-                  <td><Link href={`/organizations/${encodeURIComponent(product.supplier)}`}>{product.supplier}</Link></td>
-                  <td>{product.tiers.size}</td>
-                  <td>{product.hosts.size}</td>
-                  <td className="mono">{product.rows.length}</td>
-                  <td>{product.issues}</td>
-                </tr>
-              ))}
-              {!filteredProducts.length ? (
-                <tr>
-                  <td colSpan={7} className="empty">No rows match your query in this release.</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </section>
-      </section>
-
-      <section className="domain-section">
-        <div className="section-heading"><h3>Active configuration nodes</h3><span>Top {configNodes.length} nodes</span></div>
-        <div className="chip-list">
-          {configNodes.map((id) => {
-            const row = releaseRows.find((candidate) => configNodeIdentity(candidate) === id);
-            if (!row) return null;
-            const parts = id.split("|");
-            const release = parts[0] || "Unassigned";
-            const tier = parts[1] || "Unassigned";
-            const resource = parts[2] || "Unassigned";
-            const host = parts[3] || "Unassigned";
-            return (
-              <Link key={id} href={`/configuration/${encodeURIComponent(id)}`} className="domain-chip">
-                <strong>{release}</strong>
-                <span>{tier} / {resource} / {host}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="domain-section">
-        <div className="section-heading"><h3>Release suppliers</h3><span>{supplierRows.length} suppliers</span></div>
-        <div className="chip-list">
-          {supplierRows.length ? supplierRows.map((supplier) => (
-            <Link key={supplier.id} href={`/organizations/${encodeURIComponent(supplier.name)}`} className="domain-chip">
-              <strong>{supplier.name}</strong>
-              <span>{supplier.rowCount} rows · {supplier.productCount} products</span>
-            </Link>
-          )) : <p className="empty">No suppliers recorded for this release.</p>}
-        </div>
-      </section>
-
-      <section className="domain-section">
-        <div className="section-heading"><h3>Release capabilities</h3><span>{capabilityRows.length} capability values</span></div>
-        <section className="domain-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Capability</th>
-                <th>Products</th>
-                <th>Rows</th>
-              </tr>
-            </thead>
-            <tbody>
-              {capabilityRows.map((capability) => (
-                <tr key={capability.id}>
-                  <td><Link href={`/capabilities/${encodeURIComponent(capability.name)}`}>{capability.name}</Link></td>
-                  <td>{capability.productCount}</td>
-                  <td className="mono">{capability.rows}</td>
-                </tr>
-              ))}
-              {!capabilityRows.length ? (
-                <tr>
-                  <td colSpan={3} className="empty">No mapped capabilities for this release.</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </section>
-      </section>
-    </DomainPageShell>
-  );
+  return <DomainPageShell title={`Release ${releaseName}`} subtitle="A release-level baseline dashboard, topology view, and deterministic comparison." releaseScope={`${overview.sourceRows} source rows · ${overview.products} products`} actions={<><Link className="ghost-button" href="/topology">Open topology explorer</Link><Link className="primary-button" href="/">Open source grid</Link></>}>
+    <section className="kpi-grid" aria-label="Release dashboard metrics"><div className="kpi-card"><span>Release baseline</span><strong>{releaseName}</strong><small>Statement of reported source facts</small></div><div className="kpi-card"><span>Products</span><strong>{overview.products}</strong><small>{overview.configurationNodes} reported configuration nodes</small></div><div className="kpi-card"><span>Data quality</span><strong>{overview.issues + overview.review}</strong><small>{overview.issues} issues · {overview.review} review items</small></div><div className="kpi-card"><span>Topology extension</span><strong>{extensions.hostProfiles.length + extensions.deploymentProfiles.length}</strong><small>Managed details outside XLSX</small></div></section>
+    <nav className="detail-tabs" aria-label="Release workspace views">{(["dashboard", "topology", "compare"] as Tab[]).map((item) => <button type="button" key={item} className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "compare" ? "Compare releases" : displayStatus(item)}</button>)}</nav>
+    {tab === "dashboard" && <section className="domain-section"><div className="split-layout"><article className="domain-card release-statement"><span className="eyebrow">BASELINE STATEMENT OF FACT</span><h3>{releaseName}</h3><p>This workspace shows what the retained 24-column projection reports for this release. Government-managed topology details are visibly marked and are never written back into the workbook export.</p><p className="entity-meta">{overview.suppliers} suppliers · {overview.containerized} containerized source occurrences · {overview.configurationNodes} host placements</p><p className="entity-actions"><button className="primary-button" type="button" onClick={() => setTab("compare")}>Compare to another release</button><button className="ghost-button" type="button" onClick={() => setTab("topology")}>View stack topology</button></p></article><article className="domain-card"><span className="eyebrow">COMPARISON READINESS</span><h3>{effectiveComparisonRelease ? `${effectiveComparisonRelease} → ${releaseName}` : "Choose a predecessor"}</h3><p>{effectiveComparisonRelease ? `${deltas.length} explainable data changes are currently detected.` : "Choose the release that provides the baseline for a data comparison."}</p><p className="entity-meta">A change request can be linked to a release, product, host node, or source occurrence—without rewriting the baseline.</p></article></div><div className="section-toolbar" style={{ marginTop: 22 }}><div><span className="eyebrow">OBJECT LANDING LINKS</span><h3>Explore this release from another perspective</h3></div></div><div className="chip-list"><Link className="domain-chip" href="/products"><strong>Products</strong><span>Canonical products and their release history</span></Link><Link className="domain-chip" href="/organizations"><strong>Suppliers</strong><span>{overview.suppliers} suppliers contributing source facts</span></Link><Link className="domain-chip" href="/configuration"><strong>Configuration</strong><span>{overview.configurationNodes} placements reported here</span></Link><Link className="domain-chip" href="/evidence"><strong>Change & evidence</strong><span>Link MCPs and calls to baseline changes</span></Link></div></section>}
+    {tab === "topology" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">LAYERED DEPLOYMENT TOPOLOGY</span><h3>Installation context → host → runtime → application</h3></div><span>{topologyLoading ? "Loading extensions…" : `${extensions.hostProfiles.length} host profiles · ${extensions.deploymentProfiles.length} deployment profiles`}</span></div><p className="entity-meta">Green source layers come from the 24-column intake. Blue managed layers are explicit Government additions, scoped to this release and not included in the XLSX export.</p>{topologyError ? <p className="error-copy">{topologyError}</p> : <TopologyStack releaseName={releaseName} rows={rows} hostProfiles={extensions.hostProfiles} deploymentProfiles={extensions.deploymentProfiles} onEditHost={openHost} onEditDeployment={openDeployment} />}</section>}
+    {tab === "compare" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RELEASE-TO-RELEASE DATA DELTA</span><h3>What changed in reported baseline data</h3></div><label className="compare-select">Compare <select value={effectiveComparisonRelease} onChange={(event) => setComparisonRelease(event.target.value)}><option value="">Select prior release</option>{releases.filter((item) => item !== releaseName).map((item) => <option key={item}>{item}</option>)}</select> → <strong>{releaseName}</strong></label></div>{effectiveComparisonRelease ? <><section className="delta-summary"><div><span>Product adds</span><strong>{deltaCounts.product_added || 0}</strong></div><div><span>Product removals</span><strong>{deltaCounts.product_removed || 0}</strong></div><div><span>Moves / placement</span><strong>{(deltaCounts.deployment_moved || 0) + (deltaCounts.deployment_added || 0) + (deltaCounts.deployment_removed || 0)}</strong></div><div><span>Attribute changes</span><strong>{deltaCounts.configuration_changed || 0}</strong></div></section><div className="delta-list">{deltas.length ? deltas.map((item) => { const rationale = recordsFor(item); const productId = item.after?.productId || item.before?.productId; return <article className="delta-card" key={item.id}><div className="section-toolbar"><div><span className={`delta-kind delta-${item.kind}`}>{labelForDelta(item.kind)}</span><h3>{productId ? <Link href={`/products/${encodeURIComponent(productId)}`}>{item.productName}</Link> : item.productName}</h3></div><Link href={evidenceHref(item)}>Link rationale</Link></div>{item.beforePlacement || item.afterPlacement ? <p className="delta-transition"><span>{item.beforePlacement || "Not present"}</span><b>→</b><span>{item.afterPlacement || "Not present"}</span></p> : null}{item.changedFields.length ? <p className="entity-meta">Changed values: {item.changedFields.join(" · ")}</p> : null}{rationale.length ? <p className="rationale-links">{rationale.map((record) => <Link key={record.id} href="/evidence">{displayStatus(record.recordType)}: {record.externalReference || record.title}</Link>)}</p> : <p className="entity-meta">No MCP, call, decision, or risk is linked to this delta yet.</p>}</article>; }) : <article className="domain-card empty-state"><h3>No reportable changes detected</h3><p>The two releases have the same products, placement keys, and comparison fields in the current source projection.</p></article>}</div></> : <article className="domain-card empty-state"><h3>Select a prior release</h3><p>The comparison is deterministic: it compares retained source facts and labels each actual data change without treating a change request as baseline data.</p></article>}</section>}
+    {editMode && selectedPlacement && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setEditMode(null); }}><section className="import-modal topology-modal" role="dialog" aria-modal="true" aria-labelledby="topology-edit-title"><span className="eyebrow">GOVERNMENT-MANAGED EXTENSION</span><h2 id="topology-edit-title">{editMode === "host" ? "Host / location context" : "Deployment / version detail"}</h2><p>These fields extend the governed application model for this release. They are not part of the original 24-column intake and will not appear in its XLSX export.</p><p className="entity-meta">Anchor: {selectedPlacement.productName} · {selectedPlacement.tier || "Unassigned"} / {selectedPlacement.resource || "Unassigned"} / {selectedPlacement.host || "Unassigned"}</p>{editMode === "host" ? <div className="form-grid"><label className="modal-field">Installation location<input value={form.installationLocation || ""} onChange={(event) => setForm({ ...form, installationLocation: event.target.value })} placeholder="e.g., OBK / OCK / site identifier" /></label><label className="modal-field">Facility / enclave<input value={form.facilityOrEnclave || ""} onChange={(event) => setForm({ ...form, facilityOrEnclave: event.target.value })} placeholder="Facility, mission enclave, or environment" /></label><label className="modal-field">Equipment rack<input value={form.equipmentRack || ""} onChange={(event) => setForm({ ...form, equipmentRack: event.target.value })} placeholder="Rack or chassis identifier" /></label><label className="modal-field">Hardware blade<input value={form.hardwareBlade || ""} onChange={(event) => setForm({ ...form, hardwareBlade: event.target.value })} placeholder="Blade / server asset identifier" /></label><label className="modal-field">Virtualization platform<input value={form.virtualizationPlatform || ""} onChange={(event) => setForm({ ...form, virtualizationPlatform: event.target.value })} placeholder="e.g., VMware cluster" /></label></div> : <div className="form-grid"><label className="modal-field">Virtual machine<input value={form.virtualMachine || ""} onChange={(event) => setForm({ ...form, virtualMachine: event.target.value })} placeholder="VM identity" /></label><label className="modal-field">Container instance<input value={form.containerInstance || ""} onChange={(event) => setForm({ ...form, containerInstance: event.target.value })} placeholder="Container / pod / service instance" /></label><label className="modal-field">Application version<input value={form.applicationVersion || ""} onChange={(event) => setForm({ ...form, applicationVersion: event.target.value })} placeholder="Government-managed version detail" /></label><label className="modal-field">Installation identifier<input value={form.installationIdentifier || ""} onChange={(event) => setForm({ ...form, installationIdentifier: event.target.value })} placeholder="Package, job aid, or installation ID" /></label><label className="modal-field">Deployment role<input value={form.deploymentRole || ""} onChange={(event) => setForm({ ...form, deploymentRole: event.target.value })} placeholder="Role beyond source category" /></label></div>}<label className="modal-field">Supporting reference<input value={form.sourceReference || ""} onChange={(event) => setForm({ ...form, sourceReference: event.target.value })} placeholder="MCP, call, drawing, CMDB, or evidence reference" /></label><label className="modal-field">Steward notes<textarea rows={3} value={form.notes || ""} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label><footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setEditMode(null)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={() => void saveProfile()}>{saving ? "Saving…" : "Save managed detail"}</button></footer></section></div>}
+    {notice && <div className="toast" role="status">✓ {notice}</div>}
+  </DomainPageShell>;
 }

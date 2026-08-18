@@ -10,6 +10,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Baseline Manager", icon: "▦", enabled: true },
   { href: "/intake", label: "Intake & quality", icon: "⇣", enabled: true },
   { href: "/releases", label: "Releases", icon: "🗂", enabled: true },
+  { href: "/topology", label: "Topology", icon: "▤", enabled: true },
   { href: "/pbs", label: "PBS Explorer", icon: "⌘", enabled: true },
   { href: "/products", label: "Products", icon: "◦", enabled: true },
   { href: "/configuration", label: "Configuration", icon: "⚙", enabled: true },

@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const documentId = `document-${crypto.randomUUID()}`;
     const createdAt = new Date().toISOString();
     const r2Key = `governance/${governanceRecordId || initiativeId}/${documentId}-${safeFileName(file.name)}`;
-    await bucket.put(r2Key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type || "application/octet-stream", contentDisposition: `attachment; filename=\"${safeFileName(file.name)}\"` } });
+    await bucket.put(r2Key, await file.arrayBuffer(), { httpMetadata: { contentType: file.type || "application/octet-stream", contentDisposition: `attachment; filename="${safeFileName(file.name)}"` } });
     await env.DB.batch([
       env.DB.prepare("INSERT INTO evidence_document (id,program_id,governance_record_id,initiative_id,file_name,content_type,byte_size,r2_key,description,uploaded_by_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(documentId, PROGRAM_ID, governanceRecordId, initiativeId, file.name, file.type || null, file.size, r2Key, typeof form.get("description") === "string" ? String(form.get("description")).trim() || null : null, actor.id, createdAt),
       audit(env.DB, actor, "evidence_document_attached", "evidence_document", documentId, { governanceRecordId, initiativeId, fileName: file.name, byteSize: file.size }),
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
     if (!bucket) return Response.json({ error: "Document storage is not available in this environment yet." }, { status: 503 });
     const object = await bucket.get(document.r2_key);
     if (!object) return Response.json({ error: "The stored evidence document could not be found." }, { status: 404 });
-    return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType || document.content_type || "application/octet-stream", "content-disposition": object.httpMetadata?.contentDisposition || `attachment; filename=\"${safeFileName(document.file_name)}\"` } });
+    return new Response(object.body, { headers: { "content-type": object.httpMetadata?.contentType || document.content_type || "application/octet-stream", "content-disposition": object.httpMetadata?.contentDisposition || `attachment; filename="${safeFileName(document.file_name)}"` } });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "The evidence document could not be opened." }, { status: 500 });
   }

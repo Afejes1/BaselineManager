@@ -13,7 +13,10 @@ type WorkspaceRow = {
   baseline_maturity: string | null;
   baseline_as_of: string | null;
   source_file_name: string | null;
+  release_id: string | null;
   product_id: string | null;
+  configuration_node_id: string | null;
+  deployment_id: string | null;
 };
 
 const programId = "program-jsf";
@@ -174,7 +177,10 @@ function toResponse(rows: WorkspaceRow[]) {
     materializationStatus: entry.materialization_status,
     baseline: { name: entry.baseline_name, maturity: entry.baseline_maturity, asOf: entry.baseline_as_of },
     source: { fileName: entry.source_file_name },
+    releaseId: entry.release_id,
     productId: entry.product_id,
+    configurationNodeId: entry.configuration_node_id,
+    deploymentId: entry.deployment_id,
     row: asRecord24(JSON.parse(entry.projection_payload)),
   })).filter((entry) => entry.row);
   return { workspace: { id: workspaceId, label: "Current Government working baseline" }, records };
@@ -182,7 +188,7 @@ function toResponse(rows: WorkspaceRow[]) {
 
 export async function GET() {
   try {
-    const result = await env.DB.prepare("SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.product_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ORDER BY bo.created_at ASC").bind(workspaceId).all<WorkspaceRow>();
+    const result = await env.DB.prepare("SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.release_id, bo.product_id, bo.configuration_node_id, bo.deployment_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ORDER BY bo.created_at ASC").bind(workspaceId).all<WorkspaceRow>();
     return Response.json(toResponse(result.results));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "The authoritative baseline workspace is unavailable." }, { status: 500 });

@@ -28,7 +28,7 @@ export function useGovernancePortfolio() {
     }
   }, []);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { const handle = window.setTimeout(() => { void reload(); }, 0); return () => window.clearTimeout(handle); }, [reload]);
 
   const mutate = useCallback(async (action: string, payload: Record<string, unknown>) => {
     const response = await fetch("/api/governance", {

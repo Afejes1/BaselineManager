@@ -29,6 +29,13 @@
       "when": 1787140800000,
       "tag": "0003_governance_and_reporting",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787227200000,
+      "tag": "0004_topology_extensions",
+      "breakpoints": true
     }
   ]
 }

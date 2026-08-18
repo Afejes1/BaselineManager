@@ -152,6 +152,53 @@ export const programRoleAssignments = sqliteTable("program_role_assignment", {
   index("program_role_assignment_program_role_ix").on(t.programId, t.role),
 ]);
 
+// The workbook does not report installation location, rack/blade identity, VM
+// identity, or application version. These are governed extension facts, kept
+// separately from the 24-column projection and explicitly scoped to a release.
+// A host profile applies to every deployment on that host in the release.
+export const managedHostProfiles = sqliteTable("managed_host_profile", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  configurationNodeId: text("configuration_node_id").notNull().references(() => configurationNodes.id),
+  installationLocation: text("installation_location"),
+  facilityOrEnclave: text("facility_or_enclave"),
+  equipmentRack: text("equipment_rack"),
+  hardwareBlade: text("hardware_blade"),
+  virtualizationPlatform: text("virtualization_platform"),
+  sourceReference: text("source_reference"),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  uniqueIndex("managed_host_profile_release_node_uq").on(t.releaseId, t.configurationNodeId),
+  index("managed_host_profile_release_ix").on(t.programId, t.releaseId),
+]);
+
+// A deployment profile is specific to one retained source occurrence. It adds
+// Government-managed identifying/version detail without masquerading as source
+// spreadsheet data or forcing an assumed relationship on sibling deployments.
+export const managedDeploymentProfiles = sqliteTable("managed_deployment_profile", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  baselineOccurrenceId: text("baseline_occurrence_id").notNull().references(() => baselineOccurrences.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id),
+  productId: text("product_id").references(() => products.id),
+  virtualMachine: text("virtual_machine"),
+  containerInstance: text("container_instance"),
+  applicationVersion: text("application_version"),
+  installationIdentifier: text("installation_identifier"),
+  deploymentRole: text("deployment_role"),
+  sourceReference: text("source_reference"),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  uniqueIndex("managed_deployment_profile_occurrence_uq").on(t.baselineOccurrenceId),
+  index("managed_deployment_profile_release_product_ix").on(t.programId, t.releaseId, t.productId),
+]);
+
 export const initiatives = sqliteTable("initiative", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
@@ -297,4 +344,4 @@ export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
 
-export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, appUsers, programRoleAssignments, initiatives, initiativeScopes, workPackages, governanceRecords, governanceRecordLinks, evidenceDocuments, executiveBriefs, briefPublications, auditEvents };
+export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, managedHostProfiles, managedDeploymentProfiles, organizations, productSuppliers, capabilities, productCapabilities, appUsers, programRoleAssignments, initiatives, initiativeScopes, workPackages, governanceRecords, governanceRecordLinks, evidenceDocuments, executiveBriefs, briefPublications, auditEvents };

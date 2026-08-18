@@ -49,7 +49,7 @@ export default function InitiativesPage() {
     return [...grouped.values()].sort((left, right) => left.label.localeCompare(right.label));
   }, [rows]);
   const selectableProducts = useMemo(() => products.filter((product) => releaseName === "All releases" || product.releaseNames.includes(releaseName)), [products, releaseName]);
-  const initiatives = portfolio?.initiatives ?? [];
+  const initiatives = useMemo(() => portfolio?.initiatives ?? [], [portfolio?.initiatives]);
   const filtered = useMemo(() => initiatives.filter((initiative) => {
     if (statusFilter !== "all" && initiative.status !== statusFilter) return false;
     const terms = `${initiative.title} ${initiative.owner || ""} ${initiative.primaryReleaseName || "All releases"} ${initiative.consequence || ""}`.toLowerCase();

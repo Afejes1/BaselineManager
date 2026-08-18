@@ -78,7 +78,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
     db.prepare("SELECT w.* FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY w.initiative_id,w.sort_order,w.wbs_code").bind(PROGRAM_ID).all<WorkPackageRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
-    db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id").all<LinkRow>(),
+    db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,CASE WHEN o.id IS NOT NULL THEN 'Source occurrence' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence o ON l.entity_kind='occurrence' AND o.id=l.entity_id").all<LinkRow>(),
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
@@ -126,7 +126,7 @@ async function releaseIdFor(db: Database, releaseName: unknown) {
   const name = clean(releaseName);
   if (!name || name === "All releases") return null;
   const row = await db.prepare("SELECT id,name FROM release WHERE program_id=? AND normalized_name=?").bind(PROGRAM_ID, normalized(name)).first<{ id: string; name: string }>();
-  if (!row) throw new Error(`ReleaseName \"${name}\" is not in the current baseline workspace.`);
+  if (!row) throw new Error(`ReleaseName "${name}" is not in the current baseline workspace.`);
   return row.id;
 }
 
