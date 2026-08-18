@@ -16,6 +16,7 @@ type Record24 = Record<TechnicalBaselineColumn, Cell>;
 type ImportDraft = { fileName: string; sheetName: string; rows: Record24[] };
 type ReviewStatus = "not_reviewed" | "reviewed" | "follow_up";
 type ManualReview = { status: ReviewStatus; reviewedAt: string | null; note?: string | null };
+type DemoValues = Partial<Record<TechnicalBaselineColumn, Cell>>;
 
 type DetailTab = "record" | "quality" | "review" | "occurrences" | "normalized";
 type IndexedRow = { row: ManagedRecord24; index: number };
@@ -29,6 +30,32 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
 ];
 
 const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
+
+/** A small, valid baseline that demonstrates repeated products across releases. */
+function demoRecord(values: DemoValues): Record24 {
+  return Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, values[column] ?? ""])) as Record24;
+}
+
+const DEMONSTRATION_ROWS: Record24[] = [
+  demoRecord({
+    "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning",
+  }),
+  demoRecord({
+    "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management",
+  }),
+  demoRecord({
+    "#": "DEMO-R5-003", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 500, HW_CPU_CORES: 8, "HW_RAM (GB)": 48, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange",
+  }),
+  demoRecord({
+    "#": "DEMO-R6-001", ReleaseName: "Release 6", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 240, HW_CPU_CORES: 12, "HW_RAM (GB)": 48, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning",
+  }),
+  demoRecord({
+    "#": "DEMO-R6-002", ReleaseName: "Release 6", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 160, HW_CPU_CORES: 8, "HW_RAM (GB)": 24, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management",
+  }),
+  demoRecord({
+    "#": "DEMO-R6-003", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-06", HW_Storage_Type: "SAN", "HW_Storage (GB)": 750, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange",
+  }),
+];
 
 const text = (value: Cell) => value == null ? "" : String(value);
 const manualReviewLabel = (status: ReviewStatus) => status === "reviewed" ? "Reviewed" : status === "follow_up" ? "Follow-up" : "Not reviewed";
@@ -94,6 +121,9 @@ export function BaselineManager() {
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("record");
   const [reviewDraftStatus, setReviewDraftStatus] = useState<ReviewStatus>("not_reviewed");
   const [reviewDraftNote, setReviewDraftNote] = useState("");
+  const [showStewardMenu, setShowStewardMenu] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
+  const [demoError, setDemoError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const saveTimers = useRef<Map<string, number>>(new Map());
   const saveChains = useRef<Map<string, Promise<void>>>(new Map());
@@ -402,6 +432,36 @@ export function BaselineManager() {
     setNotice(`Imported ${draft.rows.length} rows across ${new Set(draft.rows.map(releaseOf)).size} releases into the authoritative workspace.`);
   }
 
+  async function loadDemonstrationWorkspace() {
+    setDemoError("");
+    setDemoLoading(true);
+    try {
+      const response = await fetch("/api/baseline/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          fileName: "JSF_V3_Demonstration_Baseline.xlsx",
+          sheetName: "Technical Baseline",
+          rows: DEMONSTRATION_ROWS,
+        }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "The demonstration dataset could not be loaded.");
+      await reload();
+      setSelectedIndex(null);
+      setActiveRelease("All releases");
+      setActiveTier("All records");
+      setActiveQuality("All checks");
+      setActiveReview("All review statuses");
+      setShowStewardMenu(false);
+      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration source occurrences across Release 5 and Release 6.`);
+    } catch (reason) {
+      setDemoError(reason instanceof Error ? reason.message : "The demonstration dataset could not be loaded.");
+    } finally {
+      setDemoLoading(false);
+    }
+  }
+
   async function exportWorkbook() {
     const exportRows = activeRelease === "All releases" ? rows : scopeRows;
     if (!exportRows.length) {
@@ -464,7 +524,14 @@ export function BaselineManager() {
         <span className="context-dot"/>
         <div><strong>Release scope</strong><small>{activeRelease} · Working workspace</small></div>
       </div>
-      <button className="profile"><span>AC</span><div><strong>Baseline steward</strong><small>Government team</small></div><b>···</b></button>
+      <button
+        className="profile"
+        type="button"
+        onClick={() => { setShowStewardMenu(true); setDemoError(""); }}
+        aria-haspopup="dialog"
+        aria-expanded={showStewardMenu}
+        aria-controls="steward-menu"
+      ><span>AC</span><div><strong>Baseline steward</strong><small>Government team</small></div><b>···</b></button>
     </aside>
 
     <section className="workspace">
@@ -852,6 +919,25 @@ export function BaselineManager() {
           <p className="modal-note">Each source occurrence retains ReleaseName. Import reuses the canonical product while linking its reported configuration and deployment state to the correct release baseline.</p>
           <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" onClick={acceptImport}>Import and reconcile</button></footer>
         </>}
+      </section>
+    </div>}
+
+    {showStewardMenu && <div className="modal-backdrop steward-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !demoLoading) setShowStewardMenu(false);
+    }}>
+      <section className="import-modal steward-menu" id="steward-menu" role="dialog" aria-modal="true" aria-labelledby="steward-title">
+        <button className="modal-close" type="button" aria-label="Close Baseline steward menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
+        <span className="eyebrow">BASELINE STEWARD</span>
+        <h2 id="steward-title">Demo workspace</h2>
+        <p>Load a compact, valid 24-column dataset to explore the baseline, release, product, configuration, and capability views.</p>
+        <div className="import-stats three">
+          <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
+          <div><strong>2</strong><span>Releases</span></div>
+          <div><strong>3</strong><span>Products reused</span></div>
+        </div>
+        <p className="modal-note">This replaces the current <strong>working workspace</strong> with demonstration occurrences. Prior source packages remain retained; import your retained workbook at any time to re-establish the active workspace.</p>
+        {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
+        <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Cancel</button><button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button></footer>
       </section>
     </div>}
 
