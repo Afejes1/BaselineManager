@@ -951,7 +951,7 @@ export function BaselineManager() {
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
-          <div><strong>7</strong><span>Products reused</span></div>
+          <div><strong>8</strong><span>Products</span></div>
         </div>
         <p className="modal-note">This replaces the current <strong>working workspace</strong> with synthetic baseline occurrences. It also adds non-exported topology detail and three linked rationale records so you can smoke-test comparisons and traceability. Prior source packages remain retained; import your retained workbook at any time to re-establish the active workspace.</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
