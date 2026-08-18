@@ -1,17 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
   getCapabilityRows,
-  loadRowsFromStorage,
   text,
-  type Record24,
   productIdentityKey,
   productDisplayName,
 } from "../../../lib/baseline-data";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 
 function decodeId(value: string) {
   try {
@@ -21,22 +20,12 @@ function decodeId(value: string) {
   }
 }
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
-export default function CapabilityDetailPage({ params }: { params: { id: string } }) {
-  const capability = decodeId(params.id);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function CapabilityDetailPage() {
+  const params = useParams<{ id?: string }>();
+  const capability = decodeId(params.id ?? "");
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const capabilityRows = useMemo(() => getCapabilityRows(rows, capability), [rows, capability]);
   const normalizedQuery = query.trim().toLowerCase();
@@ -50,7 +39,6 @@ export default function CapabilityDetailPage({ params }: { params: { id: string 
 
   const stats = useMemo(() => {
     const releases = new Set(capabilityRows.map((row) => text(row.ReleaseName)).filter(Boolean));
-    const rowsWithRows = capabilityRows.length;
     const products = new Set(capabilityRows.map((row) => productIdentityKey(row))).size;
     return { releases: releases.size, products };
   }, [capabilityRows]);

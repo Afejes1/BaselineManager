@@ -1,19 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
   getOrganizationRows,
-  loadRowsFromStorage,
   text,
-  type Record24,
   supplierIdentity,
   productIdentityKey,
   productDisplayName,
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 
 function decodeId(value: string) {
   try {
@@ -23,22 +22,12 @@ function decodeId(value: string) {
   }
 }
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
-export default function OrganizationDetailPage({ params }: { params: { id: string } }) {
-  const orgId = decodeId(params.id);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function OrganizationDetailPage() {
+  const params = useParams<{ id?: string }>();
+  const orgId = decodeId(params.id ?? "");
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const orgRows = useMemo(() => getOrganizationRows(rows, supplierIdentity(orgId)), [rows, orgId]);
   const visibleRows = useMemo(() => {

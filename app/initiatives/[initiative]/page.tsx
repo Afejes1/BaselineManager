@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { BASELINE_STORAGE_KEY, loadRowsFromStorage, productDisplayName, productIdentityKey, text, type Record24 } from "../../../lib/baseline-data";
+import Link from "../../../components/app-link";
+import { useParams } from "next/navigation";
+import { productDisplayName, productIdentityKey, text } from "../../../lib/baseline-data";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 import {
   BRIEF_STORAGE_KEY,
   INITIATIVE_STORAGE_KEY,
@@ -29,11 +31,6 @@ const tabItems: Array<{ id: DetailTab; label: string }> = [
   { id: "evidence", label: "Evidence & history" },
 ];
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
 function formatDate(value: string) {
   if (!value) return "Not set";
   const parsed = new Date(value);
@@ -49,17 +46,15 @@ function decodeId(raw: string) {
   }
 }
 
-export default function InitiativeDetailPage({ params }: { params: { initiative: string } }) {
-  const initiativeId = decodeId(params.initiative);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function InitiativeDetailPage() {
+  const params = useParams<{ initiative?: string }>();
+  const initiativeId = decodeId(params.initiative ?? "");
+  const { rows } = useBaselineWorkspace();
   const [initiatives, setInitiatives] = useState<Initiative[]>(() => {
     if (typeof window === "undefined") return [];
     return loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
   });
-  const [briefs, setBriefs] = useState<Brief[]>(() => {
+  const [briefs] = useState<Brief[]>(() => {
     if (typeof window === "undefined") return [];
     return loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY));
   });
@@ -76,12 +71,6 @@ export default function InitiativeDetailPage({ params }: { params: { initiative:
   const [newEvidenceKind, setNewEvidenceKind] = useState<"Decision" | "Technical note" | "Risk" | "Question">("Decision");
   const [newEvidenceNote, setNewEvidenceNote] = useState("");
   const [statusFilter, setStatusFilter] = useState<InitiativeStatus | "">("");
-
-  useEffect(() => {
-    setRows(loadRows());
-    setInitiatives(loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY)));
-    setBriefs(loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)));
-  }, []);
 
   const initiative = useMemo(() => initiatives.find((item) => item.id === initiativeId) ?? null, [initiatives, initiativeId]);
   const summary = useMemo(() => initiativeSummary(rows, initiative), [rows, initiative]);
@@ -388,12 +377,12 @@ export default function InitiativeDetailPage({ params }: { params: { initiative:
               <h4>Add work package</h4>
               <span>Program/WBS traceability can be captured here.</span>
             </div>
-            <label className="modal-field">Title</label>
-            <input value={newWorkPackageTitle} onChange={(event) => setNewWorkPackageTitle(event.target.value)} placeholder="e.g., Validate OData gateway patching" />
-            <label className="modal-field">Owner</label>
-            <input value={newWorkPackageOwner} onChange={(event) => setNewWorkPackageOwner(event.target.value)} placeholder="Team or point of contact" />
-            <label className="modal-field">Due date</label>
-            <input type="date" value={newWorkPackageDue} onChange={(event) => setNewWorkPackageDue(event.target.value)} />
+            <label className="modal-field" htmlFor="work-package-title">Title</label>
+            <input id="work-package-title" value={newWorkPackageTitle} onChange={(event) => setNewWorkPackageTitle(event.target.value)} placeholder="e.g., Validate OData gateway patching" />
+            <label className="modal-field" htmlFor="work-package-owner">Owner</label>
+            <input id="work-package-owner" value={newWorkPackageOwner} onChange={(event) => setNewWorkPackageOwner(event.target.value)} placeholder="Team or point of contact" />
+            <label className="modal-field" htmlFor="work-package-due">Due date</label>
+            <input id="work-package-due" type="date" value={newWorkPackageDue} onChange={(event) => setNewWorkPackageDue(event.target.value)} />
             <label className="modal-field">
               Status
               <select value={newWorkPackageStatus} onChange={(event) => setNewWorkPackageStatus(event.target.value as WorkPackageStatus)}>
@@ -403,8 +392,8 @@ export default function InitiativeDetailPage({ params }: { params: { initiative:
                 <option>Complete</option>
               </select>
             </label>
-            <label className="modal-field">Notes</label>
-            <textarea value={newWorkPackageNotes} onChange={(event) => setNewWorkPackageNotes(event.target.value)} className="review-note" rows={4} />
+            <label className="modal-field" htmlFor="work-package-notes">Notes</label>
+            <textarea id="work-package-notes" value={newWorkPackageNotes} onChange={(event) => setNewWorkPackageNotes(event.target.value)} className="review-note" rows={4} />
             <button className="primary-button" onClick={addWorkPackage}>Add package</button>
           </section>
         </section>
@@ -428,8 +417,8 @@ export default function InitiativeDetailPage({ params }: { params: { initiative:
 
           <section className="domain-card">
             <h4>Add evidence</h4>
-            <label className="modal-field">Author</label>
-            <input value={newEvidenceAuthor} onChange={(event) => setNewEvidenceAuthor(event.target.value)} placeholder="Analyst or office" />
+            <label className="modal-field" htmlFor="evidence-author">Author</label>
+            <input id="evidence-author" value={newEvidenceAuthor} onChange={(event) => setNewEvidenceAuthor(event.target.value)} placeholder="Analyst or office" />
             <label className="modal-field">
               Type
               <select value={newEvidenceKind} onChange={(event) => setNewEvidenceKind(event.target.value as "Decision" | "Technical note" | "Risk" | "Question")}>
@@ -439,8 +428,8 @@ export default function InitiativeDetailPage({ params }: { params: { initiative:
                 <option>Question</option>
               </select>
             </label>
-            <label className="modal-field">Note</label>
-            <textarea value={newEvidenceNote} onChange={(event) => setNewEvidenceNote(event.target.value)} className="review-note" rows={6} />
+            <label className="modal-field" htmlFor="evidence-note">Note</label>
+            <textarea id="evidence-note" value={newEvidenceNote} onChange={(event) => setNewEvidenceNote(event.target.value)} className="review-note" rows={6} />
             <button className="primary-button" onClick={addEvidence}>Add evidence</button>
           </section>
         </section>

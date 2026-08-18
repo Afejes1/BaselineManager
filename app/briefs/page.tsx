@@ -1,13 +1,11 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../../components/app-link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
-  loadRowsFromStorage,
-  type Record24,
 } from "../../lib/baseline-data";
+import { useBaselineWorkspace } from "../../lib/baseline-client";
 import {
   BRIEF_STORAGE_KEY,
   INITIATIVE_STORAGE_KEY,
@@ -22,23 +20,16 @@ import {
 } from "../../lib/steering-data";
 import { DomainPageShell } from "../../components/domain-shell";
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
 function loadFromStorage() {
   if (typeof window === "undefined") {
     return {
       initiatives: [] as Initiative[],
       briefs: [] as Brief[],
-      rows: [] as Record24[],
     };
   }
   return {
     initiatives: loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY)),
     briefs: loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)),
-    rows: loadRows(),
   };
 }
 
@@ -60,29 +51,16 @@ function decodeId(raw: string) {
 export default function BriefsPage() {
   const searchParams = useSearchParams();
   const pathname = usePathname();
-  const [rows, setRows] = useState<Record24[]>(() => loadRows());
-  const [initiatives, setInitiatives] = useState<Initiative[]>(() => loadFromStorage().initiatives);
+  const { rows } = useBaselineWorkspace();
+  const [initiatives] = useState<Initiative[]>(() => loadFromStorage().initiatives);
   const [briefs, setBriefs] = useState<Brief[]>(() => loadFromStorage().briefs);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<BriefStatus | "All">("All");
-  const [selectedInitiativeId, setSelectedInitiativeId] = useState("");
+  const [selectedInitiativeId, setSelectedInitiativeId] = useState(() => {
+    const preselected = decodeId(searchParams.get("initiative") ?? "");
+    return initiatives.some((initiative) => initiative.id === preselected) ? preselected : "";
+  });
   const [notice, setNotice] = useState("");
-
-  useEffect(() => {
-    const initial = loadFromStorage();
-    setRows(initial.rows);
-    setInitiatives(initial.initiatives);
-    setBriefs(initial.briefs);
-  }, []);
-
-  useEffect(() => {
-    const preselected = searchParams.get("initiative");
-    if (!preselected) return;
-    const normalized = decodeId(preselected);
-    if (initiatives.some((initiative) => initiative.id === normalized)) {
-      setSelectedInitiativeId(normalized);
-    }
-  }, [searchParams, initiatives]);
 
   useEffect(() => {
     if (!notice) return;

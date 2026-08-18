@@ -1,17 +1,17 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
   getConfigurationRows,
-  loadRowsFromStorage,
   productIdentityKey,
   productDisplayName,
   text,
   type Record24,
 } from "../../../lib/baseline-data";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 
 function decodeId(value: string) {
   try {
@@ -21,22 +21,12 @@ function decodeId(value: string) {
   }
 }
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
-export default function ConfigurationDetailPage({ params }: { params: { id: string } }) {
-  const nodeId = decodeId(params.id);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function ConfigurationDetailPage() {
+  const params = useParams<{ id?: string }>();
+  const nodeId = decodeId(params.id ?? "");
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const configRows = useMemo(() => getConfigurationRows(rows, nodeId), [rows, nodeId]);
   const normalizedQuery = query.trim().toLowerCase();
@@ -51,7 +41,7 @@ export default function ConfigurationDetailPage({ params }: { params: { id: stri
   const summary = useMemo(() => {
     const releases = new Set(configRows.map((row) => text(row.ReleaseName)).filter(Boolean));
     const products = new Map<string, { canonical: string; shortName: string }>();
-    let tiers = new Set<string>();
+    const tiers = new Set<string>();
     for (const row of configRows) {
       tiers.add(text(row.Tier));
       const productId = productIdentityKey(row);

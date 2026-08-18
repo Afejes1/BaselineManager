@@ -1,16 +1,16 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
   getProductRows,
   text,
-  loadRowsFromStorage,
   type Record24,
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 
 function decodeId(value: string) {
   try {
@@ -20,32 +20,22 @@ function decodeId(value: string) {
   }
 }
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
 function summarizeRows(rows: Record24[]) {
-  const releases = Array.from(new Set(rows.map((row) => text(row.ReleaseName)) ).filter(Boolean)).sort();
-  const tiers = Array.from(new Set(rows.map((row) => text(row.Tier)).filter(Boolean)).sort());
-  const hosts = Array.from(new Set(rows.map((row) => text(row.HW_Host)).filter(Boolean)).sort());
-  const resources = Array.from(new Set(rows.map((row) => text(row.Resource)).filter(Boolean)).sort());
+  const releases = Array.from(new Set(rows.map((row) => text(row.ReleaseName)).filter(Boolean))).sort();
+  const tiers = Array.from(new Set(rows.map((row) => text(row.Tier)).filter(Boolean))).sort();
+  const hosts = Array.from(new Set(rows.map((row) => text(row.HW_Host)).filter(Boolean))).sort();
+  const resources = Array.from(new Set(rows.map((row) => text(row.Resource)).filter(Boolean))).sort();
   const issueCount = rows.filter((row) => dataQualityFor(row).level === "issue").length;
   const warningCount = rows.filter((row) => dataQualityFor(row).level === "review").length;
   return { releases, tiers, hosts, resources, issueCount, warningCount };
 }
 
-export default function ProductDetailPage({ params }: { params: { id: string } }) {
-  const productId = decodeId(params.id);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function ProductDetailPage() {
+  const params = useParams<{ id?: string }>();
+  const productId = decodeId(params.id ?? "");
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const productRows = useMemo(() => getProductRows(rows, productId), [rows, productId]);
   const { releases, tiers, hosts, resources, issueCount, warningCount } = useMemo(() => summarizeRows(productRows), [productRows]);

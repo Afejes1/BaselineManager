@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../../components/app-link";
 import { useEffect, useMemo, useState } from "react";
-import { BASELINE_STORAGE_KEY, getReleases, loadRowsFromStorage, getProductSummaries, text, type Record24 } from "../../lib/baseline-data";
+import { getProductSummaries } from "../../lib/baseline-data";
+import { useBaselineWorkspace } from "../../lib/baseline-client";
 import {
   INITIATIVE_STORAGE_KEY,
   createInitiativeRecord,
@@ -16,11 +17,6 @@ import {
 } from "../../lib/steering-data";
 import { DomainPageShell } from "../../components/domain-shell";
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
 function formatCount(value: number) {
   return value.toLocaleString();
 }
@@ -33,10 +29,7 @@ function parseDate(value: string) {
 }
 
 export default function InitiativesPage() {
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+  const { rows } = useBaselineWorkspace();
   const [initiatives, setInitiatives] = useState<Initiative[]>(() => {
     if (typeof window === "undefined") return [];
     return loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
@@ -53,12 +46,6 @@ export default function InitiativesPage() {
   const [newStatus, setNewStatus] = useState<InitiativeStatus>("Draft");
   const [newRelease, setNewRelease] = useState("All releases");
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setRows(loadRows());
-    const stored = loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
-    setInitiatives(stored);
-  }, []);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setNotice(""), 2600);
@@ -79,17 +66,6 @@ export default function InitiativesPage() {
   }, [summaries, query, statusFilter]);
   const releases = useMemo(() => getInitiativeReleaseOptions(rows), [rows]);
 
-  useEffect(() => {
-    setSelectedProductIds((current) => {
-      const next = new Set<string>();
-      if (productOptions.length === 0) return next;
-      for (const productId of productOptions) next.add(productId);
-      const preserved = [...current].filter((productId) => productOptions.includes(productId));
-      for (const keep of preserved) next.add(keep);
-      return next;
-    });
-  }, [productOptions]);
-
   function persist(next: Initiative[]) {
     const payload = next.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
     setInitiatives(payload);
@@ -104,8 +80,13 @@ export default function InitiativesPage() {
     setNewTargetDate("");
     setNewStatus("Draft");
     setNewRelease("All releases");
-    setSelectedProductIds(new Set(productOptions));
+    setSelectedProductIds(new Set(getInitiativeProductOptions(rows, "All releases")));
     setShowCreate(true);
+  }
+
+  function chooseNewRelease(release: string) {
+    setNewRelease(release);
+    setSelectedProductIds(new Set(getInitiativeProductOptions(rows, release)));
   }
 
   function toggleProduct(productId: string) {
@@ -223,7 +204,7 @@ export default function InitiativesPage() {
           </label>
           <label className="modal-field">
             Release scope
-            <select value={newRelease} onChange={(event) => setNewRelease(event.target.value)}>
+            <select value={newRelease} onChange={(event) => chooseNewRelease(event.target.value)}>
               {releases.map((release) => <option key={release}>{release}</option>)}
             </select>
           </label>

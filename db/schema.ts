@@ -61,7 +61,39 @@ export const sourceRows24 = sqliteTable("source_row_24", {
   id: text("id").primaryKey(), sourcePackageId: text("source_package_id").notNull().references(() => sourcePackages.id), sourceKey: text("source_key"), rowNumber: integer("row_number").notNull(), rowHash: text("row_hash").notNull(), rawPayload: text("raw_payload").notNull(),
   colReleaseName: text("release_name"), colTier: text("tier"), colResource: text("resource"), colTechStackType: text("tech_stack_type"), colShortName: text("short_name"), colHwHost: text("hw_host"), colHwStorageType: text("hw_storage_type"), colHwStorageGb: text("hw_storage_gb"), colHwCpuCores: text("hw_cpu_cores"), colHwRamGb: text("hw_ram_gb"), colSwLanguage: text("sw_language"), colSoftwareType: text("software_type"), colOem: text("oem"), colContainerized: text("containerized"), colContainerTechnology: text("container_technology"), colContainerType: text("container_type"), colLongName: text("long_name"), colNotes: text("notes"), colCapabilityNotes: text("capability_notes"), colNotes1: text("notes_1"), colNotes2: text("notes_2"), colNotes3: text("notes_3"), colNotes4: text("notes_4"),
   releaseId: text("release_id").references(() => releases.id), baselineId: text("baseline_id").references(() => configurationBaselines.id), configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id), productId: text("product_id").references(() => products.id), deploymentId: text("deployment_id").references(() => deployments.id), materializationStatus: text("materialization_status").notNull().default("unreviewed"), ...timestamps,
-}, (t) => [uniqueIndex("source_row_package_key_uq").on(t.sourcePackageId, t.sourceKey), uniqueIndex("source_row_package_number_uq").on(t.sourcePackageId, t.rowNumber), index("source_row_review_ix").on(t.sourcePackageId, t.materializationStatus, t.rowNumber), index("source_row_release_ix").on(t.releaseId, t.baselineId)]);
+}, (t) => [index("source_row_package_key_ix").on(t.sourcePackageId, t.sourceKey), uniqueIndex("source_row_package_number_uq").on(t.sourcePackageId, t.rowNumber), index("source_row_review_ix").on(t.sourcePackageId, t.materializationStatus, t.rowNumber), index("source_row_release_ix").on(t.releaseId, t.baselineId)]);
+
+// A workspace chooses the current, editable Government projection without
+// changing the immutable source package or source-row payload.
+export const baselineWorkspaces = sqliteTable("baseline_workspace", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  label: text("label").notNull(),
+  activeImportPackageId: text("active_import_package_id").references(() => sourcePackages.id),
+  ...timestamps,
+}, (t) => [uniqueIndex("baseline_workspace_program_label_uq").on(t.programId, t.label)]);
+
+// This is the managed 24-column projection. rawPayload on source_row_24 is
+// never overwritten; corrections live here and are explicitly auditable.
+export const baselineOccurrences = sqliteTable("baseline_occurrence", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  workspaceId: text("workspace_id").notNull().references(() => baselineWorkspaces.id),
+  sourceRowId: text("source_row_id").notNull().references(() => sourceRows24.id),
+  releaseId: text("release_id").references(() => releases.id),
+  baselineId: text("baseline_id").references(() => configurationBaselines.id),
+  configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id),
+  productId: text("product_id").references(() => products.id),
+  deploymentId: text("deployment_id").references(() => deployments.id),
+  projectionPayload: text("projection_payload").notNull(),
+  materializationStatus: text("materialization_status").notNull().default("reported"),
+  revision: integer("revision").notNull().default(0),
+  ...timestamps,
+}, (t) => [
+  uniqueIndex("baseline_occurrence_workspace_source_uq").on(t.workspaceId, t.sourceRowId),
+  index("baseline_occurrence_workspace_release_ix").on(t.workspaceId, t.releaseId, t.baselineId),
+  index("baseline_occurrence_workspace_product_ix").on(t.workspaceId, t.productId),
+]);
 
 // Steward review is governed application metadata. It is intentionally kept
 // outside source_row_24 so the retained workbook projection stays unchanged.
@@ -80,8 +112,25 @@ export const sourceOccurrenceReviews = sqliteTable("source_occurrence_review", {
   index("source_occurrence_review_status_ix").on(t.programId, t.status, t.reviewedAt),
 ]);
 
+// Review identity is the immutable source row, not a value from the workbook.
+// The legacy table remains readable for historic records, while new reviews use
+// this source-row keyed table.
+export const sourceOccurrenceReviewsV2 = sqliteTable("source_occurrence_review_v2", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  sourceRowId: text("source_row_id").notNull().references(() => sourceRows24.id),
+  status: text("status").notNull().default("not_reviewed"),
+  reviewedAt: text("reviewed_at"),
+  note: text("note"),
+  ...timestamps,
+}, (t) => [
+  check("source_occurrence_review_v2_status", sql`${t.status} IN ('not_reviewed','reviewed','follow_up')`),
+  uniqueIndex("source_occurrence_review_v2_source_uq").on(t.sourceRowId),
+  index("source_occurrence_review_v2_status_ix").on(t.programId, t.status, t.reviewedAt),
+]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
 
-export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, auditEvents };
+export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, auditEvents };

@@ -78,9 +78,12 @@ export function productIdentityKey(row: Record24, fallbackIndex?: number): strin
   const longName = text(row.LongName).trim();
   const shortName = text(row.ShortName).trim();
   const sourceKey = text(row["#"]).trim();
-  const keySource = toSlug(longName || shortName || sourceKey || String(fallbackIndex ?? ""));
-  const aliasPart = shortName ? `::${toSlug(shortName)}` : "";
-  return `${keySource}${aliasPart}`;
+  // LongName is the preferred canonical product identity; ShortName is an
+  // alias. A changed alias must not create a second product. A source key is
+  // used only as a last-resort row fallback, never as an implied product ID.
+  const identitySource = longName || shortName;
+  if (identitySource) return toSlug(identitySource);
+  return `source-occurrence-${toSlug(sourceKey || String(fallbackIndex ?? "unassigned"))}`;
 }
 
 export function supplierIdentity(supplier: string): string {
@@ -325,7 +328,8 @@ export function getOrganizationRows(rows: Record24[], orgId: string): Record24[]
 export function getCapabilitySummaries(rows: Record24[]): CapabilitySummary[] {
   const caps = new Map<string, CapabilitySummary>();
   for (const row of rows) {
-    const name = text(row["Technical Capability Satisfied by this SW/Tech - Notes"]).trim() || "Unspecified";
+    const name = text(row["Technical Capability Satisfied by this SW/Tech - Notes"]).trim();
+    if (!name) continue;
     const id = capabilityIdentity(name);
     const existing = caps.get(id);
     if (!existing) {
@@ -348,7 +352,11 @@ export function getCapabilitySummaries(rows: Record24[]): CapabilitySummary[] {
 
 export function getCapabilityRows(rows: Record24[], capabilityId: string): Record24[] {
   const normalized = decodeURIComponent(capabilityId);
-  return rows.filter((row) => capabilityIdentity(text(row["Technical Capability Satisfied by this SW/Tech - Notes"]).trim() || "Unspecified") === capabilityIdentity(normalized));
+  if (!normalized.trim()) return [];
+  return rows.filter((row) => {
+    const reported = text(row["Technical Capability Satisfied by this SW/Tech - Notes"]).trim();
+    return Boolean(reported) && capabilityIdentity(reported) === capabilityIdentity(normalized);
+  });
 }
 
 export function releaseComparisonSummary(rows: Record24[], release: string): { previous?: string; added: string[]; removed: string[] } {

@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import Link from "next/link";
+import Link from "../components/app-link";
 import { usePathname } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
-import { dataQualityFor, type DataQuality } from "../lib/baseline-quality";
+import { dataQualityForOccurrence, type DataQuality } from "../lib/baseline-quality";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
-import { BASELINE_STORAGE_KEY, configNodeIdentity, productIdentityKey, supplierIdentity, capabilityIdentity } from "../lib/baseline-data";
+import { configNodeIdentity, productIdentityKey } from "../lib/baseline-data";
+import { projectionOf, useBaselineWorkspace, type ManagedRecord24 } from "../lib/baseline-client";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -17,7 +18,7 @@ type ReviewStatus = "not_reviewed" | "reviewed" | "follow_up";
 type ManualReview = { status: ReviewStatus; reviewedAt: string | null; note?: string | null };
 
 type DetailTab = "record" | "quality" | "review" | "occurrences" | "normalized";
-type IndexedRow = { row: Record24; index: number };
+type IndexedRow = { row: ManagedRecord24; index: number };
 
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "record", label: "Record" },
@@ -28,21 +29,8 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
 ];
 
 const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
-const sample = (values: Partial<Record24>): Record24 => ({ ...blankRecord(), ...values });
-const sampleRows: Record24[] = [
-  sample({ "#":"000082", ReleaseName:"30P05", Tier:"Mission Systems", Resource:"ALIS Core", TechStackType:"Platform Service", ShortName:"ODIN", HW_Host:"VM-APP-010", "HW_Storage_Type":"SSD", "HW_Storage (GB)":720, HW_CPU_CORES:12, "HW_RAM (GB)":48, "SW Language":"Java", "Software Type":"Custom", OEM:"Lockheed Martin", Containerized:"Yes", "Container Technology":"Kubernetes", "Container Type":"Service", LongName:"Operational Data Integrated Network", Notes:"Prior-release reported placement." }),
-  sample({ "#":"000083", ReleaseName:"30P05", Tier:"Mission Systems", Resource:"ALIS Core", TechStackType:"Data Service", ShortName:"DataSvc", HW_Host:"VM-DB-003", "HW_Storage_Type":"SSD", "HW_Storage (GB)":1000, HW_CPU_CORES:10, "HW_RAM (GB)":40, "SW Language":"C#", "Software Type":"Custom", OEM:"Lockheed Martin", Containerized:"Yes", "Container Technology":"Kubernetes", "Container Type":"Service", LongName:"Maintenance Data Service" }),
-  sample({ "#":"000119", ReleaseName:"30P05", Tier:"Training", Resource:"Courseware", TechStackType:"Web Application", ShortName:"TMS", HW_Host:"VM-WEB-018", "HW_Storage_Type":"SAN", "HW_Storage (GB)":300, HW_CPU_CORES:8, "HW_RAM (GB)":24, "SW Language":"TypeScript", "Software Type":"GOTS", OEM:"Government", Containerized:"No", LongName:"Training Management System" }),
-  sample({ "#":"000184", ReleaseName:"30P06", Tier:"Mission Systems", Resource:"ALIS Core", TechStackType:"Platform Service", ShortName:"ODIN", HW_Host:"VM-APP-012", "HW_Storage_Type":"SSD", "HW_Storage (GB)":850, HW_CPU_CORES:16, "HW_RAM (GB)":64, "SW Language":"Java", "Software Type":"Custom", OEM:"Lockheed Martin", Containerized:"Yes", "Container Technology":"Kubernetes", "Container Type":"Service", LongName:"Operational Data Integrated Network" }),
-  sample({ "#":"000185", ReleaseName:"30P06", Tier:"Mission Systems", Resource:"ALIS Core", TechStackType:"Data Service", ShortName:"DataSvc", HW_Host:"VM-DB-004", "HW_Storage_Type":"SSD", "HW_Storage (GB)":1200, HW_CPU_CORES:12, "HW_RAM (GB)":48, "SW Language":"C#", "Software Type":"Custom", OEM:"Lockheed Martin", Containerized:"Yes", "Container Technology":"Kubernetes", "Container Type":"Service", LongName:"Maintenance Data Service", Notes:"Confirm authoritative OEM designation." }),
-  sample({ "#":"000219", ReleaseName:"30P06", Tier:"Training", Resource:"Courseware", TechStackType:"Web Application", ShortName:"TMS", HW_Host:"VM-WEB-022", "HW_Storage_Type":"SAN", "HW_Storage (GB)":350, HW_CPU_CORES:8, "HW_RAM (GB)":24, "SW Language":"TypeScript", "Software Type":"GOTS", OEM:"Government", Containerized:"No", LongName:"Training Management System" }),
-  sample({ "#":"000241", ReleaseName:"30P06", Tier:"Logistics", Resource:"Supply Chain", TechStackType:"Business Service", ShortName:"SPS", HW_Host:"BLD-07-N03", "HW_Storage_Type":"", "HW_Storage (GB)":500, HW_CPU_CORES:8, "HW_RAM (GB)":32, "SW Language":"Java", "Software Type":"COTS", OEM:"COTS Vendor", Containerized:"Yes", "Container Technology":"Docker", LongName:"Spare Parts Service", Notes:"Storage type is unresolved." }),
-  sample({ "#":"000258", ReleaseName:"30P06", Tier:"Mission Systems", Resource:"Flight Data", TechStackType:"Custom Software", ShortName:"FDP", HW_Host:"VM-API-031", "HW_Storage_Type":"SSD", "HW_Storage (GB)":640, HW_CPU_CORES:24, "HW_RAM (GB)":96, "SW Language":"C++", "Software Type":"Custom", OEM:"Lockheed Martin", Containerized:"Yes", "Container Technology":"Kubernetes", LongName:"Flight Data Processor" }),
-  sample({ "#":"000276", ReleaseName:"30P06", Tier:"Cyber", Resource:"Identity", TechStackType:"COTS", ShortName:"IDAM", HW_Host:"VM-IAM-002", "HW_Storage_Type":"SAN", "HW_Storage (GB)":280, HW_CPU_CORES:8, "HW_RAM (GB)":32, "SW Language":"Java", "Software Type":"COTS", OEM:"OEM Partner", Containerized:"No", LongName:"Identity and Access Manager", "Technical Capability Satisfied by this SW/Tech - Notes":"Identity assurance" }),
-];
 
 const text = (value: Cell) => value == null ? "" : String(value);
-const reviewIdentity = (row: Record24) => `${text(row.ReleaseName).trim()}\u001f${text(row["#"]).trim()}`;
 const manualReviewLabel = (status: ReviewStatus) => status === "reviewed" ? "Reviewed" : status === "follow_up" ? "Follow-up" : "Not reviewed";
 const reviewDate = (value: string | null) => value ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value)) : "No review date";
 const qualityIssueOrder: Array<DataQuality["issues"][number]["severity"]> = ["blocking", "review"];
@@ -75,21 +63,16 @@ function Mark({ quality }: { quality: DataQuality }) {
   return <span className={`mark mark-${quality.level}`}>{quality.label}</span>;
 }
 
+function qualityForRecord(row: Record24 | ManagedRecord24) {
+  return dataQualityForOccurrence(row, "__meta" in row ? row.__meta.materializationStatus : undefined);
+}
+
 function fieldPairs<T extends Array<TechnicalBaselineColumn | string>>(cols: T, row: Record24) {
   return cols.map((column) => <p key={column}><strong>{column}</strong>{text((row as Record<string, Cell>)[column]) || "—"}</p>);
 }
 
-function toSlug(value: string) {
-  return text(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || "unnamed";
-}
-
 export function BaselineManager() {
-  const [rows, setRows] = useState<Record24[]>(sampleRows);
+  const { rows, setRows, workspace, loading, error: workspaceError, reload } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
   const [activeRelease, setActiveRelease] = useState("All releases");
   const [activeTier, setActiveTier] = useState("All records");
@@ -105,25 +88,22 @@ export function BaselineManager() {
   const [showAddRow, setShowAddRow] = useState(false);
   const [reviews, setReviews] = useState<Record<string, ManualReview>>({});
   const [reviewSaving, setReviewSaving] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
   const [newRowRelease, setNewRowRelease] = useState("");
   const [newReleaseName, setNewReleaseName] = useState("");
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("record");
   const [reviewDraftStatus, setReviewDraftStatus] = useState<ReviewStatus>("not_reviewed");
   const [reviewDraftNote, setReviewDraftNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const saveTimers = useRef<Map<string, number>>(new Map());
+  const saveChains = useRef<Map<string, Promise<void>>>(new Map());
+  const saveRevisions = useRef<Map<string, number>>(new Map());
+  const [savingOccurrences, setSavingOccurrences] = useState<Set<string>>(new Set());
   const pathname = usePathname();
 
   useEffect(() => {
-    const handle = window.setTimeout(() => {
-      const stored = window.localStorage.getItem(BASELINE_STORAGE_KEY);
-      if (stored) {
-        try { setRows(JSON.parse(stored)); } catch { /* keep demonstration rows */ }
-      }
-      setRailCollapsed(window.localStorage.getItem("v3-rail-collapsed") === "true");
-    }, 0);
-    return () => window.clearTimeout(handle);
-  }, []);
+    rows.forEach((row) => saveRevisions.current.set(row.__meta.occurrenceId, row.__meta.revision));
+  }, [rows]);
 
   useEffect(() => {
     fetch("/api/baseline/reviews")
@@ -133,18 +113,9 @@ export function BaselineManager() {
   }, []);
 
   const selected = selectedIndex === null ? blankRecord() : rows[selectedIndex] ?? blankRecord();
-  const selectedQuality = dataQualityFor(selected);
-  const selectedReview = selectedIndex === null ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[reviewIdentity(selected)] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
-  const selectedReviewSignature = `${selectedReview.status}|${selectedReview.reviewedAt ?? ""}|${selectedReview.note ?? ""}`;
-  const selectedRelease = text(selected.ReleaseName).trim();
-  const selectedSourceKey = text(selected["#"]).trim();
-
-  useEffect(() => {
-    if (selectedIndex === null) return;
-    setActiveDetailTab("record");
-    setReviewDraftStatus(selectedReview.status);
-    setReviewDraftNote(selectedReview.note ?? "");
-  }, [selectedIndex, selectedReviewSignature]);
+  const selectedMeta = selectedIndex === null ? null : rows[selectedIndex]?.__meta ?? null;
+  const selectedQuality = qualityForRecord(selected);
+  const selectedReview = !selectedMeta ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[selectedMeta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
 
   useEffect(() => {
     if (selectedIndex === null) return;
@@ -160,8 +131,8 @@ export function BaselineManager() {
   const filtered = useMemo(() => rows.map((row, index) => ({ row, index })).filter(({ row }) => {
     const releaseMatch = activeRelease === "All releases" || releaseOf(row) === activeRelease;
     const tierMatch = activeTier === "All records" || tierOf(row) === activeTier;
-    const qualityMatch = activeQuality === "All checks" || dataQualityFor(row).label === activeQuality;
-    const rowReview = reviews[reviewIdentity(row)]?.status ?? "not_reviewed";
+    const qualityMatch = activeQuality === "All checks" || qualityForRecord(row).label === activeQuality;
+    const rowReview = reviews[row.__meta.sourceRowId]?.status ?? "not_reviewed";
     const reviewMatch = activeReview === "All review statuses" || manualReviewLabel(rowReview) === activeReview;
     return releaseMatch && tierMatch && qualityMatch && reviewMatch && TECHNICAL_BASELINE_COLUMNS.map((column) => text(row[column])).join(" ").toLowerCase().includes(query.toLowerCase());
   }), [rows, reviews, query, activeRelease, activeTier, activeQuality, activeReview]);
@@ -175,34 +146,28 @@ export function BaselineManager() {
   const scopeRows = useMemo(() => activeRelease === "All releases" ? rows : rows.filter((row) => releaseOf(row) === activeRelease), [rows, activeRelease]);
   const scopeTiers = useMemo(() => new Set(scopeRows.map(tierOf)), [scopeRows]);
   const availableTiers = useMemo(() => Array.from(scopeTiers), [scopeTiers]);
-  const issueCount = useMemo(() => scopeRows.filter((row) => dataQualityFor(row).level !== "ready").length, [scopeRows]);
+  const issueCount = useMemo(() => scopeRows.filter((row) => qualityForRecord(row).level !== "ready").length, [scopeRows]);
   const productCount = useMemo(() => new Set(scopeRows.map((row) => text(row.LongName) || text(row.ShortName)).filter(Boolean)).size, [scopeRows]);
-  const issueBlocks = useMemo(() => scopeRows.filter(r => dataQualityFor(r).level === "issue").length, [scopeRows]);
-  const warningCount = useMemo(() => scopeRows.filter(r => dataQualityFor(r).level === "review").length, [scopeRows]);
-  const nextSourceKey = useMemo(() => {
-    const next = Math.max(0, ...rows.map((row) => Number(text(row["#"])) || 0)) + 1;
-    return String(next).padStart(6, "0");
-  }, [rows]);
+  const issueBlocks = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "issue").length, [scopeRows]);
+  const warningCount = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "review").length, [scopeRows]);
   const resolvedNewRowRelease = newRowRelease === "__new__" ? newReleaseName.trim() : newRowRelease;
 
+  const selectedProductId = selectedMeta?.productId ?? null;
   const occurrenceRows = useMemo<IndexedRow[]>(() => {
-    if (selectedIndex === null) return [];
-    const identity = text(selected["#"]).trim();
-    if (!identity) return [];
+    if (selectedIndex === null || !selectedProductId) return [];
     return rows
       .map((row, index) => ({ row, index }))
-      .filter(({ row }) => text(row["#"]).trim() === identity)
+      .filter(({ row }) => row.__meta.productId === selectedProductId)
       .sort((left, right) => text(left.row.ReleaseName).localeCompare(text(right.row.ReleaseName)));
-  }, [rows, selected, selectedIndex]);
+  }, [rows, selectedIndex, selectedProductId]);
 
   const normalizedProjection = useMemo(() => {
     if (selectedIndex === null) return null;
     const canonicalName = text(selected.LongName).trim() || text(selected.ShortName).trim() || "Unnamed product";
     const release = text(selected.ReleaseName).trim() || "Unassigned";
-    const sourceKey = text(selected["#"]).trim() || "unassigned";
     return {
       productNode: {
-        id: `product:${toSlug(sourceKey)}:${toSlug(canonicalName)}`,
+        id: selectedProductId ?? "Not materialized as a product",
         canonicalName,
         alias: text(selected.ShortName).trim() || "—",
         classification: text(selected["Software Type"]).trim() || "—",
@@ -230,7 +195,7 @@ export function BaselineManager() {
         notes: text(selected.Notes).trim() || "—",
       },
     };
-  }, [selected, selectedIndex]);
+  }, [selected, selectedIndex, selectedProductId]);
 
   const reviewDraftHasChanges = useMemo(() => {
     const note = reviewDraftNote.trim();
@@ -238,20 +203,73 @@ export function BaselineManager() {
     return reviewDraftStatus !== selectedReview.status || note !== savedNote;
   }, [reviewDraftStatus, reviewDraftNote, selectedReview.note, selectedReview.status]);
 
-  function persist(next: Record24[], message: string) {
-    setRows(next);
-    window.localStorage.setItem(BASELINE_STORAGE_KEY, JSON.stringify(next));
-    setNotice(message);
-    window.setTimeout(() => setNotice(""), 2600);
+  function queueOccurrenceSave(row: ManagedRecord24) {
+    const occurrenceId = row.__meta.occurrenceId;
+    const previous = saveChains.current.get(occurrenceId) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const expectedRevision = saveRevisions.current.get(occurrenceId) ?? row.__meta.revision;
+        setSavingOccurrences((current) => new Set(current).add(occurrenceId));
+        const response = await fetch("/api/baseline", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ occurrenceId, expectedRevision, row: projectionOf(row) }),
+        });
+        const payload = await response.json() as { error?: string; revision?: number; materializationStatus?: string; baseline?: ManagedRecord24["__meta"]["baseline"] };
+        if (!response.ok || payload.revision === undefined) {
+          await reload();
+          throw new Error(payload.error || "The automatic save could not be completed.");
+        }
+        saveRevisions.current.set(occurrenceId, payload.revision);
+        setRows((current) => current.map((item) => item.__meta.occurrenceId === occurrenceId ? {
+          ...item,
+          __meta: {
+            ...item.__meta,
+            revision: payload.revision ?? item.__meta.revision,
+            materializationStatus: payload.materializationStatus ?? item.__meta.materializationStatus,
+            baseline: payload.baseline ?? item.__meta.baseline,
+          },
+        } : item));
+      })
+      .catch((reason) => {
+        setNotice(reason instanceof Error ? reason.message : "The automatic save could not be completed.");
+        window.setTimeout(() => setNotice(""), 4200);
+      })
+      .finally(() => {
+        setSavingOccurrences((current) => {
+          const nextSaving = new Set(current);
+          nextSaving.delete(occurrenceId);
+          return nextSaving;
+        });
+      });
+    saveChains.current.set(occurrenceId, next);
   }
 
   function edit(column: TechnicalBaselineColumn, value: string) {
     if (selectedIndex === null) return;
-    setRows((current) => {
-      const next = current.map((row, index) => index === selectedIndex ? { ...row, [column]: value } : row);
-      window.localStorage.setItem(BASELINE_STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
+    const current = rows[selectedIndex];
+    if (!current) return;
+    const nextRow = { ...current, [column]: value } as ManagedRecord24;
+    setRows((existing) => existing.map((row, index) => index === selectedIndex ? nextRow : row));
+    const occurrenceId = current.__meta.occurrenceId;
+    const existingTimer = saveTimers.current.get(occurrenceId);
+    if (existingTimer) window.clearTimeout(existingTimer);
+    saveTimers.current.set(occurrenceId, window.setTimeout(() => queueOccurrenceSave(nextRow), 650));
+  }
+
+  function selectRecord(index: number) {
+    const record = rows[index];
+    if (!record) return;
+    if (selectedIndex === index) {
+      setSelectedIndex(null);
+      return;
+    }
+    const review = reviews[record.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
+    setSelectedIndex(index);
+    setActiveDetailTab("record");
+    setReviewDraftStatus(review.status);
+    setReviewDraftNote(review.note ?? "");
   }
 
   function toggleRail() {
@@ -263,14 +281,13 @@ export function BaselineManager() {
   }
 
   async function setManualReview(status: ReviewStatus, note?: string) {
-    const releaseName = selectedRelease;
-    const sourceKey = selectedSourceKey;
-    if (!releaseName || !sourceKey) {
-      setNotice("Add both # and ReleaseName before recording a manual review.");
+    const sourceRowId = selectedMeta?.sourceRowId;
+    if (!sourceRowId) {
+      setNotice("Choose a saved source occurrence before recording a manual review.");
       return;
     }
 
-    const key = reviewIdentity(selected);
+    const key = sourceRowId;
     const previous = reviews[key];
     const cleanedNote = note?.trim() ?? "";
     const optimistic = { status, reviewedAt: status === "not_reviewed" ? null : new Date().toISOString(), note: cleanedNote || null };
@@ -281,7 +298,7 @@ export function BaselineManager() {
       const response = await fetch("/api/baseline/reviews", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ releaseName, sourceKey, status, note: cleanedNote }),
+        body: JSON.stringify({ sourceRowId, status, note: cleanedNote }),
       });
       if (!response.ok) throw new Error("Unable to save review.");
       const payload = await response.json() as { review: ManualReview };
@@ -307,20 +324,29 @@ export function BaselineManager() {
     setShowAddRow(true);
   }
 
-  function addRow() {
+  async function addRow() {
     const chosenRelease = newRowRelease === "__new__" ? newReleaseName.trim() : newRowRelease;
     if (!chosenRelease) {
       setNotice("Select an existing release or enter a new ReleaseName.");
       return;
     }
-    const nextKey = Math.max(0, ...rows.map((row) => Number(text(row["#"])) || 0)) + 1;
-    const nextId = String(nextKey).padStart(6, "0");
-    const next = [...rows, { ...blankRecord(), "#": nextId, ReleaseName: chosenRelease }];
-    persist(next, `Created a new source occurrence in release ${chosenRelease}.`);
+    const response = await fetch("/api/baseline", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ row: { ...blankRecord(), ReleaseName: chosenRelease } }),
+    });
+    const payload = await response.json() as { error?: string };
+    if (!response.ok) {
+      setNotice(payload.error || "The source occurrence could not be created.");
+      return;
+    }
+    await reload();
+    setActiveRelease(chosenRelease);
     setActiveTier("All records");
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setShowAddRow(false);
+    setNotice(`Created a new source occurrence in release ${chosenRelease}.`);
   }
 
   function toggleChecked(index: number) {
@@ -356,29 +382,55 @@ export function BaselineManager() {
 
   async function acceptImport() {
     if (!draft) return;
-    persist(draft.rows, `Imported ${draft.rows.length} rows across ${new Set(draft.rows.map(releaseOf)).size} releases from ${draft.fileName}.`);
+    const response = await fetch("/api/baseline/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    const payload = await response.json() as { error?: string };
+    if (!response.ok) {
+      setImportError(payload.error || "The workbook could not be accepted into the authoritative baseline workspace.");
+      return;
+    }
+    await reload();
     setSelectedIndex(null);
     setActiveRelease("All releases");
     setActiveTier("All records");
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
-    fetch("/api/baseline/import", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft),
-    }).catch(() => undefined);
     setDraft(null);
+    setNotice(`Imported ${draft.rows.length} rows across ${new Set(draft.rows.map(releaseOf)).size} releases into the authoritative workspace.`);
   }
 
-  function exportWorkbook() {
+  async function exportWorkbook() {
     const exportRows = activeRelease === "All releases" ? rows : scopeRows;
+    if (!exportRows.length) {
+      setNotice("There are no source occurrences in the requested export scope.");
+      return;
+    }
+    const localBlockers = exportRows.filter((row) => qualityForRecord(row).level === "issue");
+    if (localBlockers.length) {
+      setActiveQuality("Blocking");
+      setNotice(`Export is blocked by ${localBlockers.length} source occurrence${localBlockers.length === 1 ? "" : "s"}. The grid is filtered to show them.`);
+      return;
+    }
+    const readiness = await fetch("/api/baseline/export", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ releaseScope: activeRelease, occurrenceIds: exportRows.map((row) => row.__meta.occurrenceId) }),
+    });
+    const publication = await readiness.json() as { error?: string; blockers?: Array<{ message: string }> };
+    if (!readiness.ok) {
+      setNotice(publication.error || "The export readiness check could not be completed.");
+      return;
+    }
     const data = [TECHNICAL_BASELINE_COLUMNS, ...exportRows.map((row) => TECHNICAL_BASELINE_COLUMNS.map((column) => row[column] ?? ""))];
     const sheet = XLSX.utils.aoa_to_sheet(data);
     sheet["!cols"] = TECHNICAL_BASELINE_COLUMNS.map((column) => ({ wch: Math.min(46, Math.max(12, column.length + 2)) }));
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, sheet, "Technical Baseline");
     XLSX.writeFile(workbook, `Technical_Baseline_${activeRelease === "All releases" ? "All_Releases" : activeRelease}.xlsx`);
-    setNotice(`Exported ${exportRows.length} rows for ${activeRelease} in the exact 24-column projection.`);
+    setNotice(`Exported ${exportRows.length} rows for ${activeRelease} from the validated working baseline.`);
   }
 
   return <main className="shell">
@@ -410,7 +462,7 @@ export function BaselineManager() {
       </nav>
       <div className="rail-context">
         <span className="context-dot"/>
-        <div><strong>Release scope</strong><small>{activeRelease} · Reported</small></div>
+        <div><strong>Release scope</strong><small>{activeRelease} · Working workspace</small></div>
       </div>
       <button className="profile"><span>AC</span><div><strong>Baseline steward</strong><small>Government team</small></div><b>···</b></button>
     </aside>
@@ -419,8 +471,7 @@ export function BaselineManager() {
       <header className="topbar">
         <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Manager</h1></div>
         <div className="top-actions">
-          <label className="release-selector"><span>Release scope</span><select value={activeRelease} onChange={(event) => { setActiveRelease(event.target.value); setActiveTier("All records"); }}>{releases.map((release) => <option key={release}>{release}</option>)}</select></label>
-          <button className="ghost-button">Activity</button>
+          <label className="release-selector"><span>Release scope</span><select value={activeRelease} onChange={(event) => { setActiveRelease(event.target.value); setActiveTier("All records"); }}><option value="All releases">All releases</option>{releases.map((release) => <option key={release}>{release}</option>)}</select></label>
           <button className="primary-button" onClick={() => fileRef.current?.click()}>Import workbook</button>
         </div>
       </header>
@@ -429,7 +480,7 @@ export function BaselineManager() {
         <div className="summary-lead">
           <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
           <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
-          <span>Working draft · ReleaseName retained on every source occurrence</span>
+          <span>{workspace?.label || "Current Government working baseline"} · ReleaseName retained on every source occurrence</span>
         </div>
         <div className="metric"><span>Source records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · exact projection</small></div>
         <div className="metric"><span>Canonical products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
@@ -490,7 +541,10 @@ export function BaselineManager() {
                 }}>Clear filters</button>
               </section>}
 
-              <div className="table-wrap">
+              {workspaceError ? <div className="empty">{workspaceError} Use Import workbook to establish a new authoritative workspace.</div> : null}
+              {loading ? <div className="empty">Loading the authoritative baseline workspace…</div> : null}
+
+              {!workspaceError && !loading && <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -510,15 +564,15 @@ export function BaselineManager() {
                   <tbody>
                     {filtered.map(({ row, index }) => {
                       const key = text(row["#"]);
-                      const quality = dataQualityFor(row);
-                      const rowReview = reviews[reviewIdentity(row)] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
+                      const quality = qualityForRecord(row);
+                      const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
                       return <tr
-                        key={`${text(row.ReleaseName)}:${key}:${index}`}
+                        key={row.__meta.occurrenceId}
                         className={selectedIndex === index ? "row-selected" : ""}
-                        onClick={() => setSelectedIndex(selectedIndex === index ? null : index)}
+                        onClick={() => selectRecord(index)}
                       >
                         <td><input type="checkbox" checked={checked.has(index)} onClick={(event) => event.stopPropagation()} onChange={() => toggleChecked(index)} aria-label={`Select ${text(row.LongName) || key} in ${text(row.ReleaseName)}`} /></td>
-                        <td className="mono">{key}</td>
+                        <td className="mono"><Link href={`/occurrences/${encodeURIComponent(row.__meta.occurrenceId)}`} className="row-nav-link" onClick={(event) => event.stopPropagation()}>{key || "Open"}</Link></td>
                         <td>
                           <Link
                             href={`/releases/${encodeURIComponent(text(row.ReleaseName) || "Unassigned")}`}
@@ -564,16 +618,16 @@ export function BaselineManager() {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && <div className="empty">No source records match the selected scope and health filters.</div>}
-              </div>
-              <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><button disabled>‹</button><b>1</b><button>›</button></div></footer>
+                {!filtered.length && <div className="empty">{rows.length ? "No source records match the selected scope and health filters." : "No source package is in the current workspace. Import the retained 24-column workbook to begin."}</div>}
+              </div>}
+              {!workspaceError && !loading && <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><b>All loaded</b></div></footer>}
             </>
           ) : (
             <>
               <div className="detail-head">
                 <button className="ghost-button record-back-button" type="button" onClick={() => setSelectedIndex(null)}>← Back to grid</button>
-                <div><span className="eyebrow">SOURCE RECORD #{text(selected["#"]) || "NEW"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the retained source columns."}</p><span className="autosave-label">✓ Changes save automatically</span></div>
-                <button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button>
+                <div><span className="eyebrow">SOURCE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the retained source columns."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the working baseline"}</span></div>
+                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
               </div>
 
               <div className="detail-tabs" role="tablist">
@@ -674,21 +728,21 @@ export function BaselineManager() {
                 {activeDetailTab === "occurrences" && (
                   <section className="occurrence-details">
                     <div className="section-heading">
-                      <h4>Release occurrences for source key {selectedSourceKey || "(unassigned)"}</h4>
-                      <span>{occurrenceRows.length} row{occurrenceRows.length === 1 ? "" : "s"} in this lineage</span>
+                      <h4>Release occurrences for this canonical product</h4>
+                      <span>{occurrenceRows.length} row{occurrenceRows.length === 1 ? "" : "s"} linked by the materialized product identity</span>
                     </div>
                     {!occurrenceRows.length ? (
                       <p className="manual-review-note">This row has no matching `#` in scope. Keep track manually or normalize it after import.</p>
                     ) : (
                       <div className="occurrence-list">
                         {occurrenceRows.map(({ row, index }) => {
-                          const rowQuality = dataQualityFor(row);
+                          const rowQuality = qualityForRecord(row);
                           const isCurrent = index === selectedIndex;
                           const deltas = occurrenceDiffColumns
                             .filter((column) => text(row[column]) !== text(selected[column]))
                             .map((column) => `${column}: ${text(selected[column]) || "—"} → ${text(row[column]) || "—"}`);
-                          const rowReview = reviews[reviewIdentity(row)] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
-                          return <div key={`${text(row.ReleaseName)}:${index}`} className={`occurrence-row ${isCurrent ? "occurrence-row-current" : ""}`} onClick={() => setSelectedIndex(index)}>
+                          const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
+                          return <button type="button" key={`${text(row.ReleaseName)}:${index}`} className={`occurrence-row ${isCurrent ? "occurrence-row-current" : ""}`} onClick={() => selectRecord(index)}>
                             <div className="occurrence-row-head">
                               <strong>{text(row.ReleaseName) || "Unassigned"}<small>Release baseline</small></strong>
                               <span className={`review-mark review-${rowReview.status}`}>{manualReviewLabel(rowReview.status)}</span>
@@ -697,7 +751,7 @@ export function BaselineManager() {
                             <div className="occurrence-meta">{fieldPairs(["ShortName","LongName","Tier","Resource","HW_Host","Containerized","Container Technology"], row)}</div>
                             <p><strong>From selected baseline</strong> {deltas.length === 0 ? "No changed fields." : deltas.join(" · ")}</p>
                             {isCurrent && <small className="occurrence-current-chip">Current row in focus</small>}
-                          </div>;
+                          </button>;
                         })}
                       </div>
                     )}
@@ -755,7 +809,7 @@ export function BaselineManager() {
         <span className="eyebrow">NEW SOURCE OCCURRENCE</span>
         <h2 id="add-row-title">Choose the release first</h2>
         <p>A source row cannot be created from <strong>All releases</strong> without an explicit ReleaseName. This prevents the application from silently assigning the row to the wrong reported baseline.</p>
-        <div className="new-row-summary"><span>Proposed source key</span><strong>#{nextSourceKey}</strong></div>
+        <div className="new-row-summary"><span>Source key</span><strong>Leave blank until the reported source key is known</strong></div>
         <label className="modal-field">ReleaseName<select value={newRowRelease} onChange={(event) => setNewRowRelease(event.target.value)}><option value="">Select a release…</option>{releases.filter((release) => release !== "Unassigned").map((release) => <option key={release}>{release}</option>)}<option value="__new__">＋ Create a new release…</option></select></label>
         {newRowRelease === "__new__" && <label className="modal-field">New ReleaseName<input value={newReleaseName} onChange={(event) => setNewReleaseName(event.target.value)} placeholder="Enter the exact source value" /></label>}
         <div className={resolvedNewRowRelease ? "assignment-preview ready" : "assignment-preview"}><span>{resolvedNewRowRelease ? "Row will be assigned to" : "Waiting for release selection"}</span><strong>{resolvedNewRowRelease || "No release selected"}</strong></div>
@@ -791,8 +845,8 @@ export function BaselineManager() {
           <div className="import-stats four">
             <div><strong>{draft.rows.length}</strong><span>Source rows</span></div>
             <div><strong>{new Set(draft.rows.map(releaseOf)).size}</strong><span>Releases</span></div>
-            <div><strong>{draft.rows.filter((row) => dataQualityFor(row).level === "ready").length}</strong><span>Checks pass</span></div>
-            <div><strong>{draft.rows.filter((row) => dataQualityFor(row).level !== "ready").length}</strong><span>Needs attention</span></div>
+            <div><strong>{draft.rows.filter((row) => qualityForRecord(row).level === "ready").length}</strong><span>Checks pass</span></div>
+            <div><strong>{draft.rows.filter((row) => qualityForRecord(row).level !== "ready").length}</strong><span>Needs attention</span></div>
           </div>
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
           <p className="modal-note">Each source occurrence retains ReleaseName. Import reuses the canonical product while linking its reported configuration and deployment state to the correct release baseline.</p>

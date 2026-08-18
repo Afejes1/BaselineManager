@@ -17,7 +17,7 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   const hasProduct = present(row.LongName) || present(row.ShortName);
   const hasHost = present(row.HW_Host);
 
-  if (!present(row["#"])) add("blocking", "#", "A source-record key is required.");
+  if (!present(row["#"])) add("review", "#", "The source-record key is blank. Retain the reported value when it becomes known; it is not assumed to be a Product identifier.");
   if (!present(row.ReleaseName)) add("blocking", "ReleaseName", "Choose the release baseline for this source occurrence.");
   if (!hasProduct && !hasHost) add("blocking", "LongName", "Provide a product name or HW_Host so the row can be materialized.");
 
@@ -34,4 +34,24 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   const level: QualityLevel = issues.some((issue) => issue.severity === "blocking") ? "issue" : issues.length ? "review" : "ready";
   const label: QualityLabel = level === "ready" ? "Pass" : level === "review" ? "Warning" : "Blocking";
   return { level, label, issues };
+}
+
+// Materialization conflicts are not workbook values. They are an integrity
+// signal from the normalization transaction and must block downstream use until
+// the competing source occurrences are reconciled.
+export function dataQualityForOccurrence(row: TechnicalBaselineRow, materializationStatus?: string): DataQuality {
+  const quality = dataQualityFor(row);
+  if (materializationStatus !== "conflict") return quality;
+  return {
+    level: "issue",
+    label: "Blocking",
+    issues: [
+      ...quality.issues,
+      {
+        severity: "blocking",
+        field: "HW_Host",
+        message: "This source occurrence conflicts with another reported claim at the same release configuration position. Resolve the source rows before using the canonical state.",
+      },
+    ],
+  };
 }

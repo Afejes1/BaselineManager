@@ -1,32 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState, useEffect } from "react";
+import Link from "../../components/app-link";
+import { useMemo, useState } from "react";
 import {
-  BASELINE_STORAGE_KEY,
   getReleaseSummaries,
-  getReleases,
-  loadRowsFromStorage,
-  type Record24,
   getReleaseSummary,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
+import { useBaselineWorkspace } from "../../lib/baseline-client";
 
 export default function ReleasesPage() {
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-  });
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const releases = useMemo(() => getReleaseSummaries(rows), [rows]);
   const filtered = useMemo(() => {
@@ -38,7 +24,7 @@ export default function ReleasesPage() {
   const totals = {
     rows: rows.length,
     releases: releases.length,
-    products: getReleases(rows).length ? new Set(rows.map((row) => `${String(row["LongName"])}`).size).size : 0,
+    products: new Set(rows.map((row) => String(row["LongName"] || row.ShortName || "")).filter(Boolean)).size,
   };
 
   const releaseTotals = releases.reduce(
@@ -72,7 +58,7 @@ export default function ReleasesPage() {
 
       <section className="domain-list">
         {filtered.length === 0 ? (
-          <div className="empty">No releases match {query ? `\"${query}\"` : "the current scope"}.</div>
+          <div className="empty">No releases match {query ? `"${query}"` : "the current scope"}.</div>
         ) : (
           filtered.map((release) => {
             const detail = getReleaseSummary(rows, release.release);

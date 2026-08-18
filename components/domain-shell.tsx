@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
-import Link from "next/link";
+import Link from "./app-link";
 import { usePathname } from "next/navigation";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
 
@@ -21,11 +21,7 @@ function isActiveItem(pathname: string, itemHref: string) {
 
 export function DomainPageShell({ title, subtitle, actions, children, releaseScope }: DomainPageShellProps) {
   const pathname = usePathname();
-  const [railCollapsed, setRailCollapsed] = useState(false);
-
-  useEffect(() => {
-    setRailCollapsed(window.localStorage.getItem("v3-rail-collapsed") === "true");
-  }, []);
+  const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
 
   function toggleRail() {
     setRailCollapsed((current) => {

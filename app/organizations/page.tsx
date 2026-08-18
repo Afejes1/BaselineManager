@@ -1,32 +1,18 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Link from "../../components/app-link";
+import { useMemo, useState } from "react";
 import {
-  BASELINE_STORAGE_KEY,
   getOrganizationSummaries,
-  loadRowsFromStorage,
   type OrganizationSummary,
-  type Record24,
-  text,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
+import { useBaselineWorkspace } from "../../lib/baseline-client";
 
 export default function OrganizationsPage() {
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const summaries = useMemo<OrganizationSummary[]>(() => getOrganizationSummaries(rows), [rows]);
   const filtered = useMemo(() => {

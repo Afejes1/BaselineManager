@@ -1,21 +1,20 @@
 "use client";
 
-import Link from "next/link";
-import { useMemo, useState, useEffect } from "react";
+import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
   configNodeIdentity,
   getReleases,
   getReleaseSummary,
-  loadRowsFromStorage,
   productDisplayName,
   productIdentityKey,
   releaseComparisonSummary,
   supplierIdentity,
   text,
-  type Record24,
 } from "../../../lib/baseline-data";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 
 function decodeRelease(raw: string) {
   try {
@@ -25,26 +24,16 @@ function decodeRelease(raw: string) {
   }
 }
 
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
-
 function uniqueCount(items: string[]) {
   return new Set(items.filter(Boolean)).size;
 }
 
-export default function ReleaseDetailPage({ params }: { params: { release: string } }) {
-  const releaseName = decodeRelease(params.release);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
+export default function ReleaseDetailPage() {
+  const params = useParams<{ release?: string }>();
+  const releaseName = decodeRelease(params.release ?? "");
+  const { rows } = useBaselineWorkspace();
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
-    setRows(loadRows());
-  }, []);
 
   const allReleases = useMemo(() => getReleases(rows), [rows]);
   const releaseRows = useMemo(() => rows.filter((row) => text(row.ReleaseName) === releaseName), [rows, releaseName]);

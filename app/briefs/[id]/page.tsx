@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
+import Link from "../../../components/app-link";
 import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import {
-  BASELINE_STORAGE_KEY,
-  loadRowsFromStorage,
   text,
-  type Record24,
 } from "../../../lib/baseline-data";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
 import {
   BRIEF_STORAGE_KEY,
   INITIATIVE_STORAGE_KEY,
@@ -21,11 +20,6 @@ import {
   type Initiative,
 } from "../../../lib/steering-data";
 import { DomainPageShell } from "../../../components/domain-shell";
-
-function loadRows(): Record24[] {
-  if (typeof window === "undefined") return [];
-  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
-}
 
 function decodeId(raw: string) {
   try {
@@ -50,13 +44,11 @@ function formatDate(value: string) {
   return parsed.toLocaleString();
 }
 
-export default function BriefDetailPage({ params }: { params: { id: string } }) {
-  const briefId = decodeId(params.id);
-  const [rows, setRows] = useState<Record24[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadRows();
-  });
-  const [initiatives, setInitiatives] = useState<Initiative[]>(() => {
+export default function BriefDetailPage() {
+  const params = useParams<{ id?: string }>();
+  const briefId = decodeId(params.id ?? "");
+  const { rows } = useBaselineWorkspace();
+  const [initiatives] = useState<Initiative[]>(() => {
     if (typeof window === "undefined") return [];
     return loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
   });
@@ -65,27 +57,21 @@ export default function BriefDetailPage({ params }: { params: { id: string } }) 
     return loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY));
   });
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
-  const [draftStatus, setDraftStatus] = useState<BriefStatus>("Draft");
-  const [draftNotes, setDraftNotes] = useState("");
+  const [draftStatus, setDraftStatus] = useState<BriefStatus>(() => {
+    if (typeof window === "undefined") return "Draft";
+    return loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)).find((item) => item.id === briefId)?.status ?? "Draft";
+  });
+  const [draftNotes, setDraftNotes] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)).find((item) => item.id === briefId)?.notes ?? "";
+  });
   const [notice, setNotice] = useState("");
   const [copyNotice, setCopyNotice] = useState("");
-
-  useEffect(() => {
-    setRows(loadRows());
-    setInitiatives(loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY)));
-    setBriefs(loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)));
-  }, []);
 
   const brief = useMemo(() => briefs.find((item) => item.id === briefId) ?? null, [briefs, briefId]);
   const initiative = useMemo(() => initiatives.find((item) => item.id === brief?.initiativeId) ?? null, [brief?.initiativeId, initiatives]);
   const scopedRows = useMemo(() => (initiative ? initiativeAffectedRows(rows, initiative) : []), [initiative, rows]);
   const markdown = useMemo(() => brief ? briefMarkdown(brief, initiative, rows) : "", [brief, initiative, rows]);
-
-  useEffect(() => {
-    if (!brief) return;
-    setDraftStatus(brief.status);
-    setDraftNotes(brief.notes);
-  }, [brief]);
 
   useEffect(() => {
     if (!notice) return;
@@ -301,4 +287,3 @@ export default function BriefDetailPage({ params }: { params: { id: string } }) 
     </DomainPageShell>
   );
 }
-
