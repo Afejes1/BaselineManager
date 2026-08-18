@@ -1,441 +1,90 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "../../../components/app-link";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { productDisplayName, productIdentityKey, text } from "../../../lib/baseline-data";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
-import {
-  BRIEF_STORAGE_KEY,
-  INITIATIVE_STORAGE_KEY,
-  type Brief,
-  getInitiativeProductOptions,
-  initiativeAffectedRows,
-  initiativeSummary,
-  type Initiative,
-  loadBriefs,
-  loadInitiatives,
-  type InitiativeEvidence,
-  type InitiativeStatus,
-  type WorkPackage,
-  type WorkPackageStatus,
-} from "../../../lib/steering-data";
+import Link from "../../../components/app-link";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useGovernancePortfolio } from "../../../lib/governance-client";
+import { displayStatus, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 
-type DetailTab = "summary" | "scope" | "delivery" | "evidence";
+type Tab = "overview" | "wbs" | "scope" | "records";
 
-const tabItems: Array<{ id: DetailTab; label: string }> = [
-  { id: "summary", label: "Summary" },
-  { id: "scope", label: "Technical scope" },
-  { id: "delivery", label: "Delivery" },
-  { id: "evidence", label: "Evidence & history" },
-];
-
-function formatDate(value: string) {
+function dateLabel(value: string | null) {
   if (!value) return "Not set";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
-}
-
-function decodeId(raw: string) {
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
 export default function InitiativeDetailPage() {
   const params = useParams<{ initiative?: string }>();
-  const initiativeId = decodeId(params.initiative ?? "");
+  const initiativeId = decodeURIComponent(params.initiative ?? "");
   const { rows } = useBaselineWorkspace();
-  const [initiatives, setInitiatives] = useState<Initiative[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
-  });
-  const [briefs] = useState<Brief[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY));
-  });
-  const [activeTab, setActiveTab] = useState<DetailTab>("summary");
+  const { portfolio, loading, error, mutate } = useGovernancePortfolio();
+  const [tab, setTab] = useState<Tab>("overview");
   const [notice, setNotice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [title, setTitle] = useState("");
+  const [owner, setOwner] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [wbsCode, setWbsCode] = useState("");
+  const [workStatus, setWorkStatus] = useState<WorkPackageStatus>("planned");
+  const [workNotes, setWorkNotes] = useState("");
 
-  const [newWorkPackageTitle, setNewWorkPackageTitle] = useState("");
-  const [newWorkPackageOwner, setNewWorkPackageOwner] = useState("");
-  const [newWorkPackageDue, setNewWorkPackageDue] = useState("");
-  const [newWorkPackageStatus, setNewWorkPackageStatus] = useState<WorkPackageStatus>("Planned");
-  const [newWorkPackageNotes, setNewWorkPackageNotes] = useState("");
+  const initiative = portfolio?.initiatives.find((item) => item.id === initiativeId) ?? null;
+  const linkedRecords = useMemo(() => portfolio?.records.filter((record) => record.links.some((link) => link.entityKind === "initiative" && link.entityId === initiativeId)) ?? [], [initiativeId, portfolio?.records]);
+  const scopedProductIds = useMemo(() => new Set(initiative?.scope.filter((scope) => scope.scopeKind === "product").map((scope) => scope.scopeId) ?? []), [initiative?.scope]);
+  const sourceRows = useMemo(() => rows.filter((row) => {
+    if (!initiative) return false;
+    const releaseMatches = !initiative.primaryReleaseName || String(row.ReleaseName || "").trim() === initiative.primaryReleaseName;
+    return releaseMatches && (!scopedProductIds.size || scopedProductIds.has(row.__meta.productId));
+  }), [initiative, rows, scopedProductIds]);
+  const productLabels = useMemo(() => {
+    const output = new Map<string, string>();
+    for (const row of sourceRows) if (row.__meta.productId && !output.has(row.__meta.productId)) output.set(row.__meta.productId, String(row.LongName || row.ShortName || "Unassigned product"));
+    return output;
+  }, [sourceRows]);
 
-  const [newEvidenceAuthor, setNewEvidenceAuthor] = useState("");
-  const [newEvidenceKind, setNewEvidenceKind] = useState<"Decision" | "Technical note" | "Risk" | "Question">("Decision");
-  const [newEvidenceNote, setNewEvidenceNote] = useState("");
-  const [statusFilter, setStatusFilter] = useState<InitiativeStatus | "">("");
-
-  const initiative = useMemo(() => initiatives.find((item) => item.id === initiativeId) ?? null, [initiatives, initiativeId]);
-  const summary = useMemo(() => initiativeSummary(rows, initiative), [rows, initiative]);
-  const scopeRows = useMemo(() => initiativeAffectedRows(rows, initiative), [rows, initiative]);
-
-  const productOptions = useMemo(() => {
-    if (!initiative) return [];
-    return getInitiativeProductOptions(rows, initiative.affectedRelease);
-  }, [rows, initiative]);
-
-  const productMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const row of scopeRows) {
-      const id = productIdentityKey(row);
-      if (!map.has(id)) {
-        map.set(id, productDisplayName(row));
-      }
-    }
-    return map;
-  }, [scopeRows]);
-
-  const linkedBriefs = useMemo(() => briefs.filter((brief) => brief.initiativeId === initiativeId), [briefs, initiativeId]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const handle = window.setTimeout(() => setNotice(""), 2400);
-    return () => window.clearTimeout(handle);
-  }, [notice]);
-
-  function persist(next: Initiative[]) {
-    const updated = next.map((entry) => (entry.id === initiative?.id ? { ...entry, updatedAt: new Date().toISOString() } : entry));
-    const sorted = updated.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-    setInitiatives(sorted);
-    window.localStorage.setItem(INITIATIVE_STORAGE_KEY, JSON.stringify(sorted));
-    setNotice("Saved changes.");
-  }
-
-  function updateInitiative(patch: Partial<Initiative>) {
+  async function updateStatus(status: string) {
     if (!initiative) return;
-    const next = initiatives.map((entry) => {
-      if (entry.id !== initiative.id) return entry;
-      return { ...entry, ...patch, updatedAt: new Date().toISOString() };
-    });
-    persist(next);
+    try { await mutate("update_initiative", { initiativeId: initiative.id, status }); setNotice("Initiative status updated."); }
+    catch (reason) { setNotice(reason instanceof Error ? reason.message : "The initiative could not be updated."); }
   }
 
-  function toggleProductInScope(productId: string) {
-    if (!initiative) return;
-    const hasProduct = initiative.affectedProductIds.includes(productId);
-    const nextIds = hasProduct
-      ? initiative.affectedProductIds.filter((id) => id !== productId)
-      : [...initiative.affectedProductIds, productId];
-    const next = initiatives.map((entry) => {
-      if (entry.id !== initiative.id) return entry;
-      return { ...entry, affectedProductIds: nextIds, updatedAt: new Date().toISOString() };
-    });
-    persist(next);
+  async function addWorkPackage() {
+    if (!initiative || !title.trim()) { setNotice("Enter a work-package title."); return; }
+    setSaving(true);
+    try {
+      await mutate("create_work_package", { initiativeId: initiative.id, title, owner, dueDate, wbsCode, status: workStatus, notes: workNotes });
+      setTitle(""); setOwner(""); setDueDate(""); setWbsCode(""); setWorkStatus("planned"); setWorkNotes(""); setNotice("WBS work package added.");
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The work package could not be added."); }
+    finally { setSaving(false); }
   }
 
-  function addWorkPackage() {
-    if (!initiative || !newWorkPackageTitle.trim()) {
-      setNotice("Enter a package title before saving.");
-      return;
-    }
-    const packageItem: WorkPackage = {
-      id: `wp-${Date.now()}`,
-      title: newWorkPackageTitle.trim(),
-      owner: newWorkPackageOwner.trim() || "Unassigned",
-      dueDate: newWorkPackageDue,
-      status: newWorkPackageStatus,
-      notes: newWorkPackageNotes.trim(),
-    };
-    const next = initiatives.map((entry) => {
-      if (entry.id !== initiative.id) return entry;
-      return { ...entry, workPackages: [...entry.workPackages, packageItem], updatedAt: new Date().toISOString() };
-    });
-    persist(next);
-    setNewWorkPackageTitle("");
-    setNewWorkPackageOwner("");
-    setNewWorkPackageDue("");
-    setNewWorkPackageStatus("Planned");
-    setNewWorkPackageNotes("");
+  async function changeWorkStatus(workPackageId: string, status: string) {
+    try { await mutate("update_work_package", { workPackageId, status }); setNotice("Work-package status updated."); }
+    catch (reason) { setNotice(reason instanceof Error ? reason.message : "The work package could not be updated."); }
   }
 
-  function updateWorkPackageStatus(workPackageId: string, status: WorkPackageStatus) {
-    if (!initiative) return;
-    const next = initiatives.map((entry) => {
-      if (entry.id !== initiative.id) return entry;
-      return {
-        ...entry,
-        workPackages: entry.workPackages.map((item) => (item.id === workPackageId ? { ...item, status } : item)),
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    persist(next);
-  }
+  if (loading) return <DomainPageShell title="Initiative" subtitle="Loading shared Government steering record…" releaseScope="Loading"><section className="domain-section"><p className="empty">Loading durable initiative data…</p></section></DomainPageShell>;
+  if (error || !initiative) return <DomainPageShell title="Initiative not found" subtitle={error || "That shared initiative is no longer available."} releaseScope="No linked records" actions={<Link href="/initiatives">Back to initiatives</Link>}><section className="domain-section"><article className="domain-card empty-state"><h3>Choose an initiative from the portfolio</h3><p>The planning workspace now uses shared, durable records rather than this browser’s local data.</p></article></section></DomainPageShell>;
 
-  function addEvidence() {
-    if (!initiative || !newEvidenceAuthor.trim() || !newEvidenceNote.trim()) {
-      setNotice("Add author and note before saving evidence.");
-      return;
-    }
-    const evidence: InitiativeEvidence = {
-      id: `e-${Date.now()}`,
-      author: newEvidenceAuthor.trim(),
-      kind: newEvidenceKind,
-      recordedAt: new Date().toISOString(),
-      note: newEvidenceNote.trim(),
-    };
-    const next = initiatives.map((entry) => {
-      if (entry.id !== initiative.id) return entry;
-      return { ...entry, evidence: [evidence, ...entry.evidence], updatedAt: new Date().toISOString() };
-    });
-    persist(next);
-    setNewEvidenceAuthor("");
-    setNewEvidenceKind("Decision");
-    setNewEvidenceNote("");
-  }
+  return <DomainPageShell title={initiative.title} subtitle="Governed outcome, delivery structure, source scope, and Government evidence." releaseScope={`${initiative.primaryReleaseName || "All releases"} · ${sourceRows.length} source rows`} actions={<><select value={initiative.status} aria-label="Initiative status" onChange={(event) => void updateStatus(event.target.value)}><option value="draft">Draft</option><option value="active">Active</option><option value="decision_required">Decision required</option><option value="closed">Closed</option></select><Link href="/initiatives">← Portfolio</Link></>}>
+    <section className="kpi-grid" aria-label="Initiative summary">
+      <div className="kpi-card"><span>Lifecycle</span><strong>{displayStatus(initiative.status)}</strong><small>{displayStatus(initiative.priority)} priority</small></div>
+      <div className="kpi-card"><span>Technical scope</span><strong>{productLabels.size || "All"}</strong><small>{sourceRows.length} retained source rows</small></div>
+      <div className="kpi-card"><span>WBS delivery</span><strong>{initiative.workPackages.length}</strong><small>Accountable work packages</small></div>
+      <div className="kpi-card"><span>Government evidence</span><strong>{linkedRecords.length}</strong><small>MCPs, calls, decisions, and risks</small></div>
+    </section>
+    <nav className="detail-tabs" aria-label="Initiative views">{(["overview", "wbs", "scope", "records"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "wbs" ? "WBS delivery" : item === "records" ? "Evidence & records" : displayStatus(item)}</button>)}</nav>
 
-  if (!initiative) {
-    return (
-      <DomainPageShell
-        title="Initiative not found"
-        subtitle="That initiative identifier is no longer available in workspace storage."
-        releaseScope="No linked records"
-        actions={<Link href="/initiatives">Back to initiatives</Link>}
-      >
-        <section className="domain-list">
-          <article className="domain-card">
-            <h3>Unknown initiative</h3>
-            <p className="entity-meta">Paste or open the correct item from the Initiative list.</p>
-          </article>
-        </section>
-      </DomainPageShell>
-    );
-  }
+    {tab === "overview" && <section className="split-layout"><article className="domain-card"><span className="eyebrow">CONSEQUENCE</span><h3>Why this needs attention</h3><p>{initiative.consequence || "No consequence statement recorded."}</p><span className="eyebrow">DESIRED OUTCOME</span><p>{initiative.desiredOutcome || "No desired outcome recorded."}</p><span className="eyebrow">GOVERNMENT DECISION ASK</span><p>{initiative.decisionAsk || "No decision ask recorded."}</p></article><article className="domain-card"><h3>Accountability</h3><p className="entity-meta">Owner: <strong>{initiative.owner || "Unassigned"}</strong></p><p className="entity-meta">Target date: <strong>{dateLabel(initiative.targetDate)}</strong></p><p className="entity-meta">Last updated: {dateLabel(initiative.updatedAt)}</p><p className="entity-actions"><Link href={`/briefs?initiative=${encodeURIComponent(initiative.id)}`}>Create executive one-pager</Link><Link href={`/evidence?initiative=${encodeURIComponent(initiative.id)}`}>Add MCP, call, or evidence</Link></p></article></section>}
 
-  return (
-    <DomainPageShell
-      title={initiative.title}
-      subtitle="Steering workspace for one Government outcome"
-      releaseScope={`${summary.sourceRows} source rows · ${summary.products} products`}
-      actions={(
-        <>
-          <select value={statusFilter || initiative.status} onChange={(event) => {
-            const value = event.target.value;
-            if (!value) return;
-            const nextStatus = value as InitiativeStatus;
-            setStatusFilter(nextStatus);
-            updateInitiative({ status: nextStatus });
-          }}>
-            <option value="">Quick status</option>
-            <option value="Draft">Draft</option>
-            <option value="Active">Active</option>
-            <option value="Decision required">Decision required</option>
-            <option value="Closed">Closed</option>
-          </select>
-          <Link href="/initiatives">← Back</Link>
-        </>
-      )}
-    >
-      <div className="summary">
-        <div className="metric">
-          <span>Outcome owner</span>
-          <strong>{initiative.owner}</strong>
-          <small>Target date: {formatDate(initiative.targetDate)}</small>
-        </div>
-        <div className="metric">
-          <span>Scope</span>
-          <strong>{initiative.affectedRelease}</strong>
-          <small>{summary.products} products · {summary.releases} releases</small>
-        </div>
-        <div className="metric">
-          <span>Quality</span>
-          <strong>{summary.blockingIssues + summary.warnings}</strong>
-          <small>{summary.blockingIssues} blocking · {summary.warnings} warnings</small>
-        </div>
-        <div className="metric metric-alert">
-          <span>Linked briefs</span>
-          <strong>{linkedBriefs.length}</strong>
-          <small>Leadership outputs generated</small>
-        </div>
-      </div>
+    {tab === "wbs" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">WORK BREAKDOWN STRUCTURE</span><h3>Delivery packages</h3></div><span>{initiative.workPackages.length} packages</span></div><div className="domain-table-wrap"><table><thead><tr><th>WBS</th><th>Work package</th><th>Owner</th><th>Due</th><th>Status</th><th>Notes</th></tr></thead><tbody>{initiative.workPackages.map((item) => <tr key={item.id}><td className="mono">{item.wbsCode}</td><td>{item.title}</td><td>{item.owner || "Unassigned"}</td><td>{dateLabel(item.dueDate)}</td><td><select value={item.status} aria-label={`Status for ${item.title}`} onChange={(event) => void changeWorkStatus(item.id, event.target.value)}>{workPackageStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></td><td>{item.notes || "—"}</td></tr>)}{!initiative.workPackages.length && <tr><td colSpan={6} className="empty">No delivery packages yet. Add the accountable next step below.</td></tr>}</tbody></table></div><article className="domain-card"><div className="section-toolbar"><div><span className="eyebrow">NEW WORK PACKAGE</span><h3>Add a WBS element</h3></div><span>Shared, audit logged</span></div><div className="form-grid"><label className="modal-field">Work package title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Validate system interface impact" /></label><label className="modal-field">WBS code<input value={wbsCode} onChange={(event) => setWbsCode(event.target.value)} placeholder="Auto: WP-01" /></label><label className="modal-field">Accountable owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Office / team" /></label><label className="modal-field">Due date<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label><label className="modal-field">Status<select value={workStatus} onChange={(event) => setWorkStatus(event.target.value as WorkPackageStatus)}>{workPackageStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></label></div><label className="modal-field">Notes<textarea rows={3} value={workNotes} onChange={(event) => setWorkNotes(event.target.value)} placeholder="Definition of done, dependency, or delivery note" /></label><button className="primary-button" type="button" disabled={saving} onClick={() => void addWorkPackage()}>{saving ? "Adding…" : "Add work package"}</button></article></section>}
 
-      <div className="detail-tabs">
-        {tabItems.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={activeTab === tab.id ? "tab-button tab-active" : "tab-button"}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+    {tab === "scope" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">PRODUCT BREAKDOWN STRUCTURE</span><h3>Baseline scope</h3></div><span>{initiative.primaryReleaseName || "All releases"}</span></div><div className="domain-table-wrap"><table><thead><tr><th>Product</th><th>Release</th><th>Source rows</th><th>Configuration samples</th></tr></thead><tbody>{[...productLabels.entries()].map(([productId, label]) => { const productRows = sourceRows.filter((row) => row.__meta.productId === productId); return <tr key={productId}><td><Link href={`/products/${encodeURIComponent(productId)}`}>{label}</Link></td><td>{[...new Set(productRows.map((row) => String(row.ReleaseName || "").trim()).filter(Boolean))].join(", ") || "Unassigned"}</td><td className="mono">{productRows.length}</td><td>{[...new Set(productRows.map((row) => String(row.Resource || row.Tier || "").trim()).filter(Boolean))].slice(0, 3).join(", ") || "Not reported"}</td></tr>; })}{!productLabels.size && <tr><td colSpan={4} className="empty">This initiative has no materialized product scope. It currently covers its selected release as a whole.</td></tr>}</tbody></table></div><p className="entity-actions"><Link href="/pbs">Open PBS Explorer</Link><Link href="/">Return to intake grid</Link></p></section>}
 
-      {activeTab === "summary" && (
-        <section className="domain-section">
-          <article className="domain-card">
-            <h3>Consequence</h3>
-            <p className="entity-meta">{initiative.consequence || "Not entered."}</p>
-          </article>
-          <article className="domain-card">
-            <h3>Outcome</h3>
-            <p className="entity-meta">{initiative.outcome || "Not entered."}</p>
-          </article>
-          <article className="domain-card">
-            <h3>Source rows in scope</h3>
-            <p className="entity-meta">{summary.sourceRows} rows from retained dataset are in this initiative scope.</p>
-          </article>
-          <article className="domain-card">
-            <h3>Linked briefs</h3>
-            <p className="entity-meta">
-              {linkedBriefs.map((brief) => (
-                <span key={brief.id}><Link href={`/briefs/${encodeURIComponent(brief.id)}`}>{brief.title}</Link>{" "}</span>
-              ))}
-            </p>
-          </article>
-        </section>
-      )}
-
-      {activeTab === "scope" && (
-        <section className="domain-section">
-          <div className="section-heading">
-            <h3>Affected products and release rows</h3>
-            <span>Product-level scope controls are editable here</span>
-          </div>
-          <section className="domain-table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>In scope</th>
-                  <th>Product</th>
-                  <th>Product key</th>
-                  <th>Rows</th>
-                  <th>Latest release</th>
-                </tr>
-              </thead>
-              <tbody>
-                {productOptions.map((productId) => {
-                  const productRows = scopeRows.filter((row) => productIdentityKey(row) === productId);
-                  const releaseNames = new Set(productRows.map((row) => text(row.ReleaseName)));
-                  return (
-                    <tr key={productId}>
-                      <td><input type="checkbox" checked={initiative.affectedProductIds.includes(productId) || initiative.affectedProductIds.length === 0} onChange={() => toggleProductInScope(productId)} /></td>
-                      <td>{productMap.get(productId) || productId}</td>
-                      <td className="mono">{productId}</td>
-                      <td className="mono">{productRows.length}</td>
-                      <td>{[...releaseNames].filter(Boolean).join(", ") || initiative.affectedRelease}</td>
-                    </tr>
-                  );
-                })}
-                {!productOptions.length ? <tr><td colSpan={5} className="empty">No products are currently in this scope.</td></tr> : null}
-              </tbody>
-            </table>
-          </section>
-        </section>
-      )}
-
-      {activeTab === "delivery" && (
-        <section className="domain-section">
-          <div className="section-heading">
-            <h3>Work packages</h3>
-            <span>{initiative.workPackages.length} packages</span>
-          </div>
-          <section className="domain-table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Owner</th>
-                  <th>Due</th>
-                  <th>Status</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {initiative.workPackages.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.title}</td>
-                    <td>{item.owner}</td>
-                    <td>{item.dueDate || "—"}</td>
-                    <td>
-                      <select value={item.status} onChange={(event) => updateWorkPackageStatus(item.id, event.target.value as WorkPackageStatus)}>
-                        <option>Planned</option>
-                        <option>In progress</option>
-                        <option>On hold</option>
-                        <option>Complete</option>
-                      </select>
-                    </td>
-                    <td>{item.notes || "—"}</td>
-                  </tr>
-                ))}
-                {!initiative.workPackages.length ? (
-                  <tr><td colSpan={5} className="empty">No work packages yet.</td></tr>
-                ) : null}
-              </tbody>
-            </table>
-          </section>
-
-          <section className="domain-card">
-            <div className="section-heading">
-              <h4>Add work package</h4>
-              <span>Program/WBS traceability can be captured here.</span>
-            </div>
-            <label className="modal-field" htmlFor="work-package-title">Title</label>
-            <input id="work-package-title" value={newWorkPackageTitle} onChange={(event) => setNewWorkPackageTitle(event.target.value)} placeholder="e.g., Validate OData gateway patching" />
-            <label className="modal-field" htmlFor="work-package-owner">Owner</label>
-            <input id="work-package-owner" value={newWorkPackageOwner} onChange={(event) => setNewWorkPackageOwner(event.target.value)} placeholder="Team or point of contact" />
-            <label className="modal-field" htmlFor="work-package-due">Due date</label>
-            <input id="work-package-due" type="date" value={newWorkPackageDue} onChange={(event) => setNewWorkPackageDue(event.target.value)} />
-            <label className="modal-field">
-              Status
-              <select value={newWorkPackageStatus} onChange={(event) => setNewWorkPackageStatus(event.target.value as WorkPackageStatus)}>
-                <option>Planned</option>
-                <option>In progress</option>
-                <option>On hold</option>
-                <option>Complete</option>
-              </select>
-            </label>
-            <label className="modal-field" htmlFor="work-package-notes">Notes</label>
-            <textarea id="work-package-notes" value={newWorkPackageNotes} onChange={(event) => setNewWorkPackageNotes(event.target.value)} className="review-note" rows={4} />
-            <button className="primary-button" onClick={addWorkPackage}>Add package</button>
-          </section>
-        </section>
-      )}
-
-      {activeTab === "evidence" && (
-        <section className="domain-section">
-          <div className="section-heading">
-            <h3>Evidence and history</h3>
-            <span>{initiative.evidence.length} records</span>
-          </div>
-          {initiative.evidence.map((entry) => (
-            <article className="domain-card" key={entry.id}>
-              <p className="entity-meta">
-                <strong>{entry.author}</strong> · {entry.kind} · {new Date(entry.recordedAt).toLocaleString()}
-              </p>
-              <p>{entry.note}</p>
-            </article>
-          ))}
-          {initiative.evidence.length === 0 ? <p className="empty">No evidence records yet.</p> : null}
-
-          <section className="domain-card">
-            <h4>Add evidence</h4>
-            <label className="modal-field" htmlFor="evidence-author">Author</label>
-            <input id="evidence-author" value={newEvidenceAuthor} onChange={(event) => setNewEvidenceAuthor(event.target.value)} placeholder="Analyst or office" />
-            <label className="modal-field">
-              Type
-              <select value={newEvidenceKind} onChange={(event) => setNewEvidenceKind(event.target.value as "Decision" | "Technical note" | "Risk" | "Question")}>
-                <option>Decision</option>
-                <option>Technical note</option>
-                <option>Risk</option>
-                <option>Question</option>
-              </select>
-            </label>
-            <label className="modal-field" htmlFor="evidence-note">Note</label>
-            <textarea id="evidence-note" value={newEvidenceNote} onChange={(event) => setNewEvidenceNote(event.target.value)} className="review-note" rows={6} />
-            <button className="primary-button" onClick={addEvidence}>Add evidence</button>
-          </section>
-        </section>
-      )}
-
-      {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
-    </DomainPageShell>
-  );
+    {tab === "records" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">TRACEABILITY</span><h3>Government records and evidence</h3></div><Link href={`/evidence?initiative=${encodeURIComponent(initiative.id)}`}>+ Add record</Link></div>{linkedRecords.length ? <div className="domain-list">{linkedRecords.map((record) => <article className="domain-card" key={record.id}><div className="section-toolbar"><div><span className="record-type">{displayStatus(record.recordType)}</span><h3>{record.title}</h3></div><span className={`status-pill status-${record.status}`}>{displayStatus(record.status)}</span></div><p className="entity-meta">{record.externalReference || "No external reference"} · Owner: {record.owner || "Unassigned"}</p><p>{record.summary || "No summary recorded."}</p><p className="entity-meta">{record.documents.length} attached evidence file(s) · {record.links.length} traceability link(s)</p></article>)}</div> : <article className="domain-card empty-state"><h3>No Government records linked yet</h3><p>Capture the MCP, technical call, decision, risk, or question that substantiates this initiative. Files can be attached to the record.</p><Link href={`/evidence?initiative=${encodeURIComponent(initiative.id)}`}>Create linked record</Link></article>}</section>}
+    {notice && <div className="toast" role="status">✓ {notice}</div>}
+  </DomainPageShell>;
 }

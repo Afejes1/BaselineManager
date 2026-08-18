@@ -1,264 +1,103 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "../../components/app-link";
-import { useEffect, useMemo, useState } from "react";
-import { getProductSummaries } from "../../lib/baseline-data";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
-import {
-  INITIATIVE_STORAGE_KEY,
-  createInitiativeRecord,
-  loadInitiatives,
-  getInitiativeProductOptions,
-  getInitiativeReleaseOptions,
-  getInitiativeSummaries,
-  initiativeStatuses,
-  type Initiative,
-  type InitiativeStatus,
-} from "../../lib/steering-data";
 import { DomainPageShell } from "../../components/domain-shell";
+import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useGovernancePortfolio } from "../../lib/governance-client";
+import { displayStatus, initiativePriorities, initiativeStatuses, type InitiativePriority, type InitiativeStatus } from "../../lib/governance-model";
 
-function formatCount(value: number) {
-  return value.toLocaleString();
-}
+type ProductOption = { id: string; label: string; releaseNames: string[] };
 
-function parseDate(value: string) {
-  if (!value) return "Unspecified";
+function dateLabel(value: string | null) {
+  if (!value) return "No target date";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
 export default function InitiativesPage() {
   const { rows } = useBaselineWorkspace();
-  const [initiatives, setInitiatives] = useState<Initiative[]>(() => {
-    if (typeof window === "undefined") return [];
-    return loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY));
-  });
+  const { portfolio, loading, error, mutate } = useGovernancePortfolio();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"All" | InitiativeStatus>("All");
+  const [statusFilter, setStatusFilter] = useState<InitiativeStatus | "all">("all");
   const [showCreate, setShowCreate] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
-  const [newTitle, setNewTitle] = useState("");
-  const [newOwner, setNewOwner] = useState("");
-  const [newConsequence, setNewConsequence] = useState("");
-  const [newOutcome, setNewOutcome] = useState("");
-  const [newTargetDate, setNewTargetDate] = useState("");
-  const [newStatus, setNewStatus] = useState<InitiativeStatus>("Draft");
-  const [newRelease, setNewRelease] = useState("All releases");
-  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
+  const [title, setTitle] = useState("");
+  const [owner, setOwner] = useState("");
+  const [releaseName, setReleaseName] = useState("All releases");
+  const [status, setStatus] = useState<InitiativeStatus>("draft");
+  const [priority, setPriority] = useState<InitiativePriority>("medium");
+  const [targetDate, setTargetDate] = useState("");
+  const [consequence, setConsequence] = useState("");
+  const [desiredOutcome, setDesiredOutcome] = useState("");
+  const [decisionAsk, setDecisionAsk] = useState("");
+  const [productIds, setProductIds] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    const handle = window.setTimeout(() => setNotice(""), 2600);
-    return () => window.clearTimeout(handle);
-  }, [notice]);
-
-  const productOptions = useMemo(() => getInitiativeProductOptions(rows, newRelease), [rows, newRelease]);
-  const summaries = useMemo(() => getInitiativeSummaries(rows, initiatives), [rows, initiatives]);
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return summaries.filter((entry) => {
-      const initiative = entry.initiative;
-      if (statusFilter !== "All" && initiative.status !== statusFilter) return false;
-      if (!normalized) return true;
-      const haystack = `${initiative.title} ${initiative.owner} ${initiative.consequence} ${initiative.outcome} ${initiative.affectedRelease}`.toLowerCase();
-      return haystack.includes(normalized);
-    });
-  }, [summaries, query, statusFilter]);
-  const releases = useMemo(() => getInitiativeReleaseOptions(rows), [rows]);
-
-  function persist(next: Initiative[]) {
-    const payload = next.sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-    setInitiatives(payload);
-    window.localStorage.setItem(INITIATIVE_STORAGE_KEY, JSON.stringify(payload));
-  }
-
-  function openCreateForm() {
-    setNewTitle("");
-    setNewOwner("");
-    setNewConsequence("");
-    setNewOutcome("");
-    setNewTargetDate("");
-    setNewStatus("Draft");
-    setNewRelease("All releases");
-    setSelectedProductIds(new Set(getInitiativeProductOptions(rows, "All releases")));
-    setShowCreate(true);
-  }
-
-  function chooseNewRelease(release: string) {
-    setNewRelease(release);
-    setSelectedProductIds(new Set(getInitiativeProductOptions(rows, release)));
-  }
-
-  function toggleProduct(productId: string) {
-    setSelectedProductIds((current) => {
-      const next = new Set(current);
-      if (next.has(productId)) next.delete(productId);
-      else next.add(productId);
-      return next;
-    });
-  }
-
-  function createInitiative() {
-    const initiative = createInitiativeRecord({
-      title: newTitle,
-      owner: newOwner,
-      consequence: newConsequence,
-      outcome: newOutcome,
-      targetDate: newTargetDate,
-      status: newStatus,
-      affectedRelease: newRelease,
-      affectedProductIds: Array.from(selectedProductIds),
-    });
-
-    if (!initiative.title.trim()) {
-      setNotice("Enter a title before saving.");
-      return;
+  const releases = useMemo(() => ["All releases", ...Array.from(new Set(rows.map((row) => String(row.ReleaseName || "").trim()).filter(Boolean))).sort()], [rows]);
+  const products = useMemo<ProductOption[]>(() => {
+    const grouped = new Map<string, ProductOption>();
+    for (const row of rows) {
+      const productId = row.__meta.productId;
+      if (!productId) continue;
+      const label = String(row.LongName || row.ShortName || "Unassigned product");
+      const current = grouped.get(productId) ?? { id: productId, label, releaseNames: [] };
+      const rowRelease = String(row.ReleaseName || "").trim();
+      if (rowRelease && !current.releaseNames.includes(rowRelease)) current.releaseNames.push(rowRelease);
+      grouped.set(productId, current);
     }
-    const next = [initiative, ...initiatives];
-    persist(next);
-    setNotice(`Created initiative ${initiative.title}.`);
-    setShowCreate(false);
+    return [...grouped.values()].sort((left, right) => left.label.localeCompare(right.label));
+  }, [rows]);
+  const selectableProducts = useMemo(() => products.filter((product) => releaseName === "All releases" || product.releaseNames.includes(releaseName)), [products, releaseName]);
+  const initiatives = portfolio?.initiatives ?? [];
+  const filtered = useMemo(() => initiatives.filter((initiative) => {
+    if (statusFilter !== "all" && initiative.status !== statusFilter) return false;
+    const terms = `${initiative.title} ${initiative.owner || ""} ${initiative.primaryReleaseName || "All releases"} ${initiative.consequence || ""}`.toLowerCase();
+    return terms.includes(query.trim().toLowerCase());
+  }), [initiatives, query, statusFilter]);
+
+  function openCreate() {
+    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setProductIds(new Set(products.map((product) => product.id))); setShowCreate(true);
   }
 
-  return (
-    <DomainPageShell
-      title="Initiatives"
-      subtitle="Steering workspace for Government outcomes and technical scope."
-      releaseScope={`${initiatives.length} initiatives · ${releases.length ? `${releases.length - 1} releases` : "no release context"} loaded`}
-      actions={(
-        <>
-          <label className="search" style={{ width: "240px" }}>
-            <span>⌕</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" />
-          </label>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "All" | InitiativeStatus)} style={{ minWidth: "150px" }}>
-            <option>All</option>
-            {initiativeStatuses.map((status) => <option key={status}>{status}</option>)}
-          </select>
-          <button className="primary-button" onClick={openCreateForm}>＋ New initiative</button>
-        </>
-      )}
-    >
-      <div className="summary">
-        <div className="metric">
-          <span>Initiatives</span>
-          <strong>{formatCount(initiatives.length)}</strong>
-          <small>Total initiatives in workspace</small>
-        </div>
-        <div className="metric">
-          <span>Draft</span>
-          <strong>{formatCount(initiatives.filter((initiative) => initiative.status === "Draft").length)}</strong>
-          <small>Needs planning or review</small>
-        </div>
-        <div className="metric">
-          <span>Active</span>
-          <strong>{formatCount(initiatives.filter((initiative) => initiative.status === "Active").length)}</strong>
-          <small>Being executed</small>
-        </div>
-        <div className="metric metric-alert">
-          <span>Closed</span>
-          <strong>{formatCount(initiatives.filter((initiative) => initiative.status === "Closed").length)}</strong>
-          <small>Formal outcome delivered</small>
-        </div>
-      </div>
+  function changeRelease(nextRelease: string) {
+    setReleaseName(nextRelease);
+    setProductIds(new Set(products.filter((product) => nextRelease === "All releases" || product.releaseNames.includes(nextRelease)).map((product) => product.id)));
+  }
 
-      <section className="domain-list">
-        {filtered.length === 0 ? (
-          <article className="domain-card">
-            <h3>No initiatives found</h3>
-            <p className="entity-meta">Create one from the button above, then bind it to a release and affected products.</p>
-          </article>
-        ) : filtered.map((summary) => {
-          const initiative = summary.initiative;
-          return (
-            <article key={initiative.id} className="domain-card">
-              <div className="section-heading">
-                <h3><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link></h3>
-                <span>{initiative.status}</span>
-              </div>
-              <p className="entity-meta">{initiative.consequence || "No consequence text yet."}</p>
-              <p className="entity-metric">{initiative.owner} · target {parseDate(initiative.targetDate)} · scope {initiative.affectedRelease}</p>
-              <p className="entity-meta">Source rows {summary.sourceRows} · {summary.products} products · {summary.releases} releases · {summary.blockingIssues + summary.warnings} quality cues</p>
-              <p className="entity-actions">
-                <Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>Open initiative</Link>
-                <Link href={`/briefs?initiative=${encodeURIComponent(initiative.id)}`}>Create brief</Link>
-              </p>
-            </article>
-          );
-        })}
-      </section>
+  async function create() {
+    if (!title.trim()) { setNotice("Enter an initiative title before saving."); return; }
+    setSaving(true);
+    try {
+      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk, productScopes: selectableProducts.filter((product) => productIds.has(product.id)).map((product) => ({ id: product.id, label: product.label })) });
+      setShowCreate(false);
+      setNotice(`Created initiative ${title.trim()}.`);
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : "The initiative could not be created.");
+    } finally { setSaving(false); }
+  }
 
-      {showCreate && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
-        if (event.target === event.currentTarget) setShowCreate(false);
-      }}>
-        <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="initiative-create-title">
-          <span className="eyebrow">NEW INITIATIVE</span>
-          <h2 id="initiative-create-title">Create initiative</h2>
-          <label className="modal-field">
-            Initiative title
-            <input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="e.g., Stabilize 30P06 mission telemetry stack" />
-          </label>
-          <label className="modal-field">
-            Owner
-            <input value={newOwner} onChange={(event) => setNewOwner(event.target.value)} placeholder="Lead office / team" />
-          </label>
-          <label className="modal-field">
-            Release scope
-            <select value={newRelease} onChange={(event) => chooseNewRelease(event.target.value)}>
-              {releases.map((release) => <option key={release}>{release}</option>)}
-            </select>
-          </label>
-          <label className="modal-field">
-            Status
-            <select value={newStatus} onChange={(event) => setNewStatus(event.target.value as InitiativeStatus)}>
-              {initiativeStatuses.map((status) => <option key={status}>{status}</option>)}
-            </select>
-          </label>
-          <label className="modal-field">
-            Target date
-            <input type="date" value={newTargetDate} onChange={(event) => setNewTargetDate(event.target.value)} />
-          </label>
-          <label className="modal-field">
-            Consequence
-            <input value={newConsequence} onChange={(event) => setNewConsequence(event.target.value)} placeholder="What problem is this initiative addressing?" />
-          </label>
-          <label className="modal-field">
-            Desired outcome
-            <input value={newOutcome} onChange={(event) => setNewOutcome(event.target.value)} placeholder="Expected working baseline and delivery condition." />
-          </label>
-          <div className="modal-field">
-            <span>Products in scope</span>
-            <div className="domain-table-wrap" style={{ marginTop: 8 }}>
-              <table>
-                <tbody>
-                  {productOptions.map((productId) => {
-                    const summary = getProductSummaries(rows).find((candidate) => candidate.id === productId);
-                    const display = summary?.canonical ?? productId;
-                    return (
-                      <tr key={productId}>
-                        <td style={{ width: "32px" }}>
-                          <input type="checkbox" checked={selectedProductIds.has(productId)} onChange={() => toggleProduct(productId)} aria-label={display} />
-                        </td>
-                        <td><label>{display}</label></td>
-                        <td className="mono">{productId}</td>
-                      </tr>
-                    );
-                  })}
-                  {!productOptions.length ? (
-                    <tr><td colSpan={3} className="empty">No rows for this release.</td></tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <footer>
-            <button className="ghost-button" onClick={() => setShowCreate(false)}>Cancel</button>
-            <button className="primary-button" onClick={createInitiative}>Create initiative</button>
-          </footer>
-        </section>
-      </div>}
+  return <DomainPageShell title="Initiatives & WBS" subtitle="Government outcomes, scoped technical impact, and accountable delivery packages." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading stewardship context"} actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
+    <section className="kpi-grid" aria-label="Initiative summary">
+      <div className="kpi-card"><span>Portfolio</span><strong>{initiatives.length}</strong><small>Durable Government initiatives</small></div>
+      <div className="kpi-card"><span>Active</span><strong>{initiatives.filter((item) => item.status === "active").length}</strong><small>Under active stewardship</small></div>
+      <div className="kpi-card"><span>Decision required</span><strong>{initiatives.filter((item) => item.status === "decision_required").length}</strong><small>Needs Government direction</small></div>
+      <div className="kpi-card"><span>WBS packages</span><strong>{initiatives.reduce((total, item) => total + item.workPackages.length, 0)}</strong><small>Delivery elements in the portfolio</small></div>
+    </section>
 
-      {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
-    </DomainPageShell>
-  );
+    {loading ? <section className="domain-section"><p className="empty">Loading durable initiative records…</p></section> : null}
+    {error ? <section className="domain-section"><p className="error-copy">{error}</p></section> : null}
+    {!loading && !error && <section className="domain-list">
+      {filtered.length ? filtered.map((initiative) => <article key={initiative.id} className="domain-card">
+        <div className="section-toolbar"><div><span className={`status-pill status-${initiative.status}`}>{displayStatus(initiative.status)}</span><h3 style={{ marginTop: 10 }}><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link></h3></div><span className={`status-pill status-${initiative.priority}`}>{displayStatus(initiative.priority)}</span></div>
+        <p className="entity-meta">{initiative.primaryReleaseName || "All releases"} · {initiative.scope.filter((scope) => scope.scopeKind === "product").length || "All"} products · {initiative.linkedRecordCount} linked Government records</p>
+        <p>{initiative.consequence || "No consequence statement recorded yet."}</p>
+        <p className="entity-meta">Owner: {initiative.owner || "Unassigned"} · {dateLabel(initiative.targetDate)} · {initiative.workPackages.length} WBS packages</p>
+        <p className="entity-actions"><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>Open initiative</Link><Link href={`/briefs?initiative=${encodeURIComponent(initiative.id)}`}>Create one-pager</Link></p>
+      </article>) : <article className="domain-card empty-state"><h3>No initiatives match this view</h3><p>Create a durable initiative, scope it to a release and products, then add WBS packages, MCPs, calls, decisions, and evidence.</p><button className="primary-button" type="button" onClick={openCreate}>Create initiative</button></article>}
+    </section>}
+
+    {showCreate && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowCreate(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="initiative-create-title"><span className="eyebrow">GOVERNMENT STEERING</span><h2 id="initiative-create-title">Create initiative</h2><p>This record will be stored in the shared governance workspace and linked to the current baseline by release and product scope.</p><div className="form-grid"><label className="modal-field">Initiative title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Stabilize mission telemetry stack" /></label><label className="modal-field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Lead office / team" /></label><label className="modal-field">Release scope<select value={releaseName} onChange={(event) => changeRelease(event.target.value)}>{releases.map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><label className="modal-field">Lifecycle<select value={status} onChange={(event) => setStatus(event.target.value as InitiativeStatus)}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as InitiativePriority)}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label></div><label className="modal-field">Consequence<input value={consequence} onChange={(event) => setConsequence(event.target.value)} placeholder="What is at risk or needs correction?" /></label><label className="modal-field">Desired outcome<input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="What good looks like in the working baseline" /></label><label className="modal-field">Decision ask<input value={decisionAsk} onChange={(event) => setDecisionAsk(event.target.value)} placeholder="Specific Government decision or direction requested" /></label><div className="modal-field"><span>Products in scope</span><div className="domain-table-wrap" style={{ marginTop: 8, maxHeight: 190 }}><table><tbody>{selectableProducts.map((product) => <tr key={product.id}><td style={{ width: 34 }}><input type="checkbox" aria-label={product.label} checked={productIds.has(product.id)} onChange={() => setProductIds((current) => { const next = new Set(current); if (next.has(product.id)) next.delete(product.id); else next.add(product.id); return next; })} /></td><td>{product.label}</td><td className="entity-meta">{product.releaseNames.join(", ")}</td></tr>)}{!selectableProducts.length ? <tr><td className="empty">No products in this release.</td></tr> : null}</tbody></table></div></div><footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={create}>{saving ? "Saving…" : "Create initiative"}</button></footer></section></div>}
+    {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
+  </DomainPageShell>;
 }

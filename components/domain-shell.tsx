@@ -62,6 +62,11 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
             <small>{releaseScope ? `${releaseScope} · View` : "Use release filters on demand"}</small>
           </div>
         </div>
+        <Link className="profile" href="/" title="Open baseline steward controls">
+          <span>AC</span>
+          <div><strong>Baseline steward</strong><small>Source intake &amp; demo workspace</small></div>
+          <b>→</b>
+        </Link>
       </aside>
 
       <section className="workspace page-workspace">

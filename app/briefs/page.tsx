@@ -1,269 +1,70 @@
 "use client";
 
-import Link from "../../components/app-link";
 import { useEffect, useMemo, useState } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
-import {
-} from "../../lib/baseline-data";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
-import {
-  BRIEF_STORAGE_KEY,
-  INITIATIVE_STORAGE_KEY,
-  briefStatuses,
-  getInitiativeReleaseOptions,
-  loadBriefs,
-  loadInitiatives,
-  makeBriefFromInitiative,
-  type Brief,
-  type BriefStatus,
-  type Initiative,
-} from "../../lib/steering-data";
+import { useSearchParams } from "next/navigation";
+import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
+import { useGovernancePortfolio } from "../../lib/governance-client";
+import { briefStatuses, displayStatus, type BriefStatus } from "../../lib/governance-model";
 
-function loadFromStorage() {
-  if (typeof window === "undefined") {
-    return {
-      initiatives: [] as Initiative[],
-      briefs: [] as Brief[],
-    };
-  }
-  return {
-    initiatives: loadInitiatives(window.localStorage.getItem(INITIATIVE_STORAGE_KEY)),
-    briefs: loadBriefs(window.localStorage.getItem(BRIEF_STORAGE_KEY)),
-  };
-}
-
-function formatDate(value: string) {
-  if (!value) return "Unknown";
+function dateLabel(value: string) {
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString();
-}
-
-function decodeId(raw: string) {
-  try {
-    return decodeURIComponent(raw);
-  } catch {
-    return raw;
-  }
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
 }
 
 export default function BriefsPage() {
   const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const { rows } = useBaselineWorkspace();
-  const [initiatives] = useState<Initiative[]>(() => loadFromStorage().initiatives);
-  const [briefs, setBriefs] = useState<Brief[]>(() => loadFromStorage().briefs);
+  const { portfolio, loading, error, mutate } = useGovernancePortfolio();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<BriefStatus | "All">("All");
-  const [selectedInitiativeId, setSelectedInitiativeId] = useState(() => {
-    const preselected = decodeId(searchParams.get("initiative") ?? "");
-    return initiatives.some((initiative) => initiative.id === preselected) ? preselected : "";
-  });
+  const [statusFilter, setStatusFilter] = useState<BriefStatus | "all">("all");
+  const [initiativeId, setInitiativeId] = useState("");
+  const [briefTitle, setBriefTitle] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const initiatives = portfolio?.initiatives ?? [];
+  const briefs = portfolio?.briefs ?? [];
 
   useEffect(() => {
-    if (!notice) return;
-    const handle = window.setTimeout(() => setNotice(""), 2200);
-    return () => window.clearTimeout(handle);
-  }, [notice]);
+    const selected = searchParams.get("initiative") || initiatives[0]?.id || "";
+    if (!initiativeId && selected) setInitiativeId(selected);
+  }, [initiativeId, initiatives, searchParams]);
 
-  const releases = useMemo(() => getInitiativeReleaseOptions(rows), [rows]);
-  const releaseCount = Math.max(releases.length - 1, 0);
+  const filtered = useMemo(() => briefs.filter((brief) => {
+    if (statusFilter !== "all" && brief.status !== statusFilter) return false;
+    return `${brief.title} ${brief.initiativeTitle || ""} ${brief.snapshot.releaseName}`.toLowerCase().includes(query.trim().toLowerCase());
+  }), [briefs, query, statusFilter]);
+  const selectedInitiative = initiatives.find((item) => item.id === initiativeId) ?? null;
 
-  const initiativeLookup = useMemo(() => {
-    const map = new Map<string, Initiative>();
-    for (const initiative of initiatives) {
-      map.set(initiative.id, initiative);
-    }
-    return map;
-  }, [initiatives]);
-
-  const initiativesSorted = useMemo(() => [...initiatives].sort((left, right) =>
-    new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  ), [initiatives]);
-
-  const selectedInitiative = useMemo(() => initiativeLookup.get(selectedInitiativeId) ?? null, [initiativeLookup, selectedInitiativeId]);
-
-  const filteredBriefs = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return briefs
-      .filter((brief) => statusFilter === "All" || brief.status === statusFilter)
-      .filter((brief) => {
-        if (!normalized) return true;
-        const initiativeTitle = initiativeLookup.get(brief.initiativeId)?.title || brief.initiativeTitle;
-        const haystack = `${brief.title} ${brief.releaseScope} ${brief.status} ${initiativeTitle}`.toLowerCase();
-        return haystack.includes(normalized);
-      })
-      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-  }, [briefs, initiativeLookup, query, statusFilter]);
-
-  function persist(next: Brief[]) {
-    const sorted = [...next].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-    setBriefs(sorted);
-    window.localStorage.setItem(BRIEF_STORAGE_KEY, JSON.stringify(sorted));
+  function openCreate() {
+    const current = initiatives.find((item) => item.id === initiativeId) ?? initiatives[0] ?? null;
+    if (current) { setInitiativeId(current.id); setBriefTitle(`${current.title} — Executive One-Pager`); }
+    setShowCreate(true);
   }
 
-  function createBrief() {
-    if (!selectedInitiative) {
-      setNotice("Choose an initiative before creating a brief.");
-      return;
-    }
-    const nextBrief = makeBriefFromInitiative(rows, selectedInitiative);
-    persist([nextBrief, ...briefs]);
-    setNotice(`Created brief "${nextBrief.title}".`);
-    window.history.replaceState({}, "", pathname);
+  async function createBrief() {
+    if (!initiativeId) { setNotice("Create or choose an initiative first."); return; }
+    setSaving(true);
+    try {
+      const result = await mutate("create_executive_brief", { initiativeId, title: briefTitle });
+      setShowCreate(false);
+      if (result.id) window.location.assign(`/briefs/${encodeURIComponent(String(result.id))}`);
+      else setNotice("Executive one-pager created.");
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The one-pager could not be created."); }
+    finally { setSaving(false); }
   }
 
-  function setBriefStatus(briefId: string, nextStatus: BriefStatus) {
-    const nextBriefs = briefs.map((item) => (item.id === briefId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
-    persist(nextBriefs);
-    setNotice("Brief status updated.");
+  async function updateStatus(briefId: string, status: string) {
+    try { await mutate("update_executive_brief", { briefId, status }); setNotice("Brief lifecycle updated."); }
+    catch (reason) { setNotice(reason instanceof Error ? reason.message : "The brief could not be updated."); }
   }
 
-  function deleteBrief(briefId: string) {
-    persist(briefs.filter((item) => item.id !== briefId));
-    setNotice("Brief deleted.");
-  }
-
-  return (
-    <DomainPageShell
-      title="Executive Briefs"
-      subtitle="Leadership reporting outputs derived from initiatives and source scope."
-      releaseScope={`${briefs.length} briefs · ${releaseCount ? `${releaseCount} releases` : "no releases loaded"}`}
-      actions={(
-        <>
-          <label className="search" style={{ width: "240px" }}>
-            <span>⌕</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search briefs" />
-          </label>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as BriefStatus | "All")}>
-            <option>All</option>
-            {briefStatuses.map((status) => <option key={status}>{status}</option>)}
-          </select>
-          <select
-            value={selectedInitiativeId}
-            onChange={(event) => setSelectedInitiativeId(event.target.value)}
-            style={{ minWidth: "240px" }}
-          >
-            <option value="">Create from initiative…</option>
-            {initiativesSorted.map((initiative) => (
-              <option key={initiative.id} value={initiative.id}>
-                {initiative.title}
-              </option>
-            ))}
-          </select>
-          <button className="primary-button" onClick={createBrief} disabled={!selectedInitiativeId}>
-            ＋ New brief
-          </button>
-        </>
-      )}
-    >
-      <div className="summary">
-        <div className="metric">
-          <span>Total briefs</span>
-          <strong>{briefs.length}</strong>
-          <small>Generated leadership outputs</small>
-        </div>
-        <div className="metric">
-          <span>Draft</span>
-          <strong>{briefs.filter((brief) => brief.status === "Draft").length}</strong>
-          <small>Needs final stewardship before circulation</small>
-        </div>
-        <div className="metric">
-          <span>Reviewed</span>
-          <strong>{briefs.filter((brief) => brief.status === "Reviewed").length}</strong>
-          <small>Stewardship complete</small>
-        </div>
-        <div className="metric metric-alert">
-          <span>Published</span>
-          <strong>{briefs.filter((brief) => brief.status === "Published").length}</strong>
-          <small>Ready for leadership audience</small>
-        </div>
-      </div>
-
-      {selectedInitiative ? (
-        <section className="domain-section">
-          <article className="domain-card">
-            <div className="section-heading">
-              <h3>Initiative-scoped generation</h3>
-              <span>Pre-selected from navigation</span>
-            </div>
-            <p className="entity-meta">{selectedInitiative.title}</p>
-            <p className="entity-meta">
-              Release scope: {selectedInitiative.affectedRelease}
-              {selectedInitiative.affectedProductIds.length ? ` · ${selectedInitiative.affectedProductIds.length} product IDs` : " · all products in release scope"}
-            </p>
-            <p className="entity-actions">
-              <Link href={`/initiatives/${encodeURIComponent(selectedInitiative.id)}`}>Open initiative</Link>
-              <button
-                className="ghost-button"
-                type="button"
-                onClick={() => {
-                  setSelectedInitiativeId("");
-                  setNotice("Selection cleared.");
-                }}
-              >
-                Clear selection
-              </button>
-            </p>
-          </article>
-        </section>
-      ) : null}
-
-      <section className="domain-list">
-        {filteredBriefs.length === 0 ? (
-          <article className="domain-card">
-            <h3>No matching briefs</h3>
-            <p className="entity-meta">Create one from an initiative above, then open it from the detail view.</p>
-            <p className="entity-meta">
-              {initiatives.length === 0
-                ? "No initiatives exist yet."
-                : "Try clearing filters or creating a new brief for an initiative."}
-            </p>
-            <p className="entity-actions">
-              {initiatives.length ? <Link href="/initiatives">Open initiatives</Link> : null}
-              <Link href="/">Return to source intake</Link>
-            </p>
-          </article>
-        ) : (
-          filteredBriefs.map((brief) => {
-            const initiative = initiativeLookup.get(brief.initiativeId);
-            return (
-              <article key={brief.id} className="domain-card">
-                <div className="section-heading">
-                  <h3>
-                    <Link href={`/briefs/${encodeURIComponent(brief.id)}`}>{brief.title}</Link>
-                  </h3>
-                  <span>{brief.status}</span>
-                </div>
-                <p className="entity-meta">{initiative?.title ?? brief.initiativeTitle}</p>
-                <p className="entity-meta">
-                  {brief.sourceRows} source rows · {brief.products} products · {brief.releases} releases · {brief.releaseScope}
-                </p>
-                <p className="entity-meta">
-                  Created {formatDate(brief.createdAt)} · updated {formatDate(brief.updatedAt)}
-                </p>
-                <p className="entity-meta">{brief.notes || "No custom notes yet."}</p>
-                <p className="entity-actions">
-                  <Link href={`/briefs/${encodeURIComponent(brief.id)}`}>Open brief</Link>
-                  {initiative ? <Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>Open initiative</Link> : null}
-                  <select
-                    value={brief.status}
-                    onChange={(event) => setBriefStatus(brief.id, event.target.value as BriefStatus)}
-                    title={`Set status for ${brief.title}`}
-                  >
-                    {briefStatuses.map((status) => <option key={status}>{status}</option>)}
-                  </select>
-                  <button className="ghost-button" type="button" onClick={() => deleteBrief(brief.id)}>Delete</button>
-                </p>
-              </article>
-            );
-          })
-        )}
-      </section>
-
-      {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
-    </DomainPageShell>
-  );
+  return <DomainPageShell title="Executive Briefs" subtitle="Decision-ready one-pagers with an immutable baseline snapshot and publication history." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading stewardship context"} actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search briefs" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as BriefStatus | "all")}><option value="all">All statuses</option>{briefStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New brief</button></>}>
+    <section className="kpi-grid" aria-label="Executive brief summary"><div className="kpi-card"><span>Total briefs</span><strong>{briefs.length}</strong><small>Generated leadership outputs</small></div><div className="kpi-card"><span>Draft</span><strong>{briefs.filter((item) => item.status === "draft").length}</strong><small>Needs final stewardship</small></div><div className="kpi-card"><span>Reviewed</span><strong>{briefs.filter((item) => item.status === "reviewed").length}</strong><small>Stewardship complete</small></div><div className="kpi-card"><span>Published</span><strong>{briefs.filter((item) => item.status === "published").length}</strong><small>Ready for leadership audience</small></div></section>
+    {loading && <section className="domain-section"><p className="empty">Loading durable executive briefs…</p></section>}
+    {error && <section className="domain-section"><p className="error-copy">{error}</p></section>}
+    {!loading && !error && <section className="domain-list">{filtered.length ? filtered.map((brief) => <article className="domain-card" key={brief.id}><div className="section-toolbar"><div><span className="record-type">One-pager</span><h3><Link href={`/briefs/${encodeURIComponent(brief.id)}`}>{brief.title}</Link></h3></div><span className={`status-pill status-${brief.status}`}>{displayStatus(brief.status)}</span></div><p className="entity-meta">{brief.initiativeTitle || "Independent brief"} · {brief.snapshot.releaseName}</p><p>{brief.snapshot.sourceRows} source records · {brief.snapshot.products} products · {brief.snapshot.reviewRows} review records at snapshot time</p><p className="entity-meta">Created {dateLabel(brief.createdAt)} · Last updated {dateLabel(brief.updatedAt)}</p><p className="entity-actions"><Link href={`/briefs/${encodeURIComponent(brief.id)}`}>Open one-pager</Link>{brief.initiativeId && <Link href={`/initiatives/${encodeURIComponent(brief.initiativeId)}`}>Open initiative</Link>}<select aria-label={`Lifecycle for ${brief.title}`} value={brief.status} onChange={(event) => void updateStatus(brief.id, event.target.value)}>{briefStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></p></article>) : <article className="domain-card empty-state"><h3>No executive briefs match this view</h3><p>Build an initiative first, then create a one-pager that captures its release/product scope and linked Government records at a point in time.</p><Link href="/initiatives">Open initiatives & WBS</Link></article>}</section>}
+    {showCreate && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowCreate(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="create-brief-title"><span className="eyebrow">LEADERSHIP OUTPUT</span><h2 id="create-brief-title">Create executive one-pager</h2><p>The brief captures the current technical baseline, review status, scoped products, and linked Government records as a durable snapshot.</p><label className="modal-field">Initiative<select value={initiativeId} onChange={(event) => { const next = event.target.value; setInitiativeId(next); const item = initiatives.find((initiative) => initiative.id === next); if (item && !briefTitle) setBriefTitle(`${item.title} — Executive One-Pager`); }}><option value="">Select initiative</option>{initiatives.map((initiative) => <option key={initiative.id} value={initiative.id}>{initiative.title}</option>)}</select></label><label className="modal-field">Brief title<input value={briefTitle} onChange={(event) => setBriefTitle(event.target.value)} placeholder="Leadership-ready title" /></label>{selectedInitiative && <div className="preview-card"><strong>{selectedInitiative.primaryReleaseName || "All releases"}</strong><span>{selectedInitiative.scope.filter((scope) => scope.scopeKind === "product").length || "All"} products in initiative scope · {selectedInitiative.linkedRecordCount} linked Government records</span></div>}<footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={() => void createBrief()}>{saving ? "Creating…" : "Create one-pager"}</button></footer></section></div>}
+    {notice && <div className="toast" role="status">✓ {notice}</div>}
+  </DomainPageShell>;
 }

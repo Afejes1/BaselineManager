@@ -129,8 +129,172 @@ export const sourceOccurrenceReviewsV2 = sqliteTable("source_occurrence_review_v
   index("source_occurrence_review_v2_status_ix").on(t.programId, t.status, t.reviewedAt),
 ]);
 
+// Governance records are deliberately separate from the spreadsheet contract.
+// They give the Government a durable way to steer the working baseline without
+// promoting meeting notes, MCPs, or decisions into source cells.
+export const appUsers = sqliteTable("app_user", {
+  id: text("id").primaryKey(),
+  email: text("email"),
+  displayName: text("display_name").notNull(),
+  ...timestamps,
+}, (t) => [index("app_user_email_ix").on(t.email)]);
+
+export const programRoleAssignments = sqliteTable("program_role_assignment", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  userId: text("user_id").notNull().references(() => appUsers.id),
+  role: text("role").notNull().default("editor"),
+  assignedByUserId: text("assigned_by_user_id"),
+  ...timestamps,
+}, (t) => [
+  check("program_role_assignment_role", sql`${t.role} IN ('steward','editor','viewer')`),
+  uniqueIndex("program_role_assignment_program_user_uq").on(t.programId, t.userId),
+  index("program_role_assignment_program_role_ix").on(t.programId, t.role),
+]);
+
+export const initiatives = sqliteTable("initiative", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  primaryReleaseId: text("primary_release_id").references(() => releases.id),
+  title: text("title").notNull(),
+  normalizedTitle: text("normalized_title").notNull(),
+  status: text("status").notNull().default("draft"),
+  priority: text("priority").notNull().default("medium"),
+  owner: text("owner"),
+  targetDate: text("target_date"),
+  consequence: text("consequence"),
+  desiredOutcome: text("desired_outcome"),
+  decisionAsk: text("decision_ask"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("initiative_status", sql`${t.status} IN ('draft','active','decision_required','closed')`),
+  check("initiative_priority", sql`${t.priority} IN ('low','medium','high','critical')`),
+  uniqueIndex("initiative_program_title_uq").on(t.programId, t.normalizedTitle),
+  index("initiative_program_status_ix").on(t.programId, t.status, t.targetDate),
+  index("initiative_release_ix").on(t.programId, t.primaryReleaseId),
+]);
+
+export const initiativeScopes = sqliteTable("initiative_scope", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  scopeKind: text("scope_kind").notNull(),
+  scopeId: text("scope_id").notNull(),
+  displayLabel: text("display_label"),
+  ...timestamps,
+}, (t) => [
+  check("initiative_scope_kind", sql`${t.scopeKind} IN ('product','release','capability','occurrence','configuration_node')`),
+  uniqueIndex("initiative_scope_uq").on(t.initiativeId, t.scopeKind, t.scopeId),
+  index("initiative_scope_lookup_ix").on(t.scopeKind, t.scopeId),
+]);
+
+// WBS packages are an intentionally lightweight hierarchy beneath a single
+// initiative. The code is stewardship-owned instead of being inferred from UI
+// ordering, so it can be used in reports and external correspondence.
+export const workPackages = sqliteTable("work_package", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  parentId: text("parent_id"),
+  wbsCode: text("wbs_code").notNull(),
+  title: text("title").notNull(),
+  owner: text("owner"),
+  dueDate: text("due_date"),
+  status: text("status").notNull().default("planned"),
+  notes: text("notes"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  ...timestamps,
+}, (t) => [
+  check("work_package_status", sql`${t.status} IN ('planned','in_progress','on_hold','complete')`),
+  uniqueIndex("work_package_initiative_code_uq").on(t.initiativeId, t.wbsCode),
+  index("work_package_initiative_status_ix").on(t.initiativeId, t.status, t.dueDate),
+]);
+
+export const governanceRecords = sqliteTable("governance_record", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  recordType: text("record_type").notNull(),
+  externalReference: text("external_reference"),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("open"),
+  owner: text("owner"),
+  occurredAt: text("occurred_at"),
+  dueDate: text("due_date"),
+  summary: text("summary"),
+  decisionAsk: text("decision_ask"),
+  impact: text("impact"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("governance_record_type", sql`${t.recordType} IN ('mcp','technical_call','decision','risk','question','technical_note')`),
+  check("governance_record_status", sql`${t.status} IN ('open','in_review','approved','closed','superseded')`),
+  index("governance_record_program_type_ix").on(t.programId, t.recordType, t.status, t.occurredAt),
+  index("governance_record_external_reference_ix").on(t.programId, t.externalReference),
+]);
+
+export const governanceRecordLinks = sqliteTable("governance_record_link", {
+  id: text("id").primaryKey(),
+  governanceRecordId: text("governance_record_id").notNull().references(() => governanceRecords.id),
+  entityKind: text("entity_kind").notNull(),
+  entityId: text("entity_id").notNull(),
+  relationship: text("relationship").notNull().default("affects"),
+  ...timestamps,
+}, (t) => [
+  check("governance_record_link_kind", sql`${t.entityKind} IN ('initiative','work_package','release','product','capability','occurrence','configuration_node')`),
+  uniqueIndex("governance_record_link_uq").on(t.governanceRecordId, t.entityKind, t.entityId, t.relationship),
+  index("governance_record_link_target_ix").on(t.entityKind, t.entityId),
+]);
+
+export const evidenceDocuments = sqliteTable("evidence_document", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  governanceRecordId: text("governance_record_id").references(() => governanceRecords.id),
+  initiativeId: text("initiative_id").references(() => initiatives.id),
+  fileName: text("file_name").notNull(),
+  contentType: text("content_type"),
+  byteSize: integer("byte_size").notNull().default(0),
+  r2Key: text("r2_key").notNull(),
+  description: text("description"),
+  uploadedByUserId: text("uploaded_by_user_id").references(() => appUsers.id),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  uniqueIndex("evidence_document_r2_key_uq").on(t.r2Key),
+  index("evidence_document_record_ix").on(t.governanceRecordId, t.createdAt),
+  index("evidence_document_initiative_ix").on(t.initiativeId, t.createdAt),
+]);
+
+export const executiveBriefs = sqliteTable("executive_brief", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  initiativeId: text("initiative_id").references(() => initiatives.id),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("draft"),
+  notes: text("notes"),
+  snapshotPayload: text("snapshot_payload").notNull(),
+  bodyMarkdown: text("body_markdown").notNull(),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  publishedAt: text("published_at"),
+  ...timestamps,
+}, (t) => [
+  check("executive_brief_status", sql`${t.status} IN ('draft','reviewed','published','superseded')`),
+  index("executive_brief_program_status_ix").on(t.programId, t.status, t.updatedAt),
+  index("executive_brief_initiative_ix").on(t.initiativeId, t.updatedAt),
+]);
+
+export const briefPublications = sqliteTable("brief_publication", {
+  id: text("id").primaryKey(),
+  briefId: text("brief_id").notNull().references(() => executiveBriefs.id),
+  format: text("format").notNull(),
+  contentHash: text("content_hash").notNull(),
+  snapshotPayload: text("snapshot_payload").notNull(),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("brief_publication_format", sql`${t.format} IN ('markdown','pdf','docx')`),
+  index("brief_publication_brief_ix").on(t.briefId, t.createdAt),
+]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
 
-export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, auditEvents };
+export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, organizations, productSuppliers, capabilities, productCapabilities, appUsers, programRoleAssignments, initiatives, initiativeScopes, workPackages, governanceRecords, governanceRecordLinks, evidenceDocuments, executiveBriefs, briefPublications, auditEvents };
