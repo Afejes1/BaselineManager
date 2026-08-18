@@ -122,6 +122,13 @@ export async function POST(request: Request) {
     add("workspace", "INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET active_import_package_id=excluded.active_import_package_id,updated_at=excluded.updated_at", workspaceId,programId,"Current Government working baseline",packageId,now,now);
     // The current workspace is a projection. Earlier source packages and rows
     // stay intact; only their current working projection is replaced.
+    // Deployment extensions refer to the working projection's occurrences.
+    // Remove those release-scoped enrichments before replacing the projection;
+    // otherwise a valid next import would be blocked by the foreign-key link.
+    statements.push(db.prepare("DELETE FROM managed_deployment_profile WHERE baseline_occurrence_id IN (SELECT id FROM baseline_occurrence WHERE workspace_id = ?)").bind(workspaceId));
+    // Synthetic topology is a companion to the demo source package, never a
+    // claim about a subsequently imported stakeholder workbook.
+    statements.push(db.prepare("DELETE FROM managed_host_profile WHERE source_reference='Synthetic demo enrichment'"));
     statements.push(db.prepare("DELETE FROM baseline_occurrence WHERE workspace_id = ?").bind(workspaceId));
     statements.push(db.prepare("DELETE FROM baseline_node_state WHERE baseline_id IN (SELECT id FROM configuration_baseline WHERE program_id=? AND maturity='working')").bind(programId));
     statements.push(db.prepare("DELETE FROM baseline_deployment_state WHERE baseline_id IN (SELECT id FROM configuration_baseline WHERE program_id=? AND maturity='working')").bind(programId));

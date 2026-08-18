@@ -31,30 +31,41 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
 
 const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
 
-/** A small, valid baseline that demonstrates repeated products across releases. */
+/**
+ * A deliberately synthetic, but realistic, working baseline. The repeated
+ * product identities make the Release workspace useful immediately: it shows
+ * additions, removals, moves, configuration changes, an intentional quality
+ * warning, and a valid host-only source occurrence.
+ */
 function demoRecord(values: DemoValues): Record24 {
   return Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, values[column] ?? ""])) as Record24;
 }
 
 const DEMONSTRATION_ROWS: Record24[] = [
-  demoRecord({
-    "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning",
-  }),
-  demoRecord({
-    "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management",
-  }),
-  demoRecord({
-    "#": "DEMO-R5-003", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 500, HW_CPU_CORES: 8, "HW_RAM (GB)": 48, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange",
-  }),
-  demoRecord({
-    "#": "DEMO-R6-001", ReleaseName: "Release 6", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 240, HW_CPU_CORES: 12, "HW_RAM (GB)": 48, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning",
-  }),
-  demoRecord({
-    "#": "DEMO-R6-002", ReleaseName: "Release 6", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 160, HW_CPU_CORES: 8, "HW_RAM (GB)": 24, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management",
-  }),
-  demoRecord({
-    "#": "DEMO-R6-003", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-06", HW_Storage_Type: "SAN", "HW_Storage (GB)": 750, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange",
-  }),
+  // Release 5 — reported baseline
+  demoRecord({ "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-003", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 500, HW_CPU_CORES: 8, "HW_RAM (GB)": 48, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-004", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 900, HW_CPU_CORES: 8, "HW_RAM (GB)": 64, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-005", ReleaseName: "Release 5", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 100, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-006", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Adapter", ShortName: "LMPA", HW_Host: "VM-LMPA-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 80, HW_CPU_CORES: 2, "HW_RAM (GB)": 8, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "No", LongName: "Legacy Mission Planning Adapter", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-007", ReleaseName: "Release 5", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
+  // Release 6 — a proposed move, capacity changes, and one new service
+  demoRecord({ "#": "DEMO-R6-001", ReleaseName: "Release 6", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 240, HW_CPU_CORES: 12, "HW_RAM (GB)": 48, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record; relocated to the Release 6 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-002", ReleaseName: "Release 6", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 160, HW_CPU_CORES: 8, "HW_RAM (GB)": 24, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-003", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 750, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Synthetic demonstration baseline record; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-004", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1200, HW_CPU_CORES: 12, "HW_RAM (GB)": 96, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-005", ReleaseName: "Release 6", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-006", ReleaseName: "Release 6", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Synthetic demonstration baseline record; new Release 6 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-007", ReleaseName: "Release 6", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
+  // Release 7 — a second move, removals, additions, and one deliberate warning
+  demoRecord({ "#": "DEMO-R7-001", ReleaseName: "Release 7", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 300, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record; memory uplift.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-002", ReleaseName: "Release 7", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 220, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record; relocated to the Release 7 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-003", ReleaseName: "Release 7", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1600, HW_CPU_CORES: 16, "HW_RAM (GB)": 128, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-004", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Intentional synthetic data-quality warning: container technology is blank.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-005", ReleaseName: "Release 7", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Synthetic demonstration baseline record; scaled throughput.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-006", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Analytics service", ShortName: "EIS", HW_Host: "VM-EIS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Execution Insights Service", Notes: "Synthetic demonstration baseline record; new Release 7 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-007", ReleaseName: "Release 7", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
 ];
 
 const text = (value: Cell) => value == null ? "" : String(value);
@@ -447,6 +458,13 @@ export function BaselineManager() {
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "The demonstration dataset could not be loaded.");
+      const enrichment = await fetch("/api/demo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "enrich_workspace" }),
+      });
+      const enrichmentPayload = await enrichment.json() as { error?: string };
+      if (!enrichment.ok) throw new Error(enrichmentPayload.error || "The source demonstration data loaded, but its topology details could not be prepared.");
       await reload();
       setSelectedIndex(null);
       setActiveRelease("All releases");
@@ -454,7 +472,7 @@ export function BaselineManager() {
       setActiveQuality("All checks");
       setActiveReview("All review statuses");
       setShowStewardMenu(false);
-      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration source occurrences across Release 5 and Release 6.`);
+      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} synthetic source occurrences across three releases, including topology details and linked rationale.`);
     } catch (reason) {
       setDemoError(reason instanceof Error ? reason.message : "The demonstration dataset could not be loaded.");
     } finally {
@@ -929,13 +947,13 @@ export function BaselineManager() {
         <button className="modal-close" type="button" aria-label="Close Baseline steward menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
         <span className="eyebrow">BASELINE STEWARD</span>
         <h2 id="steward-title">Demo workspace</h2>
-        <p>Load a compact, valid 24-column dataset to explore the baseline, release, product, configuration, and capability views.</p>
+        <p>Load a synthetic, valid 24-column dataset to explore release comparisons, topology, data quality, and traceability.</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
-          <div><strong>2</strong><span>Releases</span></div>
-          <div><strong>3</strong><span>Products reused</span></div>
+          <div><strong>3</strong><span>Releases</span></div>
+          <div><strong>7</strong><span>Products reused</span></div>
         </div>
-        <p className="modal-note">This replaces the current <strong>working workspace</strong> with demonstration occurrences. Prior source packages remain retained; import your retained workbook at any time to re-establish the active workspace.</p>
+        <p className="modal-note">This replaces the current <strong>working workspace</strong> with synthetic baseline occurrences. It also adds non-exported topology detail and three linked rationale records so you can smoke-test comparisons and traceability. Prior source packages remain retained; import your retained workbook at any time to re-establish the active workspace.</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
         <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Cancel</button><button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button></footer>
       </section>
