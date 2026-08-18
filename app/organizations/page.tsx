@@ -1,0 +1,72 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+import {
+  BASELINE_STORAGE_KEY,
+  getOrganizationSummaries,
+  loadRowsFromStorage,
+  type OrganizationSummary,
+  type Record24,
+  text,
+} from "../../lib/baseline-data";
+import { DomainPageShell } from "../../components/domain-shell";
+
+function loadRows(): Record24[] {
+  if (typeof window === "undefined") return [];
+  return loadRowsFromStorage(window.localStorage.getItem(BASELINE_STORAGE_KEY));
+}
+
+export default function OrganizationsPage() {
+  const [rows, setRows] = useState<Record24[]>(() => {
+    if (typeof window === "undefined") return [];
+    return loadRows();
+  });
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    setRows(loadRows());
+  }, []);
+
+  const summaries = useMemo<OrganizationSummary[]>(() => getOrganizationSummaries(rows), [rows]);
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return summaries;
+    return summaries.filter((org) => `${org.name} ${org.id}`.toLowerCase().includes(normalized));
+  }, [summaries, query]);
+
+  const totalProducts = summaries.reduce((sum, org) => sum + org.productCount, 0);
+  const totalRows = summaries.reduce((sum, org) => sum + org.rowCount, 0);
+
+  return (
+    <DomainPageShell
+      title="Suppliers"
+      subtitle="Organization / OEM perspective"
+      releaseScope={`${summaries.length} supplier identities`}
+      actions={(
+        <label className="search" style={{ width: "280px" }}>
+          <span>⌕</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter supplier name" />
+        </label>
+      )}
+    >
+      <section className="summary">
+        <div className="metric"><span>Organizations</span><strong>{summaries.length}</strong><small>Distinct supplier identities</small></div>
+        <div className="metric"><span>Products</span><strong>{totalProducts}</strong><small>From all product placements</small></div>
+        <div className="metric"><span>Rows</span><strong>{totalRows}</strong><small>Source records across suppliers</small></div>
+      </section>
+
+      <section className="domain-list">
+        {filtered.map((org) => (
+          <article key={org.id} className="domain-card">
+            <h3><Link href={`/organizations/${encodeURIComponent(org.name)}`}>{org.name || "Unassigned"}</Link></h3>
+            <p className="entity-metric">{org.productCount} products · {org.rowCount} source rows</p>
+            <p className="entity-meta">Releases: {org.releases.join(", ") || "Unassigned"}</p>
+            <p className="entity-actions"><Link href={`/organizations/${encodeURIComponent(org.name)}`}>Open supplier</Link></p>
+          </article>
+        ))}
+        {!filtered.length ? <div className="empty">No suppliers match this filter.</div> : null}
+      </section>
+    </DomainPageShell>
+  );
+}

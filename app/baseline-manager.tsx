@@ -2,9 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
 import { dataQualityFor, type DataQuality } from "../lib/baseline-quality";
+import { APP_NAV_ITEMS } from "../lib/site-nav";
+import { BASELINE_STORAGE_KEY, configNodeIdentity, productIdentityKey, supplierIdentity, capabilityIdentity } from "../lib/baseline-data";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -42,7 +46,12 @@ const reviewIdentity = (row: Record24) => `${text(row.ReleaseName).trim()}\u001f
 const manualReviewLabel = (status: ReviewStatus) => status === "reviewed" ? "Reviewed" : status === "follow_up" ? "Follow-up" : "Not reviewed";
 const reviewDate = (value: string | null) => value ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value)) : "No review date";
 const qualityIssueOrder: Array<DataQuality["issues"][number]["severity"]> = ["blocking", "review"];
-const nav = ["Baseline Manager", "Imports", "Data Quality", "Initiatives", "Executive Briefs"];
+
+function isActivePath(pathname: string, href: string) {
+  if (pathname === href) return true;
+  if (href === "/") return pathname === "/";
+  return pathname.startsWith(`${href}/`);
+}
 
 const occurrenceDiffColumns = [
   "ReleaseName",
@@ -103,10 +112,11 @@ export function BaselineManager() {
   const [reviewDraftStatus, setReviewDraftStatus] = useState<ReviewStatus>("not_reviewed");
   const [reviewDraftNote, setReviewDraftNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const pathname = usePathname();
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      const stored = window.localStorage.getItem("v3-baseline-draft");
+      const stored = window.localStorage.getItem(BASELINE_STORAGE_KEY);
       if (stored) {
         try { setRows(JSON.parse(stored)); } catch { /* keep demonstration rows */ }
       }
@@ -230,7 +240,7 @@ export function BaselineManager() {
 
   function persist(next: Record24[], message: string) {
     setRows(next);
-    window.localStorage.setItem("v3-baseline-draft", JSON.stringify(next));
+    window.localStorage.setItem(BASELINE_STORAGE_KEY, JSON.stringify(next));
     setNotice(message);
     window.setTimeout(() => setNotice(""), 2600);
   }
@@ -239,7 +249,7 @@ export function BaselineManager() {
     if (selectedIndex === null) return;
     setRows((current) => {
       const next = current.map((row, index) => index === selectedIndex ? { ...row, [column]: value } : row);
-      window.localStorage.setItem("v3-baseline-draft", JSON.stringify(next));
+      window.localStorage.setItem(BASELINE_STORAGE_KEY, JSON.stringify(next));
       return next;
     });
   }
@@ -387,7 +397,16 @@ export function BaselineManager() {
       </div>
       <nav aria-label="Primary navigation">
         <p className="rail-label">Workspace</p>
-        {nav.map((item,index) => <button key={item} className={index === 0 ? "nav-item active" : "nav-item"} title={railCollapsed ? item : undefined}><span className="nav-icon">{["▦","⇩","◇","⌁","▤"][index]}</span><span className="nav-label">{item}</span>{index > 2 && <em>Soon</em>}</button>)}
+        {APP_NAV_ITEMS.filter((item) => item.enabled).map((item) => (
+          <Link
+            href={item.href}
+            key={item.href}
+            className={`nav-item ${isActivePath(pathname, item.href) ? "active" : ""}`}
+            title={railCollapsed ? item.label : undefined}
+          >
+            <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.tag ? <em>{item.tag}</em> : null}
+          </Link>
+        ))}
       </nav>
       <div className="rail-context">
         <span className="context-dot"/>
@@ -500,12 +519,24 @@ export function BaselineManager() {
                       >
                         <td><input type="checkbox" checked={checked.has(index)} onClick={(event) => event.stopPropagation()} onChange={() => toggleChecked(index)} aria-label={`Select ${text(row.LongName) || key} in ${text(row.ReleaseName)}`} /></td>
                         <td className="mono">{key}</td>
-                        <td><span className="release-chip">{text(row.ReleaseName) || "Unassigned"}</span></td>
-                        <td><strong>{text(row.ShortName) || "Unnamed"}</strong><small>{text(row.LongName) || "Canonical name missing"}</small></td>
-                        <td><strong>{text(row.Tier) || "Unassigned"}</strong><small>{text(row.Resource) || "Resource missing"}</small></td>
+                        <td>
+                          <Link href={`/releases/${encodeURIComponent(text(row.ReleaseName) || "Unassigned")}`} className="row-nav-link">
+                            <span className="release-chip">{text(row.ReleaseName) || "Unassigned"}</span>
+                          </Link>
+                        </td>
+                        <td>
+                          <Link href={`/products/${encodeURIComponent(productIdentityKey(row))}`} className="row-nav-link">
+                            <strong>{text(row.ShortName) || "Unnamed"}</strong><small>{text(row.LongName) || "Canonical name missing"}</small>
+                          </Link>
+                        </td>
+                        <td>
+                          <Link href={`/configuration/${encodeURIComponent(configNodeIdentity(row))}`} className="row-nav-link">
+                            <strong>{text(row.Tier) || "Unassigned"}</strong><small>{text(row.Resource) || "Resource missing"}</small>
+                          </Link>
+                        </td>
                         <td className="mono">{text(row.HW_Host) || "—"}</td>
                         <td>{text(row.TechStackType) || "—"}</td>
-                        <td>{text(row.OEM) || "—"}</td>
+                        <td><Link href={`/organizations/${encodeURIComponent(text(row.OEM) || "Unassigned")}`} className="row-nav-link">{text(row.OEM) || "—"}</Link></td>
                         <td>{text(row.Containerized) === "Yes" ? `${text(row.Containerized)} · ${text(row["Container Technology"])}` : text(row.Containerized) || "—"}</td>
                         <td><Mark quality={quality} /></td>
                         <td><span className={`review-mark review-${rowReview.status}`}>{manualReviewLabel(rowReview.status)}</span><small>{reviewDate(rowReview.reviewedAt)}</small></td>
