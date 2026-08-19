@@ -11,6 +11,8 @@ import {
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
 import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useChangePortfolio } from "../../../lib/change-client";
+import { usePlatformPortfolio } from "../../../lib/platform-client";
 
 function decodeId(value: string) {
   try {
@@ -34,11 +36,13 @@ export default function ProductDetailPage() {
   const params = useParams<{ id?: string }>();
   const productId = decodeId(params.id ?? "");
   const { rows } = useBaselineWorkspace();
+  const { portfolio: changes } = useChangePortfolio();
+  const { portfolio: platformPortfolio } = usePlatformPortfolio();
   const [query, setQuery] = useState("");
 
 
   const productRows = useMemo(() => getProductRows(rows, productId), [rows, productId]);
-  const { releases, tiers, hosts, resources, issueCount, warningCount } = useMemo(() => summarizeRows(productRows), [productRows]);
+  const { releases, tiers, hosts, resources } = useMemo(() => summarizeRows(productRows), [productRows]);
   const canonical = productRows[0] ? text(productRows[0].LongName || productRows[0].ShortName || "Unnamed product") : "Product not found";
   const supplier = text(productRows[0]?.OEM || "Unassigned");
   const normalizedQuery = query.trim().toLowerCase();
@@ -56,6 +60,12 @@ export default function ProductDetailPage() {
     resources: resources.length,
     hosts: hosts.length,
   };
+  const canonicalProductIds = new Set(productRows.map((row) => row.__meta.productId).filter(Boolean));
+  const changeEffects = changes.effects.filter((effect) => effect.subjectKind === "product" && canonicalProductIds.has(effect.subjectId));
+  const changeRequestIds = new Set(changeEffects.map((effect) => effect.changeRequestId));
+  const changeRequests = changes.requests.filter((request) => changeRequestIds.has(request.id));
+  const platformByNode = new Map(platformPortfolio.platforms.filter((item) => item.configurationNodeId).map((item) => [item.configurationNodeId!, item]));
+  const productPlatforms = Array.from(new Map(productRows.map((row) => row.__meta.configurationNodeId ? platformByNode.get(row.__meta.configurationNodeId) : undefined).filter(Boolean).map((platform) => [platform!.id, platform!])).values());
 
   return (
     <DomainPageShell
@@ -75,16 +85,19 @@ export default function ProductDetailPage() {
           <strong>{productRows.length}</strong>
           <small>Across {metrics.releases} releases</small>
         </div>
-        <div className="metric"><span>Deployment context</span><strong>{metrics.tiers}</strong><small>{metrics.tiers} tiers · {metrics.resources} resources · {metrics.hosts} hosts</small></div>
+        <div className="metric"><span>Platform context</span><strong>{productPlatforms.length}</strong><small>{metrics.tiers} tiers · {metrics.resources} resources · {metrics.hosts} hosts</small></div>
         <div className="metric"><span>Supplier</span><strong>{supplier || "Unassigned"}</strong><small>Primary source owner</small></div>
-        <div className="metric metric-alert"><span>Quality</span><strong>{issueCount + warningCount}</strong><small>{issueCount} blocking · {warningCount} warnings</small></div>
+        <div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} funding decisions pending</small></div>
       </section>
+
+      <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">CHANGE IMPACT</span><h3>Government funding decisions affecting this product</h3></div><Link href="/changes">Open Change Request portfolio</Link></div><div className="domain-list">{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.impactSummary || request.summary || "Impact not yet assessed."}</p><p className="entity-meta">{request.governmentPriority} priority · {request.requestedReleaseName || "target release unassigned"}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No linked Change Requests</h3><p>This product is represented in the baseline, but no funding request currently changes it.</p></article> : null}</div></section>
 
       <section className="domain-section">
         <h3>Cross-domain links</h3>
         <div className="chip-list">
           <Link href={`/organizations/${encodeURIComponent(supplier)}`} className="domain-chip"><strong>Supplier</strong><span>{supplier || "Unassigned"}</span></Link>
           {releases.map((release) => <Link key={release} href={`/releases/${encodeURIComponent(release)}`} className="domain-chip"><strong>Release</strong><span>{release}</span></Link>)}
+          {productPlatforms.map((platform) => <Link key={platform.id} href={`/platforms/${encodeURIComponent(platform.id)}`} className="domain-chip"><strong>Platform</strong><span>{platform.code} · {platform.name}</span></Link>)}
         </div>
       </section>
 

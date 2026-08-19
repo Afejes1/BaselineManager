@@ -87,12 +87,17 @@ export const baselineOccurrences = sqliteTable("baseline_occurrence", {
   deploymentId: text("deployment_id").references(() => deployments.id),
   projectionPayload: text("projection_payload").notNull(),
   materializationStatus: text("materialization_status").notNull().default("reported"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  lifecycleReason: text("lifecycle_reason"),
+  voidedAt: text("voided_at"),
+  voidedByUserId: text("voided_by_user_id"),
   revision: integer("revision").notNull().default(0),
   ...timestamps,
 }, (t) => [
   uniqueIndex("baseline_occurrence_workspace_source_uq").on(t.workspaceId, t.sourceRowId),
   index("baseline_occurrence_workspace_release_ix").on(t.workspaceId, t.releaseId, t.baselineId),
   index("baseline_occurrence_workspace_product_ix").on(t.workspaceId, t.productId),
+  index("baseline_occurrence_workspace_lifecycle_ix").on(t.workspaceId, t.lifecycleStatus, t.releaseId),
 ]);
 
 // Steward review is governed application metadata. It is intentionally kept
@@ -197,6 +202,152 @@ export const managedDeploymentProfiles = sqliteTable("managed_deployment_profile
 }, (t) => [
   uniqueIndex("managed_deployment_profile_occurrence_uq").on(t.baselineOccurrenceId),
   index("managed_deployment_profile_release_product_ix").on(t.programId, t.releaseId, t.productId),
+]);
+
+// Platform is the Government's stable installation/fielding hierarchy. ALOU,
+// OCK, OBK, and PMA are governed types, while configuration_node remains the
+// lower-level physical/logical placement spine used by source materialization.
+export const platforms = sqliteTable("platform", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  parentId: text("parent_id"),
+  configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id),
+  platformType: text("platform_type").notNull(),
+  code: text("code").notNull(),
+  normalizedCode: text("normalized_code").notNull(),
+  name: text("name").notNull(),
+  normalizedName: text("normalized_name").notNull(),
+  status: text("status").notNull().default("active"),
+  description: text("description"),
+  installationLocation: text("installation_location"),
+  countryCode: text("country_code"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("platform_type", sql`${t.platformType} IN ('alou','ock','obk','pma','other')`),
+  check("platform_status", sql`${t.status} IN ('active','planned','retired')`),
+  check("platform_not_self", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`),
+  uniqueIndex("platform_code_uq").on(t.programId, t.normalizedCode),
+  uniqueIndex("platform_configuration_node_uq").on(t.configurationNodeId),
+  index("platform_parent_ix").on(t.programId, t.parentId, t.platformType),
+]);
+
+export const platformOrganizations = sqliteTable("platform_organization", {
+  id: text("id").primaryKey(),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  organizationId: text("organization_id").notNull().references(() => organizations.id),
+  relationshipType: text("relationship_type").notNull(),
+  sourceReference: text("source_reference"),
+  ...timestamps,
+}, (t) => [
+  check("platform_organization_relationship", sql`${t.relationshipType} IN ('owner','operator','integrator','support','supplier')`),
+  uniqueIndex("platform_organization_uq").on(t.platformId, t.organizationId, t.relationshipType),
+  index("platform_organization_org_ix").on(t.organizationId, t.relationshipType),
+]);
+
+// A release profile describes how a release is being used analytically. It is
+// not an approval of the technical stack: funding/priority decisions belong to
+// Change Requests. This merely distinguishes current evidence from a target.
+export const releaseProfiles = sqliteTable("release_profile", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  stateRole: text("state_role").notNull().default("reported"),
+  effectiveDate: text("effective_date"),
+  description: text("description"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("release_profile_state_role", sql`${t.stateRole} IN ('historical','as_is','to_be','reported')`),
+  uniqueIndex("release_profile_release_uq").on(t.releaseId),
+  index("release_profile_role_ix").on(t.programId, t.stateRole, t.effectiveDate),
+]);
+
+// Change Requests are references to the external system of record. This app
+// owns the Government decision analysis and technical impact links, not the
+// incumbent workflow that creates and manages the request.
+export const changeRequestTypes = sqliteTable("change_request_type", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  code: text("code").notNull(),
+  normalizedCode: text("normalized_code").notNull(),
+  label: text("label").notNull(),
+  description: text("description"),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  ...timestamps,
+}, (t) => [uniqueIndex("change_request_type_code_uq").on(t.programId, t.normalizedCode)]);
+
+export const changeRequests = sqliteTable("change_request", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  typeId: text("type_id").notNull().references(() => changeRequestTypes.id),
+  externalSystem: text("external_system"),
+  externalIdentifier: text("external_identifier").notNull(),
+  title: text("title").notNull(),
+  externalStatus: text("external_status"),
+  externalOwner: text("external_owner"),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  requestedReleaseId: text("requested_release_id").references(() => releases.id),
+  governmentPriority: text("government_priority").notNull().default("unranked"),
+  decisionStatus: text("decision_status").notNull().default("pending"),
+  decisionAuthority: text("decision_authority"),
+  decisionAt: text("decision_at"),
+  decisionByUserId: text("decision_by_user_id").references(() => appUsers.id),
+  decisionRationale: text("decision_rationale"),
+  summary: text("summary"),
+  consequenceIfFunded: text("consequence_if_funded"),
+  consequenceIfDeferred: text("consequence_if_deferred"),
+  impactSummary: text("impact_summary"),
+  knockOnEffects: text("knock_on_effects"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("change_request_priority", sql`${t.governmentPriority} IN ('unranked','low','medium','high','critical')`),
+  check("change_request_decision", sql`${t.decisionStatus} IN ('pending','fund','defer','decline')`),
+  uniqueIndex("change_request_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
+  index("change_request_decision_ix").on(t.programId, t.decisionStatus, t.governmentPriority),
+  index("change_request_release_ix").on(t.programId, t.requestedReleaseId),
+]);
+
+export const changeEffects = sqliteTable("change_effect", {
+  id: text("id").primaryKey(),
+  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  subjectKind: text("subject_kind").notNull(),
+  subjectId: text("subject_id").notNull(),
+  action: text("action").notNull().default("modify"),
+  aspect: text("aspect").notNull().default("configuration"),
+  fromReleaseId: text("from_release_id").references(() => releases.id),
+  toReleaseId: text("to_release_id").references(() => releases.id),
+  currentValue: text("current_value"),
+  targetValue: text("target_value"),
+  consequence: text("consequence"),
+  rationale: text("rationale"),
+  confidence: text("confidence").notNull().default("reported"),
+  sourceOccurrenceId: text("source_occurrence_id").references(() => baselineOccurrences.id),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("change_effect_subject", sql`${t.subjectKind} IN ('product','platform','configuration_node','occurrence','release','organization')`),
+  check("change_effect_action", sql`${t.action} IN ('add','remove','move','modify','assess')`),
+  check("change_effect_confidence", sql`${t.confidence} IN ('reported','assessed','confirmed')`),
+  index("change_effect_request_ix").on(t.changeRequestId, t.subjectKind),
+  index("change_effect_subject_ix").on(t.subjectKind, t.subjectId),
+]);
+
+export const changeDependencies = sqliteTable("change_dependency", {
+  id: text("id").primaryKey(),
+  predecessorRequestId: text("predecessor_request_id").notNull().references(() => changeRequests.id),
+  successorRequestId: text("successor_request_id").notNull().references(() => changeRequests.id),
+  dependencyType: text("dependency_type").notNull(),
+  rationale: text("rationale"),
+  ...timestamps,
+}, (t) => [
+  check("change_dependency_not_self", sql`${t.predecessorRequestId} <> ${t.successorRequestId}`),
+  check("change_dependency_type", sql`${t.dependencyType} IN ('requires','enables','blocks','conflicts','overlaps')`),
+  uniqueIndex("change_dependency_uq").on(t.predecessorRequestId, t.successorRequestId, t.dependencyType),
+  index("change_dependency_successor_ix").on(t.successorRequestId, t.dependencyType),
 ]);
 
 export const initiatives = sqliteTable("initiative", {
@@ -344,4 +495,43 @@ export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
 
-export const schema = { programs, sourcePackages, sourceRows24, sourceOccurrenceReviews, sourceOccurrenceReviewsV2, baselineWorkspaces, baselineOccurrences, releases, configurationBaselines, configurationNodes, products, deployments, baselineNodeStates, baselineDeploymentStates, managedHostProfiles, managedDeploymentProfiles, organizations, productSuppliers, capabilities, productCapabilities, appUsers, programRoleAssignments, initiatives, initiativeScopes, workPackages, governanceRecords, governanceRecordLinks, evidenceDocuments, executiveBriefs, briefPublications, auditEvents };
+export const schema = {
+  programs,
+  sourcePackages,
+  sourceRows24,
+  sourceOccurrenceReviews,
+  sourceOccurrenceReviewsV2,
+  baselineWorkspaces,
+  baselineOccurrences,
+  releases,
+  releaseProfiles,
+  configurationBaselines,
+  configurationNodes,
+  products,
+  deployments,
+  baselineNodeStates,
+  baselineDeploymentStates,
+  managedHostProfiles,
+  managedDeploymentProfiles,
+  platforms,
+  platformOrganizations,
+  organizations,
+  productSuppliers,
+  capabilities,
+  productCapabilities,
+  appUsers,
+  programRoleAssignments,
+  changeRequestTypes,
+  changeRequests,
+  changeEffects,
+  changeDependencies,
+  initiatives,
+  initiativeScopes,
+  workPackages,
+  governanceRecords,
+  governanceRecordLinks,
+  evidenceDocuments,
+  executiveBriefs,
+  briefPublications,
+  auditEvents,
+};

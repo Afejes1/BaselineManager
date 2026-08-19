@@ -9,6 +9,10 @@ export type BaselineRecordMeta = {
   sourceRowId: string;
   revision: number;
   materializationStatus: string;
+  lifecycleStatus: "active" | "voided";
+  lifecycleReason: string | null;
+  voidedAt: string | null;
+  voidedByUserId: string | null;
   baseline: { name: string | null; maturity: string | null; asOf: string | null };
   source: { fileName: string | null };
   releaseId: string | null;
@@ -31,6 +35,10 @@ export function managedRows(payload: ApiResponse): ManagedRecord24[] {
     sourceRowId: record.sourceRowId,
     revision: record.revision,
     materializationStatus: record.materializationStatus,
+    lifecycleStatus: record.lifecycleStatus,
+    lifecycleReason: record.lifecycleReason,
+    voidedAt: record.voidedAt,
+    voidedByUserId: record.voidedByUserId,
     baseline: record.baseline,
     source: record.source,
     releaseId: record.releaseId,
@@ -40,14 +48,14 @@ export function managedRows(payload: ApiResponse): ManagedRecord24[] {
   } }));
 }
 
-export async function fetchBaselineWorkspace(): Promise<{ workspace: BaselineWorkspace | null; rows: ManagedRecord24[] }> {
-  const response = await fetch("/api/baseline", { cache: "no-store" });
+export async function fetchBaselineWorkspace(includeVoided = false): Promise<{ workspace: BaselineWorkspace | null; rows: ManagedRecord24[] }> {
+  const response = await fetch(`/api/baseline${includeVoided ? "?includeVoided=true" : ""}`, { cache: "no-store" });
   const payload = await response.json() as ApiResponse;
   if (!response.ok) throw new Error(payload.error || "The authoritative baseline workspace could not be loaded.");
   return { workspace: payload.workspace ?? null, rows: managedRows(payload) };
 }
 
-export function useBaselineWorkspace() {
+export function useBaselineWorkspace(options: { includeVoided?: boolean } = {}) {
   const [rows, setRows] = useState<ManagedRecord24[]>([]);
   const [workspace, setWorkspace] = useState<BaselineWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
@@ -56,7 +64,7 @@ export function useBaselineWorkspace() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const next = await fetchBaselineWorkspace();
+      const next = await fetchBaselineWorkspace(Boolean(options.includeVoided));
       setRows(next.rows);
       setWorkspace(next.workspace);
       setError("");
@@ -65,7 +73,7 @@ export function useBaselineWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [options.includeVoided]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => { void reload(); }, 0);

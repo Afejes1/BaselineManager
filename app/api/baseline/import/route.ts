@@ -126,9 +126,24 @@ export async function POST(request: Request) {
     // Remove those release-scoped enrichments before replacing the projection;
     // otherwise a valid next import would be blocked by the foreign-key link.
     statements.push(db.prepare("DELETE FROM managed_deployment_profile WHERE baseline_occurrence_id IN (SELECT id FROM baseline_occurrence WHERE workspace_id = ?)").bind(workspaceId));
+    // Change effects may cite a working occurrence as supporting evidence. The
+    // analytical effect survives a new import, but its ephemeral projection
+    // pointer is cleared before the old occurrence is replaced.
+    statements.push(db.prepare("UPDATE change_effect SET source_occurrence_id=NULL WHERE source_occurrence_id IN (SELECT id FROM baseline_occurrence WHERE workspace_id = ?)").bind(workspaceId));
     // Synthetic topology is a companion to the demo source package, never a
     // claim about a subsequently imported stakeholder workbook.
     statements.push(db.prepare("DELETE FROM managed_host_profile WHERE source_reference='Synthetic demo enrichment'"));
+    // Demo-only governed extensions must never leak into a subsequently loaded
+    // stakeholder workbook. A fresh demo import recreates them immediately in
+    // /api/demo after source materialization.
+    statements.push(db.prepare("DELETE FROM change_dependency WHERE predecessor_request_id LIKE 'demo-change-%' OR successor_request_id LIKE 'demo-change-%'"));
+    statements.push(db.prepare("DELETE FROM change_effect WHERE change_request_id LIKE 'demo-change-%'"));
+    statements.push(db.prepare("DELETE FROM change_request WHERE id LIKE 'demo-change-%'"));
+    statements.push(db.prepare("DELETE FROM platform_organization WHERE platform_id LIKE 'demo-platform-%'"));
+    statements.push(db.prepare("DELETE FROM platform WHERE id LIKE 'demo-platform-%'"));
+    statements.push(db.prepare("DELETE FROM release_profile WHERE id LIKE 'demo-release-profile-%'"));
+    statements.push(db.prepare("DELETE FROM governance_record_link WHERE governance_record_id LIKE 'demo-record-%'"));
+    statements.push(db.prepare("DELETE FROM governance_record WHERE id LIKE 'demo-record-%'"));
     statements.push(db.prepare("DELETE FROM baseline_occurrence WHERE workspace_id = ?").bind(workspaceId));
     statements.push(db.prepare("DELETE FROM baseline_node_state WHERE baseline_id IN (SELECT id FROM configuration_baseline WHERE program_id=? AND maturity='working')").bind(programId));
     statements.push(db.prepare("DELETE FROM baseline_deployment_state WHERE baseline_id IN (SELECT id FROM configuration_baseline WHERE program_id=? AND maturity='working')").bind(programId));

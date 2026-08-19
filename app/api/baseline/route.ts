@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../../../lib/technical-baseline-contract";
+import { audit, ensureActor, requireWriter } from "../../../lib/governance-server";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -8,6 +9,10 @@ type WorkspaceRow = {
   source_row_id: string;
   revision: number;
   materialization_status: string;
+  lifecycle_status: "active" | "voided";
+  lifecycle_reason: string | null;
+  voided_at: string | null;
+  voided_by_user_id: string | null;
   projection_payload: string;
   baseline_name: string | null;
   baseline_maturity: string | null;
@@ -175,6 +180,10 @@ function toResponse(rows: WorkspaceRow[]) {
     sourceRowId: entry.source_row_id,
     revision: entry.revision,
     materializationStatus: entry.materialization_status,
+    lifecycleStatus: entry.lifecycle_status,
+    lifecycleReason: entry.lifecycle_reason,
+    voidedAt: entry.voided_at,
+    voidedByUserId: entry.voided_by_user_id,
     baseline: { name: entry.baseline_name, maturity: entry.baseline_maturity, asOf: entry.baseline_as_of },
     source: { fileName: entry.source_file_name },
     releaseId: entry.release_id,
@@ -186,9 +195,10 @@ function toResponse(rows: WorkspaceRow[]) {
   return { workspace: { id: workspaceId, label: "Current Government working baseline" }, records };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const result = await env.DB.prepare("SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.release_id, bo.product_id, bo.configuration_node_id, bo.deployment_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ORDER BY bo.created_at ASC").bind(workspaceId).all<WorkspaceRow>();
+    const includeVoided = new URL(request.url).searchParams.get("includeVoided") === "true";
+    const result = await env.DB.prepare(`SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.lifecycle_status,bo.lifecycle_reason,bo.voided_at,bo.voided_by_user_id,bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.release_id, bo.product_id, bo.configuration_node_id, bo.deployment_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ${includeVoided ? "" : "AND bo.lifecycle_status='active'"} ORDER BY bo.created_at ASC`).bind(workspaceId).all<WorkspaceRow>();
     return Response.json(toResponse(result.results));
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "The authoritative baseline workspace is unavailable." }, { status: 500 });
@@ -202,8 +212,9 @@ export async function PATCH(request: Request) {
     const revision = Number(body.expectedRevision);
     const row = asRecord24(body.row);
     if (!occurrenceId || !Number.isInteger(revision) || !row) return Response.json({ error: "occurrenceId, expectedRevision, and the exact 24-column projection are required." }, { status: 400 });
-    const current = await env.DB.prepare("SELECT id,source_row_id,revision,projection_payload FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<{ id: string; source_row_id: string; revision: number; projection_payload: string }>();
+    const current = await env.DB.prepare("SELECT id,source_row_id,revision,projection_payload,lifecycle_status FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<{ id: string; source_row_id: string; revision: number; projection_payload: string; lifecycle_status: string }>();
     if (!current) return Response.json({ error: "The selected source occurrence is no longer in the current workspace." }, { status: 404 });
+    if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided source occurrence before editing it." }, { status: 409 });
     if (current.revision !== revision) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
     const ids = materializationIds(row, "working");
     const nodePeers = await env.DB.prepare("SELECT projection_payload FROM baseline_occurrence WHERE workspace_id=? AND id<>? AND baseline_id=? AND configuration_node_id=?").bind(workspaceId, current.id, ids.baselineId, ids.hostId).all<PeerOccurrence>();
@@ -242,7 +253,21 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json() as { row?: unknown };
+    const body = await request.json() as { action?: unknown; occurrenceId?: unknown; row?: unknown };
+    if (body.action === "restore_occurrence") {
+      const actor = await ensureActor(env.DB, request);
+      requireWriter(actor);
+      const occurrenceId = String(body.occurrenceId || "").trim();
+      if (!occurrenceId) return Response.json({ error: "occurrenceId is required." }, { status: 400 });
+      const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
+      if (!before) return Response.json({ error: "Source occurrence was not found." }, { status: 404 });
+      const at = nowIso();
+      await env.DB.batch([
+        env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='active',lifecycle_reason=NULL,voided_at=NULL,voided_by_user_id=NULL,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(at, occurrenceId, workspaceId),
+        audit(env.DB, actor, "baseline_occurrence_restored", "baseline_occurrence", occurrenceId, { lifecycleStatus: "active" }, before),
+      ]);
+      return Response.json({ ok: true, occurrenceId });
+    }
     const row = asRecord24(body.row);
     if (!row || !normalized(row.ReleaseName)) return Response.json({ error: "Choose ReleaseName before creating a source occurrence." }, { status: 400 });
     const now = nowIso();
@@ -263,5 +288,27 @@ export async function POST(request: Request) {
     return Response.json({ occurrenceId, revision: 1, materializationStatus: materialized.status }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "The source occurrence could not be created." }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const actor = await ensureActor(env.DB, request);
+    requireWriter(actor);
+    const body = await request.json() as { occurrenceId?: unknown; reason?: unknown };
+    const occurrenceId = String(body.occurrenceId || "").trim();
+    const reason = String(body.reason || "").trim();
+    if (!occurrenceId || !reason) return Response.json({ error: "Occurrence and a reason are required. Source evidence is voided, never silently deleted." }, { status: 400 });
+    const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
+    if (!before) return Response.json({ error: "Source occurrence was not found." }, { status: 404 });
+    const at = nowIso();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='voided',lifecycle_reason=?,voided_at=?,voided_by_user_id=?,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(reason, at, actor.id, at, occurrenceId, workspaceId),
+      audit(env.DB, actor, "baseline_occurrence_voided", "baseline_occurrence", occurrenceId, { lifecycleStatus: "voided", reason }, before),
+    ]);
+    return Response.json({ ok: true, occurrenceId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Source occurrence could not be voided.";
+    return Response.json({ error: message }, { status: message.includes("viewer") ? 403 : 400 });
   }
 }

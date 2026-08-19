@@ -13,6 +13,8 @@ import {
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
 import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useChangePortfolio } from "../../../lib/change-client";
+import { usePlatformPortfolio } from "../../../lib/platform-client";
 
 function decodeId(value: string) {
   try {
@@ -26,6 +28,8 @@ export default function OrganizationDetailPage() {
   const params = useParams<{ id?: string }>();
   const orgId = decodeId(params.id ?? "");
   const { rows } = useBaselineWorkspace();
+  const { portfolio: changes } = useChangePortfolio();
+  const { portfolio: platforms } = usePlatformPortfolio();
   const [query, setQuery] = useState("");
 
 
@@ -53,6 +57,12 @@ export default function OrganizationDetailPage() {
   }, [orgRows]);
 
   const supplierName = orgRows[0]?.OEM ? text(orgRows[0].OEM) : orgId;
+  const productIds = new Set(orgRows.map((row) => row.__meta.productId).filter(Boolean));
+  const directOrgEffects = changes.effects.filter((effect) => effect.subjectKind === "organization" && effect.subjectLabel.toLowerCase() === supplierName.toLowerCase());
+  const productEffects = changes.effects.filter((effect) => effect.subjectKind === "product" && productIds.has(effect.subjectId));
+  const requestIds = new Set([...directOrgEffects, ...productEffects].map((effect) => effect.changeRequestId));
+  const changeRequests = changes.requests.filter((request) => requestIds.has(request.id));
+  const platformRelationships = platforms.relationships.filter((item) => item.organizationName.toLowerCase() === supplierName.toLowerCase());
 
   if (!orgRows.length) {
     return (
@@ -83,8 +93,11 @@ export default function OrganizationDetailPage() {
       <section className="summary">
         <div className="metric"><span>Source rows</span><strong>{orgRows.length}</strong><small>For this supplier</small></div>
         <div className="metric"><span>Products</span><strong>{metrics.products}</strong><small>Across {metrics.releases} releases</small></div>
-        <div className="metric"><span>Quality</span><strong>{metrics.issueCount + metrics.warningCount}</strong><small>{metrics.issueCount} blocking · {metrics.warningCount} warnings</small></div>
+        <div className="metric"><span>Platforms</span><strong>{platformRelationships.length}</strong><small>Accountability relationships</small></div>
+        <div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} pending funding decisions</small></div>
       </section>
+
+      <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">ACCOUNTABILITY & CHANGE</span><h3>Where this organization participates</h3></div><Link href="/changes">Funding portfolio</Link></div><div className="chip-list">{platformRelationships.map((relation) => <Link className="domain-chip" key={relation.id} href={`/platforms/${encodeURIComponent(relation.platformId)}`}><strong>{relation.relationshipType}</strong><span>{platforms.platforms.find((item) => item.id === relation.platformId)?.code || relation.platformId}</span></Link>)}</div><div className="domain-list" style={{ marginTop: 14 }}>{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.knockOnEffects || request.impactSummary || request.summary || "Impact not yet assessed."}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No attributed Change Request impact</h3><p>No request is directly linked to this organization or its reported products.</p></article> : null}</div></section>
 
       <section className="domain-section">
         <h3>Supplier rows</h3>

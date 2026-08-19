@@ -10,6 +10,8 @@ import { dataQualityForOccurrence, type DataQuality } from "../lib/baseline-qual
 import { APP_NAV_ITEMS } from "../lib/site-nav";
 import { configNodeIdentity, productIdentityKey } from "../lib/baseline-data";
 import { projectionOf, useBaselineWorkspace, type ManagedRecord24 } from "../lib/baseline-client";
+import { reconcileIntake } from "../lib/import-reconciliation";
+import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -110,12 +112,14 @@ function fieldPairs<T extends Array<TechnicalBaselineColumn | string>>(cols: T, 
 }
 
 export function BaselineManager() {
-  const { rows, setRows, workspace, loading, error: workspaceError, reload } = useBaselineWorkspace();
+  const { rows, setRows, workspace, loading, error: workspaceError, reload } = useBaselineWorkspace({ includeVoided: true });
+  const { portfolio: changePortfolio, reload: reloadChanges } = useChangePortfolio();
   const [query, setQuery] = useState("");
   const [activeRelease, setActiveRelease] = useState("All releases");
   const [activeTier, setActiveTier] = useState("All records");
   const [activeQuality, setActiveQuality] = useState("All checks");
   const [activeReview, setActiveReview] = useState("All review statuses");
+  const [activeLifecycle, setActiveLifecycle] = useState("Active records");
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [draft, setDraft] = useState<ImportDraft | null>(null);
@@ -135,6 +139,13 @@ export function BaselineManager() {
   const [showStewardMenu, setShowStewardMenu] = useState(false);
   const [demoLoading, setDemoLoading] = useState(false);
   const [demoError, setDemoError] = useState("");
+  const [demoEnabled, setDemoEnabled] = useState(true);
+  const [showLifecycleModal, setShowLifecycleModal] = useState(false);
+  const [lifecycleReason, setLifecycleReason] = useState("");
+  const [lifecycleSaving, setLifecycleSaving] = useState(false);
+  const [showChangeAssignment, setShowChangeAssignment] = useState(false);
+  const [changeAssignment, setChangeAssignment] = useState({ changeRequestId: "", effectAction: "modify", aspect: "configuration", consequence: "" });
+  const [changeAssignmentSaving, setChangeAssignmentSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const saveTimers = useRef<Map<string, number>>(new Map());
   const saveChains = useRef<Map<string, Promise<void>>>(new Map());
@@ -152,6 +163,8 @@ export function BaselineManager() {
       .then((payload: { reviews?: Record<string, ManualReview> }) => setReviews(payload.reviews ?? {}))
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => { fetch("/api/demo", { cache: "no-store" }).then((response) => response.json()).then((payload: { enabled?: boolean }) => setDemoEnabled(payload.enabled !== false)).catch(() => undefined); }, []);
 
   const selected = selectedIndex === null ? blankRecord() : rows[selectedIndex] ?? blankRecord();
   const selectedMeta = selectedIndex === null ? null : rows[selectedIndex]?.__meta ?? null;
@@ -175,16 +188,18 @@ export function BaselineManager() {
     const qualityMatch = activeQuality === "All checks" || qualityForRecord(row).label === activeQuality;
     const rowReview = reviews[row.__meta.sourceRowId]?.status ?? "not_reviewed";
     const reviewMatch = activeReview === "All review statuses" || manualReviewLabel(rowReview) === activeReview;
-    return releaseMatch && tierMatch && qualityMatch && reviewMatch && TECHNICAL_BASELINE_COLUMNS.map((column) => text(row[column])).join(" ").toLowerCase().includes(query.toLowerCase());
-  }), [rows, reviews, query, activeRelease, activeTier, activeQuality, activeReview]);
+    const lifecycleMatch = activeLifecycle === "All lifecycle states" || (activeLifecycle === "Active records" ? row.__meta.lifecycleStatus === "active" : row.__meta.lifecycleStatus === "voided");
+    return releaseMatch && tierMatch && qualityMatch && reviewMatch && lifecycleMatch && TECHNICAL_BASELINE_COLUMNS.map((column) => text(row[column])).join(" ").toLowerCase().includes(query.toLowerCase());
+  }), [rows, reviews, query, activeRelease, activeTier, activeQuality, activeReview, activeLifecycle]);
 
-  const releases = useMemo(() => Array.from(new Set(rows.map(releaseOf))), [rows]);
+  const activeRows = useMemo(() => rows.filter((row) => row.__meta.lifecycleStatus === "active"), [rows]);
+  const releases = useMemo(() => Array.from(new Set(activeRows.map(releaseOf))), [activeRows]);
   const releaseGroups = useMemo(() => releases.map((release) => {
-    const releaseRows = rows.filter((row) => releaseOf(row) === release);
+    const releaseRows = activeRows.filter((row) => releaseOf(row) === release);
     return { release, rows: releaseRows, tiers: Array.from(new Set(releaseRows.map(tierOf))) };
-  }), [releases, rows]);
+  }), [releases, activeRows]);
 
-  const scopeRows = useMemo(() => activeRelease === "All releases" ? rows : rows.filter((row) => releaseOf(row) === activeRelease), [rows, activeRelease]);
+  const scopeRows = useMemo(() => activeRelease === "All releases" ? activeRows : activeRows.filter((row) => releaseOf(row) === activeRelease), [activeRows, activeRelease]);
   const scopeTiers = useMemo(() => new Set(scopeRows.map(tierOf)), [scopeRows]);
   const availableTiers = useMemo(() => Array.from(scopeTiers), [scopeTiers]);
   const issueCount = useMemo(() => scopeRows.filter((row) => qualityForRecord(row).level !== "ready").length, [scopeRows]);
@@ -192,6 +207,7 @@ export function BaselineManager() {
   const issueBlocks = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "issue").length, [scopeRows]);
   const warningCount = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "review").length, [scopeRows]);
   const resolvedNewRowRelease = newRowRelease === "__new__" ? newReleaseName.trim() : newRowRelease;
+  const reconciliation = useMemo(() => draft ? reconcileIntake(activeRows, draft.rows) : null, [activeRows, draft]);
 
   const selectedProductId = selectedMeta?.productId ?? null;
   const occurrenceRows = useMemo<IndexedRow[]>(() => {
@@ -237,12 +253,6 @@ export function BaselineManager() {
       },
     };
   }, [selected, selectedIndex, selectedProductId]);
-
-  const reviewDraftHasChanges = useMemo(() => {
-    const note = reviewDraftNote.trim();
-    const savedNote = selectedReview.note?.trim() ?? "";
-    return reviewDraftStatus !== selectedReview.status || note !== savedNote;
-  }, [reviewDraftStatus, reviewDraftNote, selectedReview.note, selectedReview.status]);
 
   function queueOccurrenceSave(row: ManagedRecord24) {
     const occurrenceId = row.__meta.occurrenceId;
@@ -291,12 +301,51 @@ export function BaselineManager() {
     if (selectedIndex === null) return;
     const current = rows[selectedIndex];
     if (!current) return;
+    if (current.__meta.lifecycleStatus !== "active") {
+      setNotice("Restore this voided source occurrence before editing it.");
+      return;
+    }
     const nextRow = { ...current, [column]: value } as ManagedRecord24;
     setRows((existing) => existing.map((row, index) => index === selectedIndex ? nextRow : row));
     const occurrenceId = current.__meta.occurrenceId;
     const existingTimer = saveTimers.current.get(occurrenceId);
     if (existingTimer) window.clearTimeout(existingTimer);
     saveTimers.current.set(occurrenceId, window.setTimeout(() => queueOccurrenceSave(nextRow), 650));
+  }
+
+  async function changeLifecycle(action: "void" | "restore") {
+    if (!selectedMeta) return;
+    setLifecycleSaving(true);
+    try {
+      const response = await fetch("/api/baseline", {
+        method: action === "void" ? "DELETE" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(action === "void" ? { occurrenceId: selectedMeta.occurrenceId, reason: lifecycleReason } : { action: "restore_occurrence", occurrenceId: selectedMeta.occurrenceId }),
+      });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error || `Source occurrence could not be ${action === "void" ? "voided" : "restored"}.`);
+      setSelectedIndex(null);
+      setShowLifecycleModal(false);
+      setLifecycleReason("");
+      await reload();
+      setNotice(action === "void" ? "Source occurrence voided. Its history remains auditable and it is excluded from normal views and XLSX export." : "Source occurrence restored to the working baseline.");
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Lifecycle update failed."); }
+    finally { setLifecycleSaving(false); }
+  }
+
+  async function assignSelectedToChangeRequest() {
+    const occurrenceIds = [...checked].map((index) => rows[index]).filter((row) => row?.__meta.lifecycleStatus === "active").map((row) => row.__meta.occurrenceId);
+    if (!changeAssignment.changeRequestId || !occurrenceIds.length) return;
+    setChangeAssignmentSaving(true);
+    try {
+      await saveChangeAction({ action: "assign_occurrences", occurrenceIds, ...changeAssignment });
+      await reloadChanges();
+      setChecked(new Set());
+      setShowChangeAssignment(false);
+      setChangeAssignment({ changeRequestId: "", effectAction: "modify", aspect: "configuration", consequence: "" });
+      setNotice(`${occurrenceIds.length} source occurrence${occurrenceIds.length === 1 ? "" : "s"} assigned to the Change Request impact chain.`);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Source occurrences could not be assigned."); }
+    finally { setChangeAssignmentSaving(false); }
   }
 
   function selectRecord(index: number) {
@@ -481,7 +530,7 @@ export function BaselineManager() {
   }
 
   async function exportWorkbook() {
-    const exportRows = activeRelease === "All releases" ? rows : scopeRows;
+    const exportRows = activeRelease === "All releases" ? activeRows : scopeRows;
     if (!exportRows.length) {
       setNotice("There are no source occurrences in the requested export scope.");
       return;
@@ -580,7 +629,7 @@ export function BaselineManager() {
           </div>
           <div className="tree-list">
             <button className={activeRelease === "All releases" && activeTier === "All records" ? "tree-row selected" : "tree-row"} onClick={() => { setActiveRelease("All releases"); setActiveTier("All records"); }}>
-              <span>▦</span><b>All releases</b><em>{rows.length}</em>
+              <span>▦</span><b>All releases</b><em>{activeRows.length}</em>
             </button>
             {releaseGroups.map((group) => (
               <div className="release-tree" key={group.release}>
@@ -606,8 +655,9 @@ export function BaselineManager() {
             <>
               <div className="records-toolbar">
                 <label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products, hosts, or OEM…"/></label>
-                <button className={showFilters ? "tool-button tool-active" : "tool-button"} onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters}>≡ Filter <span>{(activeRelease === "All releases" ? 0 : 1) + (activeTier === "All records" ? 0 : 1) + (activeQuality === "All checks" ? 0 : 1) + (activeReview === "All review statuses" ? 0 : 1)}</span></button>
+                <button className={showFilters ? "tool-button tool-active" : "tool-button"} onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters}>≡ Filter <span>{(activeRelease === "All releases" ? 0 : 1) + (activeTier === "All records" ? 0 : 1) + (activeQuality === "All checks" ? 0 : 1) + (activeReview === "All review statuses" ? 0 : 1) + (activeLifecycle === "Active records" ? 0 : 1)}</span></button>
                 <div className="spacer" />
+                {checked.size ? <button className="tool-button tool-active" onClick={() => setShowChangeAssignment(true)}>Assign {checked.size} to Change Request</button> : null}
                 <button className="tool-button" onClick={exportWorkbook}>Export {activeRelease === "All releases" ? "all" : activeRelease} .xlsx</button>
                 <button className="add-button" onClick={openAddRow}>＋ Add row</button>
               </div>
@@ -617,11 +667,13 @@ export function BaselineManager() {
                 <div><span>Tier</span><select value={activeTier} onChange={(event) => setActiveTier(event.target.value)}><option>All records</option>{availableTiers.map((tier) => <option key={tier}>{tier}</option>)}</select></div>
                 <div><span>Automated checks</span><select value={activeQuality} onChange={(event) => setActiveQuality(event.target.value)}><option>All checks</option><option>Pass</option><option>Warning</option><option>Blocking</option></select></div>
                 <div><span>Manual review</span><select value={activeReview} onChange={(event) => setActiveReview(event.target.value)}><option>All review statuses</option><option>Not reviewed</option><option>Reviewed</option><option>Follow-up</option></select></div>
+                <div><span>Lifecycle</span><select value={activeLifecycle} onChange={(event) => setActiveLifecycle(event.target.value)}><option>Active records</option><option>Voided records</option><option>All lifecycle states</option></select></div>
                 <button onClick={() => {
                   setActiveRelease("All releases");
                   setActiveTier("All records");
                   setActiveQuality("All checks");
                   setActiveReview("All review statuses");
+                  setActiveLifecycle("Active records");
                   setQuery("");
                 }}>Clear filters</button>
               </section>}
@@ -653,7 +705,7 @@ export function BaselineManager() {
                       const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
                       return <tr
                         key={row.__meta.occurrenceId}
-                        className={selectedIndex === index ? "row-selected" : ""}
+                        className={`${selectedIndex === index ? "row-selected" : ""} ${row.__meta.lifecycleStatus === "voided" ? "row-voided" : ""}`}
                         onClick={() => selectRecord(index)}
                       >
                         <td><input type="checkbox" checked={checked.has(index)} onClick={(event) => event.stopPropagation()} onChange={() => toggleChecked(index)} aria-label={`Select ${text(row.LongName) || key} in ${text(row.ReleaseName)}`} /></td>
@@ -664,7 +716,7 @@ export function BaselineManager() {
                             className="row-nav-link"
                             onClick={(event) => event.stopPropagation()}
                           >
-                            <span className="release-chip">{text(row.ReleaseName) || "Unassigned"}</span>
+                            <span className="release-chip">{text(row.ReleaseName) || "Unassigned"}</span>{row.__meta.lifecycleStatus === "voided" ? <span className="voided-badge">Voided</span> : null}
                           </Link>
                         </td>
                         <td>
@@ -712,7 +764,7 @@ export function BaselineManager() {
               <div className="detail-head">
                 <button className="ghost-button record-back-button" type="button" onClick={() => setSelectedIndex(null)}>← Back to grid</button>
                 <div><span className="eyebrow">SOURCE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the retained source columns."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the working baseline"}</span></div>
-                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
+                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore source occurrence</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void source occurrence</button>}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
               </div>
 
               <div className="detail-tabs" role="tablist">
@@ -731,6 +783,7 @@ export function BaselineManager() {
               </div>
 
               <div className="detail-body">
+                {selectedMeta?.lifecycleStatus === "voided" ? <div className="lifecycle-banner"><strong>Voided source occurrence</strong><span>{selectedMeta.lifecycleReason || "No reason recorded"} · {selectedMeta.voidedAt?.slice(0, 10) || "date unavailable"}. Restore it before editing.</span></div> : null}
                 <div className="detail-status quality-summary">
                   <Mark quality={selectedQuality} />
                   <div><strong>Automated health checks</strong><span>Calculated from source values · not included in XLSX export</span></div>
@@ -917,6 +970,10 @@ export function BaselineManager() {
       </section>
     </div>}
 
+    {showLifecycleModal && selectedMeta ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !lifecycleSaving) setShowLifecycleModal(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="void-title"><span className="eyebrow">REVERSIBLE SOURCE LIFECYCLE</span><h2 id="void-title">Void this source occurrence?</h2><p>The row will be excluded from normal dashboards, comparisons, and XLSX export. Its original source payload, review history, revisions, and audit events remain retained.</p><label className="modal-field">Required reason<textarea rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Why this source occurrence is erroneous, duplicate, or no longer part of the working projection" /></label><footer><button className="ghost-button" disabled={lifecycleSaving} onClick={() => setShowLifecycleModal(false)}>Cancel</button><button className="danger-button" disabled={lifecycleSaving || !lifecycleReason.trim()} onClick={() => void changeLifecycle("void")}>{lifecycleSaving ? "Voiding…" : "Void occurrence"}</button></footer></section></div> : null}
+
+    {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">ATOMIC IMPACT LINK</span><h2 id="assign-change-title">Assign {checked.size} source occurrence{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>The source rows remain baseline evidence. This creates affected-occurrence links used by consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these source occurrences" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add to impact chain"}</button></footer></section></div> : null}
+
     {(draft || importError) && <div className="modal-backdrop" role="presentation">
       <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
         <span className="eyebrow">WORKBOOK INTAKE</span>
@@ -928,14 +985,15 @@ export function BaselineManager() {
         </> : draft && <>
           <p><strong>{draft.fileName}</strong> · {draft.sheetName}</p>
           <div className="import-stats four">
-            <div><strong>{draft.rows.length}</strong><span>Source rows</span></div>
-            <div><strong>{new Set(draft.rows.map(releaseOf)).size}</strong><span>Releases</span></div>
-            <div><strong>{draft.rows.filter((row) => qualityForRecord(row).level === "ready").length}</strong><span>Checks pass</span></div>
-            <div><strong>{draft.rows.filter((row) => qualityForRecord(row).level !== "ready").length}</strong><span>Needs attention</span></div>
+            <div><strong>{reconciliation?.added ?? 0}</strong><span>Added</span></div>
+            <div><strong>{reconciliation?.changed ?? 0}</strong><span>Changed</span></div>
+            <div><strong>{reconciliation?.unchanged ?? 0}</strong><span>Unchanged</span></div>
+            <div><strong>{reconciliation?.removedFromWorkingProjection ?? 0}</strong><span>Absent from new projection</span></div>
           </div>
+          {reconciliation?.conflicts ? <p className="error-copy"><strong>{reconciliation.conflicts} duplicate identity conflict{reconciliation.conflicts === 1 ? "" : "s"}.</strong> Resolve repeated ReleaseName + # identities (or semantic fallback identities) before import.</p> : null}
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
-          <p className="modal-note">Each source occurrence retains ReleaseName. Import reuses the canonical product while linking its reported configuration and deployment state to the correct release baseline.</p>
-          <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" onClick={acceptImport}>Import and reconcile</button></footer>
+          <p className="modal-note">Each source occurrence retains ReleaseName. Rows absent from the incoming package leave the active working projection, while prior source packages and their evidence remain retained.</p>
+          <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" disabled={Boolean(reconciliation?.conflicts)} onClick={acceptImport}>Import and reconcile</button></footer>
         </>}
       </section>
     </div>}
@@ -946,16 +1004,16 @@ export function BaselineManager() {
       <section className="import-modal steward-menu" id="steward-menu" role="dialog" aria-modal="true" aria-labelledby="steward-title">
         <button className="modal-close" type="button" aria-label="Close Baseline steward menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
         <span className="eyebrow">BASELINE STEWARD</span>
-        <h2 id="steward-title">Demo workspace</h2>
-        <p>Load a synthetic, valid 24-column dataset to explore release comparisons, topology, data quality, and traceability.</p>
+        <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
+        <p>{demoEnabled ? "Load a synthetic, valid 24-column dataset to explore release comparisons, topology, data quality, and traceability." : "Demonstration data is disabled in this environment. Use Import workbook to establish or replace the active working projection."}</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
           <div><strong>8</strong><span>Products</span></div>
         </div>
-        <p className="modal-note">This replaces the current <strong>working workspace</strong> with synthetic baseline occurrences. It also adds non-exported topology detail and three linked rationale records so you can smoke-test comparisons and traceability. Prior source packages remain retained; import your retained workbook at any time to re-establish the active workspace.</p>
+        <p className="modal-note">{demoEnabled ? <>This replaces the current <strong>working workspace</strong> with synthetic baseline occurrences. It also adds non-exported Platform, topology, Change Request, dependency, and decision detail for smoke testing. Prior source packages remain retained and can be restored from Intake &amp; Quality.</> : <>Demo mutation is blocked by configuration. Retained source-package restore, void/restore, auditing, and exact XLSX export remain available.</>}</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
-        <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Cancel</button><button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button></footer>
+        <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Close</button>{demoEnabled ? <button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button> : null}</footer>
       </section>
     </div>}
 

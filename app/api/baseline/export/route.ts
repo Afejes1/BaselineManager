@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     const occurrenceIds = Array.isArray(body.occurrenceIds) ? body.occurrenceIds.filter((id): id is string => typeof id === "string" && id.length > 0) : [];
     if (!occurrenceIds.length) return Response.json({ error: "There are no source occurrences in the requested export scope." }, { status: 400 });
     const placeholders = occurrenceIds.map(() => "?").join(",");
-    const result = await env.DB.prepare(`SELECT id, projection_payload FROM baseline_occurrence WHERE workspace_id = ? AND id IN (${placeholders})`).bind(workspaceId, ...occurrenceIds).all<StoredRow>();
+    const result = await env.DB.prepare(`SELECT id, projection_payload FROM baseline_occurrence WHERE workspace_id = ? AND lifecycle_status='active' AND id IN (${placeholders})`).bind(workspaceId, ...occurrenceIds).all<StoredRow>();
     if (result.results.length !== occurrenceIds.length) return Response.json({ error: "The export scope changed. Reload before exporting." }, { status: 409 });
     const blockers = result.results.flatMap((item) => {
       const row = JSON.parse(item.projection_payload) as Record<string, unknown>;
