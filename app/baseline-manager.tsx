@@ -153,6 +153,9 @@ export function BaselineManager() {
   const saveChains = useRef<Map<string, Promise<void>>>(new Map());
   const saveRevisions = useRef<Map<string, number>>(new Map());
   const [savingOccurrences, setSavingOccurrences] = useState<Set<string>>(new Set());
+  const [pendingSaveOccurrences, setPendingSaveOccurrences] = useState<Set<string>>(new Set());
+  const [failedSaveOccurrences, setFailedSaveOccurrences] = useState<Set<string>>(new Set());
+  const saveSequences = useRef<Map<string, number>>(new Map());
   const pathname = usePathname();
 
   useEffect(() => {
@@ -173,6 +176,8 @@ export function BaselineManager() {
   const selectedQuality = qualityForRecord(selected);
   const selectedReview = !selectedMeta ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[selectedMeta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
   const reviewDraftHasChanges = reviewDraftStatus !== selectedReview.status || reviewDraftNote.trim() !== (selectedReview.note ?? "").trim();
+  const selectedSavePending = selectedMeta ? pendingSaveOccurrences.has(selectedMeta.occurrenceId) : false;
+  const selectedSaveFailed = selectedMeta ? failedSaveOccurrences.has(selectedMeta.occurrenceId) : false;
 
   useEffect(() => {
     if (selectedIndex === null) return;
@@ -258,7 +263,7 @@ export function BaselineManager() {
     };
   }, [selected, selectedIndex, selectedProductId]);
 
-  function queueOccurrenceSave(row: ManagedRecord24) {
+  function queueOccurrenceSave(row: ManagedRecord24, sequence: number) {
     const occurrenceId = row.__meta.occurrenceId;
     const previous = saveChains.current.get(occurrenceId) ?? Promise.resolve();
     const next = previous
@@ -286,10 +291,14 @@ export function BaselineManager() {
             baseline: payload.baseline ?? item.__meta.baseline,
           },
         } : item));
+        if (saveSequences.current.get(occurrenceId) === sequence) await reload();
       })
       .catch((reason) => {
-        setNotice(reason instanceof Error ? reason.message : "The automatic save could not be completed.");
-        window.setTimeout(() => setNotice(""), 4200);
+        if (saveSequences.current.get(occurrenceId) === sequence) {
+          setFailedSaveOccurrences((current) => new Set(current).add(occurrenceId));
+          setNotice(reason instanceof Error ? reason.message : "The automatic save could not be completed.");
+          window.setTimeout(() => setNotice(""), 4200);
+        }
       })
       .finally(() => {
         setSavingOccurrences((current) => {
@@ -297,6 +306,13 @@ export function BaselineManager() {
           nextSaving.delete(occurrenceId);
           return nextSaving;
         });
+        if (saveSequences.current.get(occurrenceId) === sequence) {
+          setPendingSaveOccurrences((current) => {
+            const nextPending = new Set(current);
+            nextPending.delete(occurrenceId);
+            return nextPending;
+          });
+        }
       });
     saveChains.current.set(occurrenceId, next);
   }
@@ -312,9 +328,17 @@ export function BaselineManager() {
     const nextRow = { ...current, [column]: value } as ManagedRecord24;
     setRows((existing) => existing.map((row, index) => index === selectedIndex ? nextRow : row));
     const occurrenceId = current.__meta.occurrenceId;
+    const sequence = (saveSequences.current.get(occurrenceId) ?? 0) + 1;
+    saveSequences.current.set(occurrenceId, sequence);
+    setPendingSaveOccurrences((existing) => new Set(existing).add(occurrenceId));
+    setFailedSaveOccurrences((existing) => {
+      const nextFailed = new Set(existing);
+      nextFailed.delete(occurrenceId);
+      return nextFailed;
+    });
     const existingTimer = saveTimers.current.get(occurrenceId);
     if (existingTimer) window.clearTimeout(existingTimer);
-    saveTimers.current.set(occurrenceId, window.setTimeout(() => queueOccurrenceSave(nextRow), 650));
+    saveTimers.current.set(occurrenceId, window.setTimeout(() => queueOccurrenceSave(nextRow, sequence), 650));
   }
 
   async function changeLifecycle(action: "void" | "restore") {
@@ -779,7 +803,7 @@ export function BaselineManager() {
             <>
               <div className="detail-head">
                 <button className="ghost-button record-back-button" type="button" onClick={() => setSelectedIndex(null)}>← Back to grid</button>
-                <div><span className="eyebrow">{text(selected.ReleaseName) || "UNASSIGNED RELEASE"} · BASELINE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the required source fields."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the active baseline"}</span></div>
+                <div><span className="eyebrow">{text(selected.ReleaseName) || "UNASSIGNED RELEASE"} · BASELINE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the required source fields."}</p><span className={selectedSaveFailed ? "autosave-label autosave-error" : "autosave-label"}>{selectedSaveFailed ? "Save failed — edit the field to retry" : selectedSavePending || (selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId)) ? "Saving changes…" : "✓ Changes saved to the active baseline"}</span></div>
                 <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Record reference</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore record</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void record</button>}</div>
               </div>
 
