@@ -27,12 +27,14 @@ export default function SourceOccurrencePage() {
 
   const quality = dataQualityForOccurrence(row, row.__meta.materializationStatus);
   const product = text(row.LongName) || text(row.ShortName) || "Host record";
+  const release = text(row.ReleaseName) || "Unassigned";
   return (
     <DomainPageShell
-      title={`Baseline record: ${product}`}
-      subtitle={`24-column record · ${row.__meta.baseline.name || "Reported baseline"}`}
-      releaseScope={`${text(row.ReleaseName) || "Unassigned"} · ${row.__meta.baseline.maturity || "reported"} · as of ${row.__meta.baseline.asOf || "unknown"}`}
-      actions={<Link className="primary-button" href="/">Return to Baseline Manager</Link>}
+      title={`Record reference: ${product}`}
+      subtitle={`Read-only 24-column source record · ${row.__meta.baseline.name || "Reported baseline"}`}
+      releaseScope={`${release} · ${row.__meta.baseline.maturity || "reported"} · as of ${row.__meta.baseline.asOf || "unknown"}`}
+      breadcrumb={[{ label: "Baseline Records", href: "/" }, { label: release, href: `/releases/${encodeURIComponent(release)}` }, { label: text(row.ShortName) || product }]}
+      actions={<Link className="primary-button" href="/">Return to Baseline Records</Link>}
     >
       <section className="detail-tabs" aria-label="Baseline record detail tabs">
         <button type="button" role="tab" aria-selected={tab === "source"} className={`tab-button ${tab === "source" ? "tab-active" : ""}`} onClick={() => setTab("source")}>24-column projection</button>

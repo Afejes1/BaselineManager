@@ -12,6 +12,7 @@ type DomainPageShellProps = {
   actions?: ReactNode;
   children: ReactNode;
   releaseScope?: string;
+  breadcrumb?: Array<{ label: string; href?: string }>;
 };
 
 function isActiveItem(pathname: string, itemHref: string) {
@@ -19,7 +20,7 @@ function isActiveItem(pathname: string, itemHref: string) {
   return pathname.startsWith(`${itemHref}/`) && itemHref !== "/";
 }
 
-export function DomainPageShell({ title, subtitle, actions, children, releaseScope }: DomainPageShellProps) {
+export function DomainPageShell({ title, subtitle, actions, children, releaseScope, breadcrumb }: DomainPageShellProps) {
   const pathname = usePathname();
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
   const navigationSections = ["Baseline", "Views", "Decisions"] as const;
@@ -80,6 +81,12 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
           </div>
           {actions ? <div className="top-actions">{actions}</div> : null}
         </header>
+        {breadcrumb?.length ? <nav className="breadcrumb" aria-label="Breadcrumb">
+          {breadcrumb.map((item, index) => <span key={`${item.label}:${index}`}>
+            {index ? <i aria-hidden="true">/</i> : null}
+            {item.href ? <Link href={item.href}>{item.label}</Link> : <strong aria-current="page">{item.label}</strong>}
+          </span>)}
+        </nav> : null}
         <section className="domain-content">{children}</section>
       </section>
     </main>
