@@ -400,4 +400,14 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 @media(max-width:900px){.decision-color-key{grid-template-columns:1fr}.decision-color-key-items{grid-template-columns:1fr 1fr}}
 @media(max-width:520px){.decision-color-key-items{grid-template-columns:1fr}}
 
+/* Topology colors identify architecture layers, not data ownership. */
+.topology-block-application{border-left:4px solid #68528f;background:#f7f4fb}
+.topology-block-workload{border-left:4px solid #426f9a;background:#f2f7fb}
+.topology-block-runtime{border-left:4px solid #287e7a;background:#f0f9f8}
+.topology-block-vm{border-left:4px solid #637688;background:#f3f6f8}
+.topology-block-host{border-left:4px solid #3f7d5b;background:#f1f8f3}
+.topology-block-hardware{border-left:4px solid #8b702d;background:#fbf8ed}
+.topology-block-facility{border-left:4px solid #81604b;background:#faf5f1}
+.topology-block-location{border-left:4px solid #31493d;background:#eef4f1}
+
 

@@ -27,7 +27,7 @@ export async function controlSnapshot(db: Database): Promise<ControlSnapshot> {
     db.prepare("SELECT r.id,r.name,COALESCE(p.state_role,'unclassified') AS state_role FROM release r LEFT JOIN release_profile p ON p.release_id=r.id WHERE r.program_id=? ORDER BY r.name").bind(PROGRAM_ID).all<{ id: string; name: string; state_role: string }>(),
   ]);
   const queues: ControlQueueItem[] = [];
-  if (!source) queues.push({ id: "source-missing", severity: "blocker", category: "Source", title: "No A2O Tech Stack loaded", detail: "Import the current 24-column workbook before analysis.", href: "/intake" });
+  if (!source) queues.push({ id: "source-missing", severity: "blocker", category: "Baseline", title: "No working baseline loaded", detail: "Import the current A2O XLSX exchange file before analysis.", href: "/intake" });
   else if (source.exception_count) queues.push({ id: "source-exceptions", severity: "blocker", category: "Source", title: `${source.exception_count} import exceptions`, detail: `${source.file_name} contains records that were not accepted without review.`, href: "/intake" });
   if (Number(unreviewed?.count || 0)) queues.push({ id: "manual-review", severity: "action", category: "Baseline", title: `${unreviewed?.count} baseline records require review`, detail: "Complete or mark follow-up for the active source projection.", href: "/" });
   if (Number(unmapped?.count || 0)) queues.push({ id: "platform-map", severity: "warning", category: "Platform", title: `${unmapped?.count} records have no primary Platform`, detail: "Assign fielding locations before using WHAT / WHERE reporting.", href: "/platforms" });

@@ -18,7 +18,7 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   const hasHost = present(row.HW_Host);
 
   if (!present(row["#"])) add("review", "#", "The source-record key is blank. Retain the reported value when it becomes known; it is not assumed to be a Product identifier.");
-  if (!present(row.ReleaseName)) add("blocking", "ReleaseName", "Choose the release baseline for this source occurrence.");
+  if (!present(row.ReleaseName)) add("blocking", "ReleaseName", "Choose the release for this baseline record.");
   if (!hasProduct && !hasHost) add("blocking", "LongName", "Provide a product name or HW_Host so the row can be materialized.");
 
   if (hasProduct && !present(row.LongName)) add("review", "LongName", "Add the canonical product name; ShortName is treated as an alias.");
@@ -50,7 +50,7 @@ export function dataQualityForOccurrence(row: TechnicalBaselineRow, materializat
       {
         severity: "blocking",
         field: "HW_Host",
-        message: "This source occurrence conflicts with another reported claim at the same release configuration position. Resolve the source rows before using the canonical state.",
+        message: "This baseline record conflicts with another value at the same release configuration position. Resolve the records before using the shared state.",
       },
     ],
   };

@@ -103,7 +103,7 @@ export default function ProductDetailPage() {
       </section>
 
       <section className="domain-section">
-        <h3>Reported baseline records</h3>
+        <h3>Working baseline records</h3>
         <section className="domain-table-wrap">
           <table>
             <thead>
@@ -130,7 +130,7 @@ export default function ProductDetailPage() {
                 </tr>
               ))}
               {!visibleRows.length ? (
-                <tr><td colSpan={7} className="empty">{productRows.length ? "No rows match your search." : "No source rows are attached to this product."}</td></tr>
+                <tr><td colSpan={7} className="empty">{productRows.length ? "No records match your search." : "No baseline records are attached to this product."}</td></tr>
               ) : null}
             </tbody>
           </table>

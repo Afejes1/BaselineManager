@@ -43,7 +43,7 @@ export default function CapabilitiesPage() {
         {filtered.map((capability) => (
           <article key={capability.id} className="domain-card">
             <h3><Link href={`/capabilities/${encodeURIComponent(capability.name)}`}>{capability.name}</Link></h3>
-            <p className="entity-metric">{capability.productCount} products · {capability.rowCount} source rows</p>
+            <p className="entity-metric">{capability.productCount} products · {capability.rowCount} baseline records</p>
             <p className="entity-actions"><Link href={`/capabilities/${encodeURIComponent(capability.name)}`}>Open capability</Link></p>
           </article>
         ))}

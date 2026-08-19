@@ -175,7 +175,7 @@ export async function assignOccurrences(db: Database, actor: Actor, body: Record
   const changeRequestId = clean(body.changeRequestId);
   const occurrenceIds = Array.isArray(body.occurrenceIds) ? Array.from(new Set(body.occurrenceIds.map(clean).filter(Boolean))) : [];
   const effectAction = (clean(body.effectAction) || "modify") as ChangeAction;
-  if (!changeRequestId || !occurrenceIds.length || !actions.has(effectAction)) throw new Error("Choose a Change Request, valid action, and at least one source occurrence.");
+  if (!changeRequestId || !occurrenceIds.length || !actions.has(effectAction)) throw new Error("Choose a Change Request, valid action, and at least one baseline record.");
   const request = await db.prepare("SELECT id FROM change_request WHERE id=? AND program_id=?").bind(changeRequestId, PROGRAM_ID).first<{ id: string }>();
   if (!request) throw new Error("Change Request was not found.");
   const at = atNow();

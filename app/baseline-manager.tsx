@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../components/app-link";
-import { ProvenanceKey } from "../components/provenance-key";
 import { usePathname } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
@@ -26,11 +25,11 @@ type DetailTab = "record" | "quality" | "review" | "occurrences" | "normalized";
 type IndexedRow = { row: ManagedRecord24; index: number };
 
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
-  { id: "record", label: "Record" },
+  { id: "record", label: "Baseline" },
   { id: "quality", label: "Quality" },
-  { id: "review", label: "Review" },
-  { id: "occurrences", label: "Release records" },
-  { id: "normalized", label: "Linked data" },
+  { id: "review", label: "Review & sources" },
+  { id: "occurrences", label: "Release comparison" },
+  { id: "normalized", label: "Relationships" },
 ];
 
 const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
@@ -653,21 +652,20 @@ export function BaselineManager() {
           <section className="summary baseline-expanded-summary" id="baseline-summary">
             <div className="summary-lead">
               <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
-              <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
+              <h2>{activeRelease === "All releases" ? "Working technical baseline across releases" : "Working technical baseline"}</h2>
               <span>Active baseline · ReleaseName retained on every record</span>
             </div>
-            <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · A2O Tech Stack</small></div>
+            <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · exact A2O XLSX export available</small></div>
             <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
             <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
           </section>
-          <ProvenanceKey includeDemonstration={demoEnabled} compact />
         </> : null}
       </> : null}
 
       <div className={selectedIndex === null ? "content-grid" : "content-grid content-grid-detail"}>
         {selectedIndex === null ? <aside className="tree-panel">
           <div className="panel-heading">
-            <div><span className="eyebrow">BROWSE A2O TECH STACK</span><h3>Release and tier</h3></div>
+            <div><span className="eyebrow">BROWSE WORKING BASELINE</span><h3>Release and tier</h3></div>
           </div>
           <div className="tree-list">
             <button className={activeRelease === "All releases" && activeTier === "All records" ? "tree-row selected" : "tree-row"} onClick={() => selectReleaseScope("All releases")}>
@@ -704,7 +702,7 @@ export function BaselineManager() {
                 <button className="add-button" onClick={openAddRow}>＋ Add row</button>
               </div>
 
-              {showFilters && <section className="filter-panel" aria-label="Source record filters">
+              {showFilters && <section className="filter-panel" aria-label="Baseline record filters">
                 <div><span>Tier</span><select value={activeTier} onChange={(event) => setActiveTier(event.target.value)}><option>All records</option>{availableTiers.map((tier) => <option key={tier}>{tier}</option>)}</select></div>
                 <div><span>Automated checks</span><select value={activeQuality} onChange={(event) => setActiveQuality(event.target.value)}><option>All checks</option><option>Pass</option><option>Warning</option><option>Blocking</option></select></div>
                 <div><span>Manual review</span><select value={activeReview} onChange={(event) => setActiveReview(event.target.value)}><option>All review statuses</option><option>Not reviewed</option><option>Reviewed</option><option>Follow-up</option></select></div>
@@ -795,7 +793,7 @@ export function BaselineManager() {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No A2O Tech Stack workbook is active. Import it to begin."}</div>}
+                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No working baseline records are available. Import an A2O XLSX file or add a record to begin."}</div>}
               </div>}
               {!workspaceError && !loading && <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><b>All loaded</b></div></footer>}
             </>
@@ -826,14 +824,14 @@ export function BaselineManager() {
                 {selectedMeta?.lifecycleStatus === "voided" ? <div className="lifecycle-banner"><strong>Voided baseline record</strong><span>{selectedMeta.lifecycleReason || "No reason recorded"} · {selectedMeta.voidedAt?.slice(0, 10) || "date unavailable"}. Restore it before editing.</span></div> : null}
                 <div className="detail-status quality-summary">
                   <Mark quality={selectedQuality} />
-                  <div><strong>Automated health checks</strong><span>Calculated from source values · not included in XLSX export</span></div>
+                  <div><strong>Automated health checks</strong><span>Calculated from current baseline values · not included in XLSX export</span></div>
                   <button type="button" className="quality-info" aria-label="Explain automated health checks" onClick={() => setShowQualityHelp(true)}>?</button>
                 </div>
 
                 {activeDetailTab === "record" && (
                   <>
                     <section>
-                      <h4>Workbook identity</h4>
+                      <h4>Product and release</h4>
                       <label>LongName<input value={text(selected.LongName)} onChange={(event) => edit("LongName", event.target.value)} /></label>
                       <div className="field-pair">
                         <label>ShortName<input value={text(selected.ShortName)} onChange={(event) => edit("ShortName", event.target.value)} /></label>
@@ -845,7 +843,7 @@ export function BaselineManager() {
                       {(["Tier", "Resource", "HW_Host"] as TechnicalBaselineColumn[]).map((column) => <label key={column}>{column}<input className={column === "HW_Host" ? "mono" : ""} value={text(selected[column])} onChange={(event) => edit(column, event.target.value)} /></label>)}
                     </section>
                     <section>
-                      <h4>Reported node state</h4>
+                      <h4>Node state</h4>
                       <div className="field-pair">
                         <label>Storage type<input value={text(selected.HW_Storage_Type)} placeholder="e.g., SSD or SAN" onChange={(event) => edit("HW_Storage_Type", event.target.value)} /></label>
                         <label>Storage (GB)<input value={text(selected["HW_Storage (GB)"])} onChange={(event) => edit("HW_Storage (GB)", event.target.value)} /></label>
@@ -856,7 +854,7 @@ export function BaselineManager() {
                       </div>
                     </section>
                     <section>
-                      <h4>All retained source columns</h4>
+                      <h4>A2O exchange fields</h4>
                       {TECHNICAL_BASELINE_COLUMNS.filter((column) => !["LongName","ShortName","ReleaseName","Tier","Resource","HW_Host","HW_Storage_Type","HW_CPU_CORES","HW_RAM (GB)","HW_Storage (GB)"].includes(column)).map((column) => <label key={column}>{column}<input value={text(selected[column])} onChange={(event) => edit(column, event.target.value)} /></label>)}
                     </section>
                   </>
@@ -868,7 +866,7 @@ export function BaselineManager() {
                       <h4>Automated check results</h4>
                       <span>{selectedQuality.issues.length === 0 ? "No issues detected." : `${selectedQuality.issues.length} issue${selectedQuality.issues.length === 1 ? "" : "s"} flagged.`}</span>
                     </div>
-                    {selectedQuality.issues.length === 0 ? <p className="quality-complete">✓ The current source values pass all configured checks.</p> : (
+                    {selectedQuality.issues.length === 0 ? <p className="quality-complete">✓ The current baseline values pass all configured checks.</p> : (
                       <ul>
                         {selectedQuality.issues
                           .slice()
@@ -899,7 +897,7 @@ export function BaselineManager() {
                       </button>
                       <span>Last reviewed <strong>{reviewDate(selectedReview.reviewedAt)}</strong></span>
                     </div>
-                    <p>Stored separately from A2O Tech Stack fields and retained across sessions.</p>
+                    <p>Review metadata is retained with the baseline record and excluded from A2O XLSX export.</p>
                   </section>
                 )}
 
@@ -966,7 +964,7 @@ export function BaselineManager() {
 
                 {activeDetailTab === "normalized" && normalizedProjection && (
                   <section className="normalized-view">
-                    <div className="section-heading"><h4>Linked data</h4><span>Product and configuration data linked from this A2O Tech Stack record</span></div>
+                    <div className="section-heading"><h4>Canonical relationships</h4><span>Product and configuration relationships materialized from the current baseline</span></div>
                     <div className="normalized-grid">
                       <div className="normal-card">
                         <h5>Product node</h5>
@@ -1014,12 +1012,12 @@ export function BaselineManager() {
       <section className="import-modal add-row-modal" role="dialog" aria-modal="true" aria-labelledby="add-row-title">
         <span className="eyebrow">NEW BASELINE RECORD</span>
         <h2 id="add-row-title">Choose the release first</h2>
-        <p>A source row cannot be created from <strong>All releases</strong> without an explicit ReleaseName. This prevents the application from silently assigning the row to the wrong reported baseline.</p>
-        <div className="new-row-summary"><span>Source key</span><strong>Leave blank until the reported source key is known</strong></div>
+        <p>A baseline record cannot be created from <strong>All releases</strong> without an explicit ReleaseName. This prevents the application from assigning the record to the wrong release.</p>
+        <div className="new-row-summary"><span>A2O # value</span><strong>Optional until the exchange identifier is known</strong></div>
         <label className="modal-field">ReleaseName<select value={newRowRelease} onChange={(event) => setNewRowRelease(event.target.value)}><option value="">Select a release…</option>{releases.filter((release) => release !== "Unassigned").map((release) => <option key={release}>{release}</option>)}<option value="__new__">＋ Create a new release…</option></select></label>
-        {newRowRelease === "__new__" && <label className="modal-field">New ReleaseName<input value={newReleaseName} onChange={(event) => setNewReleaseName(event.target.value)} placeholder="Enter the exact source value" /></label>}
+        {newRowRelease === "__new__" && <label className="modal-field">New ReleaseName<input value={newReleaseName} onChange={(event) => setNewReleaseName(event.target.value)} placeholder="Enter the release name" /></label>}
         <div className={resolvedNewRowRelease ? "assignment-preview ready" : "assignment-preview"}><span>{resolvedNewRowRelease ? "Row will be assigned to" : "Waiting for release selection"}</span><strong>{resolvedNewRowRelease || "No release selected"}</strong></div>
-        <footer><button className="ghost-button" onClick={() => setShowAddRow(false)}>Cancel</button><button className="primary-button" disabled={!resolvedNewRowRelease} onClick={addRow}>Create source row</button></footer>
+        <footer><button className="ghost-button" onClick={() => setShowAddRow(false)}>Cancel</button><button className="primary-button" disabled={!resolvedNewRowRelease} onClick={addRow}>Create baseline record</button></footer>
       </section>
     </div>}
 
@@ -1027,7 +1025,7 @@ export function BaselineManager() {
       <section className="import-modal quality-help-modal" role="dialog" aria-modal="true" aria-labelledby="quality-help-title">
         <span className="eyebrow">AUTOMATED HEALTH CHECKS</span>
         <h2 id="quality-help-title">Why does the system check each row?</h2>
-        <p>Automated checks identify missing or inconsistent source values. They are <strong>not A2O Tech Stack fields</strong> and are not included in XLSX export.</p>
+        <p>Automated checks identify missing or inconsistent baseline values. They are <strong>application metadata</strong> and are not included in A2O XLSX export.</p>
         <div className="quality-key">
           <div><Mark quality={{ level: "ready", label: "Pass", issues: [] }} /><span>No configured source-value checks failed.</span></div>
           <div><Mark quality={{ level: "review", label: "Warning", issues: [] }} /><span>The row is usable, but a value is incomplete or inconsistent.</span></div>
@@ -1038,9 +1036,9 @@ export function BaselineManager() {
       </section>
     </div>}
 
-    {showLifecycleModal && selectedMeta ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !lifecycleSaving) setShowLifecycleModal(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="void-title"><span className="eyebrow">RECORD LIFECYCLE</span><h2 id="void-title">Void this baseline record?</h2><p>The record will be excluded from dashboards, comparisons, and XLSX export. Its imported values, review history, revisions, and audit events are retained.</p><label className="modal-field">Required reason<textarea rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Why this record is erroneous, duplicate, or no longer part of the active baseline" /></label><footer><button className="ghost-button" disabled={lifecycleSaving} onClick={() => setShowLifecycleModal(false)}>Cancel</button><button className="danger-button" disabled={lifecycleSaving || !lifecycleReason.trim()} onClick={() => void changeLifecycle("void")}>{lifecycleSaving ? "Voiding…" : "Void record"}</button></footer></section></div> : null}
+    {showLifecycleModal && selectedMeta ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !lifecycleSaving) setShowLifecycleModal(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="void-title"><span className="eyebrow">RECORD LIFECYCLE</span><h2 id="void-title">Void this baseline record?</h2><p>The record will be excluded from dashboards, comparisons, and XLSX export. Its original intake snapshot, review history, revisions, and audit events are retained.</p><label className="modal-field">Required reason<textarea rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Why this record is erroneous, duplicate, or no longer part of the active baseline" /></label><footer><button className="ghost-button" disabled={lifecycleSaving} onClick={() => setShowLifecycleModal(false)}>Cancel</button><button className="danger-button" disabled={lifecycleSaving || !lifecycleReason.trim()} onClick={() => void changeLifecycle("void")}>{lifecycleSaving ? "Voiding…" : "Void record"}</button></footer></section></div> : null}
 
-    {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">CHANGE IMPACT</span><h2 id="assign-change-title">Link {checked.size} baseline record{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>Baseline records remain evidence. This link is used for consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these baseline records" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add impact link"}</button></footer></section></div> : null}
+    {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">CHANGE IMPACT</span><h2 id="assign-change-title">Link {checked.size} baseline record{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>The baseline record remains current analytical data. This relationship records proposed impact for consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these baseline records" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add impact link"}</button></footer></section></div> : null}
 
     {(draft || importError) && <div className="modal-backdrop" role="presentation">
       <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
@@ -1060,7 +1058,7 @@ export function BaselineManager() {
           </div>
           {reconciliation?.conflicts ? <p className="error-copy"><strong>{reconciliation.conflicts} duplicate identity conflict{reconciliation.conflicts === 1 ? "" : "s"}.</strong> Resolve repeated ReleaseName + # identities (or semantic fallback identities) before import.</p> : null}
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
-          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming workbook leave the active baseline; prior workbooks and their evidence remain available in history.</p>
+          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming workbook leave the active baseline. Each imported workbook remains available as an immutable intake snapshot for history and rollback.</p>
           <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" disabled={Boolean(reconciliation?.conflicts)} onClick={acceptImport}>Import and reconcile</button></footer>
         </>}
       </section>
@@ -1075,7 +1073,7 @@ export function BaselineManager() {
         <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
         <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, and traceability. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import workbook to establish or replace the active baseline."}</p>
         <div className="import-stats three">
-          <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
+          <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Baseline records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
           <div><strong>8</strong><span>Products</span></div>
         </div>

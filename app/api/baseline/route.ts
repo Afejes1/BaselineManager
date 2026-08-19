@@ -143,7 +143,7 @@ function materializationIds(row: Record24, mode: "working" | "reported", package
   return { releaseName, releaseId, baselineId, tierName, resourceName, hostName, tierId, resourceId, hostId, productName, productId, oem, organizationId, deploymentId, capabilityName, capabilityId };
 }
 
-function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: string, occurrenceId: string, revision: number, beforePayload: string | null, action: string, isNew = false, aliases?: IdentityAliases) {
+function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: string, occurrenceId: string, revision: number, beforePayload: string | null, action: string, aliases?: IdentityAliases) {
   const now = nowIso();
   const ids = materializationIds(row, "working", undefined, aliases);
   const status = requiresReview(row) ? "review" : "working";
@@ -171,11 +171,8 @@ function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: strin
   );
   if (ids.deploymentId) statements.push(db.prepare("INSERT INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,presence,status,containerized,container_technology,container_type,language,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,deployment_id) DO UPDATE SET source_row_id=excluded.source_row_id,containerized=excluded.containerized,container_technology=excluded.container_technology,container_type=excluded.container_type,language=excluded.language,updated_at=excluded.updated_at").bind(stableId("deploy-state", ids.baselineId, ids.deploymentId), programId, ids.baselineId, ids.deploymentId, sourceRowId, "present", status, cell(row.Containerized), cell(row["Container Technology"]), cell(row["Container Type"]), cell(row["SW Language"]), null, now, now));
 
-  if (isNew) {
-    statements.push(db.prepare("INSERT INTO source_row_24 (id,source_package_id,source_key,row_number,row_hash,raw_payload,release_name,tier,resource,tech_stack_type,short_name,hw_host,hw_storage_type,hw_storage_gb,hw_cpu_cores,hw_ram_gb,sw_language,software_type,oem,containerized,container_technology,container_type,long_name,notes,capability_notes,notes_1,notes_2,notes_3,notes_4,release_id,baseline_id,configuration_node_id,product_id,deployment_id,materialization_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(sourceRowId, "manual-package-pending", cell(row["#"]), 0, stableId("hash", JSON.stringify(row)), JSON.stringify(row), cell(row.ReleaseName), cell(row.Tier), cell(row.Resource), cell(row.TechStackType), cell(row.ShortName), cell(row.HW_Host), cell(row.HW_Storage_Type), cell(row["HW_Storage (GB)"]), cell(row.HW_CPU_CORES), cell(row["HW_RAM (GB)"]), cell(row["SW Language"]), cell(row["Software Type"]), cell(row.OEM), cell(row.Containerized), cell(row["Container Technology"]), cell(row["Container Type"]), cell(row.LongName), cell(row.Notes), cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]), cell(row["Notes.1"]), cell(row["Notes.2"]), cell(row["Notes.3"]), cell(row["Notes.4"]), ids.releaseId, ids.baselineId, ids.hostId, ids.productId, ids.deploymentId, status, now, now));
-  } else {
-    statements.push(db.prepare("UPDATE source_row_24 SET source_key=?,row_hash=?,raw_payload=?,release_name=?,tier=?,resource=?,tech_stack_type=?,short_name=?,hw_host=?,hw_storage_type=?,hw_storage_gb=?,hw_cpu_cores=?,hw_ram_gb=?,sw_language=?,software_type=?,oem=?,containerized=?,container_technology=?,container_type=?,long_name=?,notes=?,capability_notes=?,notes_1=?,notes_2=?,notes_3=?,notes_4=?,release_id=?,baseline_id=?,configuration_node_id=?,product_id=?,deployment_id=?,materialization_status=?,updated_at=? WHERE id=?").bind(cell(row["#"]), stableId("hash", JSON.stringify(row)), JSON.stringify(row), cell(row.ReleaseName), cell(row.Tier), cell(row.Resource), cell(row.TechStackType), cell(row.ShortName), cell(row.HW_Host), cell(row.HW_Storage_Type), cell(row["HW_Storage (GB)"]), cell(row.HW_CPU_CORES), cell(row["HW_RAM (GB)"]), cell(row["SW Language"]), cell(row["Software Type"]), cell(row.OEM), cell(row.Containerized), cell(row["Container Technology"]), cell(row["Container Type"]), cell(row.LongName), cell(row.Notes), cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]), cell(row["Notes.1"]), cell(row["Notes.2"]), cell(row["Notes.3"]), cell(row["Notes.4"]), ids.releaseId, ids.baselineId, ids.hostId, ids.productId, ids.deploymentId, status, now, sourceRowId));
-  }
+  // source_row_24 is an immutable intake snapshot. All analyst edits belong to
+  // baseline_occurrence.projection_payload and the normalized working model.
   statements.push(
     db.prepare("UPDATE baseline_occurrence SET release_id=?,baseline_id=?,configuration_node_id=?,product_id=?,deployment_id=?,projection_payload=?,materialization_status=?,revision=?,updated_at=? WHERE id=? AND revision=?").bind(ids.releaseId, ids.baselineId, ids.hostId, ids.productId, ids.deploymentId, JSON.stringify(row), status, revision + 1, now, occurrenceId, revision),
     db.prepare("INSERT INTO audit_event (id,program_id,action,entity_kind,entity_id,before_payload,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), programId, action, "baseline_occurrence", occurrenceId, beforePayload, JSON.stringify(row), now),
@@ -201,7 +198,7 @@ function toResponse(rows: WorkspaceRow[]) {
     deploymentId: entry.deployment_id,
     row: asRecord24(JSON.parse(entry.projection_payload)),
   })).filter((entry) => entry.row);
-  return { workspace: { id: workspaceId, label: "Current Government working baseline" }, records };
+  return { workspace: { id: workspaceId, label: "Working Technical Baseline" }, records };
 }
 
 export async function GET(request: Request) {
@@ -210,7 +207,7 @@ export async function GET(request: Request) {
     const result = await env.DB.prepare(`SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.lifecycle_status,bo.lifecycle_reason,bo.voided_at,bo.voided_by_user_id,bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.release_id, bo.product_id, bo.configuration_node_id, bo.deployment_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ${includeVoided ? "" : "AND bo.lifecycle_status='active'"} ORDER BY bo.created_at ASC`).bind(workspaceId).all<WorkspaceRow>();
     return Response.json(toResponse(result.results));
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The authoritative baseline workspace is unavailable." }, { status: 500 });
+    return Response.json({ error: error instanceof Error ? error.message : "The working baseline workspace is unavailable." }, { status: 500 });
   }
 }
 
@@ -222,8 +219,8 @@ export async function PATCH(request: Request) {
     const row = asRecord24(body.row);
     if (!occurrenceId || !Number.isInteger(revision) || !row) return Response.json({ error: "occurrenceId, expectedRevision, and the exact 24-column projection are required." }, { status: 400 });
     const current = await env.DB.prepare("SELECT id,source_row_id,revision,projection_payload,lifecycle_status FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<{ id: string; source_row_id: string; revision: number; projection_payload: string; lifecycle_status: string }>();
-    if (!current) return Response.json({ error: "The selected source occurrence is no longer in the current workspace." }, { status: 404 });
-    if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided source occurrence before editing it." }, { status: 409 });
+    if (!current) return Response.json({ error: "The selected baseline record is no longer in the current workspace." }, { status: 404 });
+    if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided baseline record before editing it." }, { status: 409 });
     if (current.revision !== revision) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
     const aliases = await identityAliases(env.DB);
     const ids = materializationIds(row, "working", undefined, aliases);
@@ -232,11 +229,11 @@ export async function PATCH(request: Request) {
       const peerRow = readProjection(peer.projection_payload);
       return peerRow !== null && nodeStateSignature(peerRow) !== nodeStateSignature(row);
     })) {
-      return Response.json({ error: "This edit conflicts with another source occurrence's reported hardware state at the same release configuration node. Resolve the two source rows before changing the canonical node state." }, { status: 409 });
+      return Response.json({ error: "This edit conflicts with another baseline record's hardware state at the same release configuration node. Resolve the two records before changing the shared node state." }, { status: 409 });
     }
     const existingNodeState = await env.DB.prepare("SELECT source_row_id,storage_type,storage_gb,cpu_cores,ram_gb FROM baseline_node_state WHERE baseline_id=? AND configuration_node_id=?").bind(ids.baselineId, ids.hostId).first<NodeStateRow>();
     if (existingNodeState && existingNodeState.source_row_id !== current.source_row_id && !sameNodeState(existingNodeState, row)) {
-      return Response.json({ error: "This edit conflicts with a different source occurrence's reported hardware state at the same release configuration node. Resolve the two source rows before changing the canonical node state." }, { status: 409 });
+      return Response.json({ error: "This edit conflicts with a different baseline record's hardware state at the same release configuration node. Resolve the two records before changing the shared node state." }, { status: 409 });
     }
     if (ids.deploymentId) {
       const deploymentPeers = await env.DB.prepare("SELECT projection_payload FROM baseline_occurrence WHERE workspace_id=? AND id<>? AND baseline_id=? AND deployment_id=?").bind(workspaceId, current.id, ids.baselineId, ids.deploymentId).all<PeerOccurrence>();
@@ -244,20 +241,20 @@ export async function PATCH(request: Request) {
         const peerRow = readProjection(peer.projection_payload);
         return peerRow !== null && deploymentStateSignature(peerRow) !== deploymentStateSignature(row);
       })) {
-        return Response.json({ error: "This edit conflicts with another source occurrence's reported runtime state at the same release deployment. Resolve the two source rows before changing the canonical deployment state." }, { status: 409 });
+        return Response.json({ error: "This edit conflicts with another baseline record's runtime state at the same release deployment. Resolve the two records before changing the shared deployment state." }, { status: 409 });
       }
       const existingDeploymentState = await env.DB.prepare("SELECT source_row_id,containerized,container_technology,container_type,language FROM baseline_deployment_state WHERE baseline_id=? AND deployment_id=?").bind(ids.baselineId, ids.deploymentId).first<DeploymentStateRow>();
       if (existingDeploymentState && existingDeploymentState.source_row_id !== current.source_row_id && !sameDeploymentState(existingDeploymentState, row)) {
-        return Response.json({ error: "This edit conflicts with a different source occurrence's reported runtime state at the same release deployment. Resolve the two source rows before changing the canonical deployment state." }, { status: 409 });
+        return Response.json({ error: "This edit conflicts with a different baseline record's runtime state at the same release deployment. Resolve the two records before changing the shared deployment state." }, { status: 409 });
       }
     }
-    const materialized = materializeCurrentRow(env.DB, row, current.source_row_id, current.id, revision, current.projection_payload, "baseline_occurrence_updated", false, aliases);
+    const materialized = materializeCurrentRow(env.DB, row, current.source_row_id, current.id, revision, current.projection_payload, "baseline_occurrence_updated", aliases);
     const result = await env.DB.batch(materialized.statements);
     const update = result[result.length - 2];
     if (!update.success || Number(update.meta.changes ?? 0) !== 1) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
     return Response.json({ occurrenceId, revision: revision + 1, materializationStatus: materialized.status, baseline: { name: `${materialized.ids.releaseName} Working baseline`, maturity: "working", asOf: materialized.now.slice(0, 10) } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The source occurrence could not be saved." }, { status: 500 });
+    return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be saved." }, { status: 500 });
   }
 }
 
@@ -270,7 +267,7 @@ export async function POST(request: Request) {
       const occurrenceId = String(body.occurrenceId || "").trim();
       if (!occurrenceId) return Response.json({ error: "occurrenceId is required." }, { status: 400 });
       const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
-      if (!before) return Response.json({ error: "Source occurrence was not found." }, { status: 404 });
+      if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 });
       const at = nowIso();
       await env.DB.batch([
         env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='active',lifecycle_reason=NULL,voided_at=NULL,voided_by_user_id=NULL,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(at, occurrenceId, workspaceId),
@@ -279,26 +276,26 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, occurrenceId });
     }
     const row = asRecord24(body.row);
-    if (!row || !normalized(row.ReleaseName)) return Response.json({ error: "Choose ReleaseName before creating a source occurrence." }, { status: 400 });
+    if (!row || !normalized(row.ReleaseName)) return Response.json({ error: "Choose ReleaseName before creating a baseline record." }, { status: 400 });
     const now = nowIso();
     const sourcePackageId = `manual-${crypto.randomUUID()}`;
     const sourceRowId = `source-row-${crypto.randomUUID()}`;
     const occurrenceId = `occurrence-${crypto.randomUUID()}`;
     const initial = [
       env.DB.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(programId, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
-      env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING").bind(workspaceId, programId, "Current Government working baseline", sourcePackageId, now, now),
-      env.DB.prepare("INSERT INTO source_package (id,program_id,source_system,file_name,sheet_name,content_hash,received_at,status,row_count,accepted_count,exception_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(sourcePackageId, programId, "baseline-manager-entry", "Government working-baseline entry", null, stableId("hash", sourceRowId), now, "working", 1, 0, 1, now, now),
+      env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING").bind(workspaceId, programId, "Working Technical Baseline", sourcePackageId, now, now),
+      env.DB.prepare("INSERT INTO source_package (id,program_id,source_system,file_name,sheet_name,content_hash,received_at,status,row_count,accepted_count,exception_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(sourcePackageId, programId, "manual-entry", "Manual baseline entry", null, stableId("hash", sourceRowId), now, "working", 1, 0, 1, now, now),
       env.DB.prepare("INSERT INTO source_row_24 (id,source_package_id,source_key,row_number,row_hash,raw_payload,materialization_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(sourceRowId, sourcePackageId, cell(row["#"]), 1, stableId("hash", JSON.stringify(row)), JSON.stringify(row), "review", now, now),
       env.DB.prepare("INSERT INTO baseline_occurrence (id,program_id,workspace_id,source_row_id,projection_payload,materialization_status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(occurrenceId, programId, workspaceId, sourceRowId, JSON.stringify(row), "review", 0, now, now),
     ];
     const aliases = await identityAliases(env.DB);
-    const materialized = materializeCurrentRow(env.DB, row, sourceRowId, occurrenceId, 0, null, "baseline_occurrence_created", false, aliases);
+    const materialized = materializeCurrentRow(env.DB, row, sourceRowId, occurrenceId, 0, null, "baseline_occurrence_created", aliases);
     const result = await env.DB.batch([...initial, ...materialized.statements]);
     const update = result[result.length - 2];
-    if (!update.success || Number(update.meta.changes ?? 0) !== 1) throw new Error("The new source occurrence could not be materialized.");
+    if (!update.success || Number(update.meta.changes ?? 0) !== 1) throw new Error("The new baseline record could not be materialized.");
     return Response.json({ occurrenceId, revision: 1, materializationStatus: materialized.status }, { status: 201 });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The source occurrence could not be created." }, { status: 500 });
+    return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be created." }, { status: 500 });
   }
 }
 
@@ -309,9 +306,9 @@ export async function DELETE(request: Request) {
     const body = await request.json() as { occurrenceId?: unknown; reason?: unknown };
     const occurrenceId = String(body.occurrenceId || "").trim();
     const reason = String(body.reason || "").trim();
-    if (!occurrenceId || !reason) return Response.json({ error: "Occurrence and a reason are required. Source evidence is voided, never silently deleted." }, { status: 400 });
+    if (!occurrenceId || !reason) return Response.json({ error: "Baseline record and a reason are required. Records are voided, never silently deleted." }, { status: 400 });
     const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
-    if (!before) return Response.json({ error: "Source occurrence was not found." }, { status: 404 });
+    if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 });
     const at = nowIso();
     await env.DB.batch([
       env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='voided',lifecycle_reason=?,voided_at=?,voided_by_user_id=?,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(reason, at, actor.id, at, occurrenceId, workspaceId),

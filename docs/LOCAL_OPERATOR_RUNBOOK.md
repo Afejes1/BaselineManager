@@ -2,8 +2,9 @@
 
 ## Mission
 
-Use one governed application to maintain the A2O Tech Stack, preserve its XLSX
-interface, establish release truth, and create traceable leadership decisions.
+Use one governed application to maintain a contractor-managed Working Technical
+Baseline, preserve the A2O XLSX exchange interface, establish release analysis,
+and create traceable leadership decisions.
 
 ## Data custody
 
@@ -25,10 +26,10 @@ Workspace and storage location are approved for that data.
 2. Run `npm run local:verify`.
 3. Run `npm run local:start`.
 4. Confirm the workspace identifies demonstration data as disabled.
-5. Import the authoritative A2O Tech Stack workbook.
+5. Import the current A2O exchange workbook.
 6. Resolve blocking import and release-assignment findings.
 7. Export the retained XLSX projection.
-8. Compare source and export column order, row count, release assignments, and
+8. Compare intake and export column order, row count, release assignments, and
    material values.
 9. Run `npm run local:backup`.
 
@@ -42,7 +43,7 @@ Build one Initiative completely before expanding the portfolio.
 2. Define the Initiative's As-Is condition, To-Be outcome, decision requested,
    and measurable success criteria.
 3. Enter the governing MCP, DSOR, or other Change Request references. Record
-   source identifier, source location, owner, status, and source-as-of date.
+   external identifier, source location, owner, status, and source-as-of date.
 4. Record the target release, funded consequence, deferred consequence, and
    technical effects for each Change Request.
 5. Add or import the LM Objectives. Each Objective must have one owning Change

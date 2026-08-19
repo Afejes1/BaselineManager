@@ -41,7 +41,7 @@ export default function ConfigurationPage() {
       )}
     >
       <section className="summary">
-        <div className="metric"><span>Configuration nodes</span><strong>{nodes.length}</strong><small>{counts.rows} source rows</small></div>
+        <div className="metric"><span>Configuration nodes</span><strong>{nodes.length}</strong><small>{counts.rows} baseline records</small></div>
         <div className="metric"><span>Releases</span><strong>{counts.releases}</strong><small>Where nodes are reported</small></div>
         <div className="metric"><span>Products</span><strong>{nodes.reduce((sum, node) => sum + node.productCount, 0)}</strong><small>Associated placements</small></div>
       </section>
@@ -52,7 +52,7 @@ export default function ConfigurationPage() {
           {filtered.map((node) => (
             <article key={node.id} className="domain-card">
               <h3><Link href={`/configuration/${encodeURIComponent(node.id)}`}>{node.release} / {node.tier} / {node.resource}</Link></h3>
-              <p className="entity-metric">Host: <strong>{node.host || "Unassigned"}</strong> · {node.rowCount} source rows</p>
+              <p className="entity-metric">Host: <strong>{node.host || "Unassigned"}</strong> · {node.rowCount} baseline records</p>
               <p className="entity-meta">{node.productCount} products reported in this node</p>
               <p className="entity-actions"><Link href={`/releases/${encodeURIComponent(node.release)}`}>View release</Link></p>
             </article>

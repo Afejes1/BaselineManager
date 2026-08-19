@@ -70,7 +70,7 @@ export default function OrganizationDetailPage() {
         <section className="domain-list">
           <article className="domain-card">
             <h3>No rows found</h3>
-            <p className="entity-meta">That supplier currently has no retained source rows.</p>
+            <p className="entity-meta">That supplier currently has no baseline records.</p>
             <p className="entity-actions"><Link href="/organizations">Back to suppliers</Link></p>
           </article>
         </section>

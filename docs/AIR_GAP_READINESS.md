@@ -4,12 +4,13 @@ This application is being matured for an eventual JSF air-gapped deployment. The
 
 ## Stable application contracts
 
-- The intake/export boundary is the exact retained 24-column XLSX contract. Governed extensions never alter that workbook shape.
-- Source packages and raw rows are immutable evidence. The working projection is replaceable, and a previous package can be restored through **Intake & Quality**.
-- An erroneous source occurrence is voided and restorable; it is never silently hard-deleted.
+- The intake/export boundary is the exact retained 24-column A2O XLSX contract. Application properties outside that contract never alter the workbook shape.
+- Source packages and raw rows are immutable intake snapshots. They support reconciliation, rollback, and audit; import does not designate them as official Lockheed Martin or Government records.
+- The editable working projection and normalized model are the contractor-maintained analytical baseline. Analyst edits do not overwrite intake snapshots.
+- An erroneous baseline record is voided and restorable; it is never silently hard-deleted.
 - Release roles (`historical`, `as_is`, `to_be`, `reported`) are analytical perspectives. They are not approval states.
 - Change Requests are references to the external incumbent system. This application owns Government priority, impact links, dependencies, consequences, and the `fund` / `defer` / `decline` decision record.
-- Reports are deterministic and traceable to retained source occurrences and governed links.
+- Reports are deterministic and traceable to working baseline records, intake snapshots, and governed evidence links.
 
 ## Runtime boundary still requiring an environment decision
 
@@ -43,7 +44,7 @@ Required deployment contents:
 1. Build, lint, and contract tests pass from the locked dependency set.
 2. Exact 24-column workbook round-trip preserves headers, order, blanks, zeroes, booleans, and all Notes fields.
 3. Import reconciliation shows added/changed/unchanged/absent/conflict counts before mutation.
-4. Source-package restore and occurrence void/restore are exercised, including audit events.
+4. Intake-package restore and baseline-record void/restore are exercised, including audit events.
 5. ALOU → OCK → OBK → PMA hierarchy rejects cycles and shows product/release/organization rollups.
 6. As-Is → To-Be comparison is deterministic across at least three plausible releases.
 7. Change Request effects and dependency chains are complete enough to support a fund/defer/decline decision.

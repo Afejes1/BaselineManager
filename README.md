@@ -1,9 +1,16 @@
 # A2O Technical Baseline Manager
 
-Single-user proof of concept for governing the A2O Tech Stack, retaining its
-24-column XLSX contract, comparing release baselines, and relating Government
+Single-user proof of concept for maintaining a contractor-managed Working
+Technical Baseline, retaining the exact 24-column A2O XLSX exchange contract,
+comparing release baselines, and relating Government
 Change Requests, LM Objectives, technical effects, Initiatives, and leadership
 decision papers.
+
+The application database is the editable analytical baseline. An imported A2O
+workbook is an intake snapshot, not a declaration that the workbook is an
+official Lockheed Martin or Government record. External authority and source
+basis are recorded through linked evidence. "Canonical" means a stable identity
+inside this application; it does not mean an official program system of record.
 
 The local prototype stores its database and uploaded evidence under
 `.wrangler/state`. Git contains the application, not the operational data.

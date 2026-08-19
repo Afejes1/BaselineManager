@@ -51,7 +51,7 @@ export function managedRows(payload: ApiResponse): ManagedRecord24[] {
 export async function fetchBaselineWorkspace(includeVoided = false): Promise<{ workspace: BaselineWorkspace | null; rows: ManagedRecord24[] }> {
   const response = await fetch(`/api/baseline${includeVoided ? "?includeVoided=true" : ""}`, { cache: "no-store" });
   const payload = await response.json() as ApiResponse;
-  if (!response.ok) throw new Error(payload.error || "The authoritative baseline workspace could not be loaded.");
+  if (!response.ok) throw new Error(payload.error || "The working baseline workspace could not be loaded.");
   return { workspace: payload.workspace ?? null, rows: managedRows(payload) };
 }
 
@@ -69,7 +69,7 @@ export function useBaselineWorkspace(options: { includeVoided?: boolean } = {}) 
       setWorkspace(next.workspace);
       setError("");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The authoritative baseline workspace could not be loaded.");
+      setError(reason instanceof Error ? reason.message : "The working baseline workspace could not be loaded.");
     } finally {
       setLoading(false);
     }

@@ -85,11 +85,11 @@ export function validateRows(rows: readonly SourceRow24[]): ContractIssue[] {
   const identities = new Map<string, number>();
   for (const row of rows) {
     const key = cleanCell(row.values["#"]);
-    if (!key) issues.push({ code: "MissingRowKey", rowNumber: row.rowNumber, column: "#", message: "A retained source row must preserve its # value (blank is allowed only for a new, explicitly governed row)." });
-    else if (keys.has(normalizeIdentity(key))) issues.push({ code: "DuplicateRowKey", rowNumber: row.rowNumber, column: "#", message: `Duplicate source row key ${key}.` });
+    if (!key) issues.push({ code: "MissingRowKey", rowNumber: row.rowNumber, column: "#", message: "An imported A2O row must preserve its # value (blank is allowed only for a new baseline record)." });
+    else if (keys.has(normalizeIdentity(key))) issues.push({ code: "DuplicateRowKey", rowNumber: row.rowNumber, column: "#", message: `Duplicate A2O # value ${key}.` });
     else keys.set(normalizeIdentity(key), row.rowNumber);
     const identity = deploymentIdentity(row.values);
-    if (identity && identities.has(identity)) issues.push({ code: "DuplicateIdentity", rowNumber: row.rowNumber, message: "Rows share the same canonical deployment identity; retain both as source occurrences and review their values." });
+    if (identity && identities.has(identity)) issues.push({ code: "DuplicateIdentity", rowNumber: row.rowNumber, message: "Rows share the same deployment identity; retain both baseline records and review their values." });
     else if (identity) identities.set(identity, row.rowNumber);
   }
   return issues;

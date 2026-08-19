@@ -40,14 +40,14 @@ export default function OrganizationsPage() {
       <section className="summary">
         <div className="metric"><span>Organizations</span><strong>{summaries.length}</strong><small>Distinct supplier identities</small></div>
         <div className="metric"><span>Products</span><strong>{totalProducts}</strong><small>From all product placements</small></div>
-        <div className="metric"><span>Rows</span><strong>{totalRows}</strong><small>Source records across suppliers</small></div>
+        <div className="metric"><span>Baseline records</span><strong>{totalRows}</strong><small>Across suppliers</small></div>
       </section>
 
       <section className="domain-list">
         {filtered.map((org) => (
           <article key={org.id} className="domain-card">
             <h3><Link href={`/organizations/${encodeURIComponent(org.name)}`}>{org.name || "Unassigned"}</Link></h3>
-            <p className="entity-metric">{org.productCount} products · {org.rowCount} source rows</p>
+            <p className="entity-metric">{org.productCount} products · {org.rowCount} baseline records</p>
             <p className="entity-meta">Releases: {org.releases.join(", ") || "Unassigned"}</p>
             <p className="entity-actions"><Link href={`/organizations/${encodeURIComponent(org.name)}`}>Open supplier</Link></p>
           </article>

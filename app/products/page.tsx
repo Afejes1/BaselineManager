@@ -46,7 +46,7 @@ export default function ProductsPage() {
       )}
     >
       <div className="summary">
-        <div className="metric"><span>Products</span><strong>{canonicalCount}</strong><small>From {totalRows} source records</small></div>
+        <div className="metric"><span>Products</span><strong>{canonicalCount}</strong><small>From {totalRows} baseline records</small></div>
         <div className="metric"><span>Suppliers</span><strong>{uniqueSuppliers}</strong><small>Distinct OEM identities</small></div>
         <div className="metric"><span>Releases</span><strong>{releaseCount}</strong><small>Where products are reported</small></div>
       </div>
@@ -55,7 +55,7 @@ export default function ProductsPage() {
         {filtered.map((product) => (
           <article key={product.id} className="domain-card">
             <h3><Link href={`/products/${encodeURIComponent(product.id)}`}>{product.canonical}</Link></h3>
-            <p className="entity-metric">{product.shortName || "Unnamed alias"} · {product.rowCount} source rows · {product.rowCount > 0 ? `${product.tiers} tiers` : "No tier data"}</p>
+            <p className="entity-metric">{product.shortName || "Unnamed alias"} · {product.rowCount} baseline records · {product.rowCount > 0 ? `${product.tiers} tiers` : "No tier data"}</p>
             <p className="entity-meta"><strong>Supplier:</strong> <Link href={`/organizations/${encodeURIComponent(product.supplier)}`}>{product.supplier || "Unassigned"}</Link></p>
             <p className="entity-meta"><strong>Releases:</strong> {product.releases.join(", ") || "Unassigned"}</p>
             <p className="entity-actions">

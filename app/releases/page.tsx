@@ -52,8 +52,8 @@ export default function ReleasesPage() {
       )}
     >
       <div className="summary release-summary-row">
-        <div className="metric"><span>Source records</span><strong>{releaseTotals.rows}</strong><small>Across visible releases</small></div>
-        <div className="metric"><span>Reported releases</span><strong>{releases.length}</strong><small>{totals.products} products</small></div>
+        <div className="metric"><span>Baseline records</span><strong>{releaseTotals.rows}</strong><small>Across visible releases</small></div>
+        <div className="metric"><span>Baseline releases</span><strong>{releases.length}</strong><small>{totals.products} products</small></div>
         <div className="metric"><span>Unresolved blockers</span><strong>{releases.reduce((sum, release) => sum + release.issues, 0)}</strong><small>{releases.reduce((sum, release) => sum + release.warnings, 0)} warnings</small></div>
       </div>
 
