@@ -1,100 +1,95 @@
-# vinext-starter
+# A2O Technical Baseline Manager
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+Single-user proof of concept for governing the A2O Tech Stack, retaining its
+24-column XLSX contract, comparing release baselines, and relating Government
+Change Requests, LM Objectives, technical effects, Initiatives, and leadership
+decision papers.
 
-## Prerequisites
+The local prototype stores its database and uploaded evidence under
+`.wrangler/state`. Git contains the application, not the operational data.
 
-- Node.js `>=22.13.0`
+## Windows AWS Workspace prerequisites
 
-## Quick Start
+- Windows PowerShell 5.1 or PowerShell 7
+- Git
+- Node.js 22.13.0 or newer
+- npm registry access for the first installation
+- An approved location for the data being loaded
 
-```bash
-npm install
-npm run dev
-npm run build
+Python and .NET are not required.
+
+## First-time setup
+
+From this `site` directory:
+
+```powershell
+npm run local:init
+npm run local:start
 ```
 
-This starter does not use `wrangler.jsonc`.
+`local:init` performs a clean dependency install, creates `.env` with
+demonstration data disabled, and applies all local database migrations.
+`local:start` reapplies pending migrations and starts the application on
+localhost only. Open the address printed in the terminal, normally
+`http://127.0.0.1:3000`.
 
-## Included Shape
+## Routine operation
 
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
+After pulling code updates:
 
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```powershell
+npm ci
+npm run local:init
+npm run local:verify
+npm run local:start
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+Before a code update, before a major import, and at the end of a working
+session:
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+```powershell
+npm run local:backup
+```
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+Backups are written to `backups` and contain the local D1 database, uploaded
+evidence state, and a readable SQL export. The directory is excluded from Git;
+copy the resulting ZIP file to an approved backup location.
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+To restore a backup, stop the application and run:
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\local\Restore-A2OWorkspace.ps1 `
+  -BackupPath ".\backups\a2o-workspace-YYYYMMDD-HHMMSS.zip" -Force
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+Restore preserves the current local state under `.wrangler` before replacing
+it, so the prior state remains recoverable. The explicit PowerShell command is
+used because the selected backup path must be visible and deliberate.
 
-## Useful Commands
+## Verification
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+```powershell
+npm run local:verify
+```
 
-## Learn More
+Verification checks the supported Node version, local configuration,
+migrations, database access, and a production build. It does not transmit or
+deploy data.
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+Use `npm run local:init:clean` when a completely clean dependency reinstall is
+required. Stop the local application before running it so Windows can replace
+native runtime files.
+
+## Operating boundaries
+
+- This mode is for one user on one approved Windows AWS Workspace.
+- Keep the server bound to localhost. Do not expose the development port.
+- Do not commit `.env`, `.wrangler`, `backups`, exports, or source workbooks.
+- GitHub transfers code only. Back up operational data separately.
+- Do not mix demonstration records with program records.
+- A shared or production deployment requires managed identity, authorization,
+  database and object storage, backups, monitoring, TLS, and security approval.
+
+See [docs/LOCAL_OPERATOR_RUNBOOK.md](docs/LOCAL_OPERATOR_RUNBOOK.md) for the
+value-producing analyst workflow and recovery procedures.

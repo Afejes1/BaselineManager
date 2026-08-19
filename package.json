@@ -1,6 +1,6 @@
 {
-  "name": "site-creator-vinext-starter",
-  "version": "0.1.0",
+  "name": "a2o-technical-baseline-manager",
+  "version": "0.3.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -9,6 +9,13 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
+    "local:init": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Initialize-A2OWorkspace.ps1",
+    "local:init:clean": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Initialize-A2OWorkspace.ps1 -Install",
+    "local:start": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Start-A2OWorkspace.ps1",
+    "local:backup": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Backup-A2OWorkspace.ps1",
+    "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
+    "local:verify": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1",
+    "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild",
     "test": "npm run build && npm run test:contract",
     "test:contract": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/technical-baseline-contract.test.ts tests/technical-baseline-fixtures.ts tests/xlsx-roundtrip.test.ts tests/baseline-scope.test.ts tests/baseline-quality.test.ts tests/release-analysis.test.ts tests/import-reconciliation.test.ts tests/objective-import.test.ts tests/initiative-readiness.test.ts lib/technical-baseline-contract.ts lib/baseline-scope.ts lib/baseline-quality.ts lib/release-analysis.ts lib/topology-model.ts lib/import-reconciliation.ts lib/objective-import.ts lib/initiative-decision-model.ts lib/initiative-readiness.ts lib/change-model.ts && node --test .test-dist/tests/*.test.js",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
