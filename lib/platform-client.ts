@@ -18,7 +18,7 @@ export async function savePlatformAction(body: Record<string, unknown>) {
 }
 
 export function usePlatformPortfolio() {
-  const [portfolio, setPortfolio] = useState<PlatformPortfolio>({ platforms: [], relationships: [], releaseProfiles: [], organizations: [], releases: [] });
+  const [portfolio, setPortfolio] = useState<PlatformPortfolio>({ platforms: [], assignments: [], occurrenceOptions: [], relationships: [], releaseProfiles: [], organizations: [], releases: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const reload = useCallback(async () => {

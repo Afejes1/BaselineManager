@@ -64,8 +64,8 @@ export default function ProductDetailPage() {
   const changeEffects = changes.effects.filter((effect) => effect.subjectKind === "product" && canonicalProductIds.has(effect.subjectId));
   const changeRequestIds = new Set(changeEffects.map((effect) => effect.changeRequestId));
   const changeRequests = changes.requests.filter((request) => changeRequestIds.has(request.id));
-  const platformByNode = new Map(platformPortfolio.platforms.filter((item) => item.configurationNodeId).map((item) => [item.configurationNodeId!, item]));
-  const productPlatforms = Array.from(new Map(productRows.map((row) => row.__meta.configurationNodeId ? platformByNode.get(row.__meta.configurationNodeId) : undefined).filter(Boolean).map((platform) => [platform!.id, platform!])).values());
+  const platformByOccurrence = new Map(platformPortfolio.assignments.filter((item) => item.assignmentRole === "primary").map((item) => [item.baselineOccurrenceId, platformPortfolio.platforms.find((platform) => platform.id === item.platformId)]));
+  const productPlatforms = Array.from(new Map(productRows.map((row) => platformByOccurrence.get(row.__meta.occurrenceId)).filter(Boolean).map((platform) => [platform!.id, platform!])).values());
 
   return (
     <DomainPageShell

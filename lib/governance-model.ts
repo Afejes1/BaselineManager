@@ -33,6 +33,8 @@ export type WorkPackage = {
   actualStart: string | null;
   actualFinish: string | null;
   status: WorkPackageStatus;
+  workType: "analysis" | "coordination" | "verification" | "decision_support" | "other";
+  objectiveLinks: Array<{ objectiveId: string; relationship: "supports" | "assesses" | "verifies" | "coordinates"; rationale: string | null }>;
   definitionOfDone: string | null;
   progressBasis: string | null;
   notes: string | null;

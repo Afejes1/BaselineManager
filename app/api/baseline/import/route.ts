@@ -48,6 +48,13 @@ export async function POST(request: Request) {
     }
 
     const db = env.DB;
+    const acceptedAliases = await db.prepare("SELECT entity_kind,entity_id,normalized_alias FROM canonical_alias WHERE program_id=? AND namespace='name' AND status='accepted'").bind(programId).all<{ entity_kind: "product" | "organization" | "configuration_node"; entity_id: string; normalized_alias: string }>();
+    const aliasMaps = {
+      product: new Map(acceptedAliases.results.filter((item) => item.entity_kind === "product").map((item) => [item.normalized_alias, item.entity_id])),
+      organization: new Map(acceptedAliases.results.filter((item) => item.entity_kind === "organization").map((item) => [item.normalized_alias, item.entity_id])),
+    };
+    const productIdentity = (name: Cell) => aliasMaps.product.get(normalized(name)) || stableId("product", name);
+    const organizationIdentity = (name: Cell) => aliasMaps.organization.get(normalized(name)) || stableId("org", name);
     const now = nowIso();
     const asOf = now.slice(0,10);
     const packageFingerprint = JSON.stringify(body.rows);
@@ -81,7 +88,7 @@ export async function POST(request: Request) {
 
       const productName = cell(row.LongName) || cell(row.ShortName);
       if (!productName) return;
-      const productId = stableId("product", productName);
+      const productId = productIdentity(productName);
       const deploymentId = stableId("deploy", productId, hostId);
       const deploymentKey = `${baselineId}:${deploymentId}`;
       const existingDeployment = deploymentClaims.get(deploymentKey);
@@ -105,7 +112,7 @@ export async function POST(request: Request) {
       if (conflictingNodeKeys.has(`${baselineId}:${hostId}`)) conflictingNodeRows.add(rowIndex);
       const productName = cell(row.LongName) || cell(row.ShortName);
       if (!productName) return;
-      const deploymentId = stableId("deploy", stableId("product", productName), hostId);
+      const deploymentId = stableId("deploy", productIdentity(productName), hostId);
       if (conflictingDeploymentKeys.has(`${baselineId}:${deploymentId}`)) conflictingDeploymentRows.add(rowIndex);
     });
     const materializationStatusFor = (row: IncomingRow, rowIndex: number) => {
@@ -126,6 +133,10 @@ export async function POST(request: Request) {
     // Remove those release-scoped enrichments before replacing the projection;
     // otherwise a valid next import would be blocked by the foreign-key link.
     statements.push(db.prepare("DELETE FROM managed_deployment_profile WHERE baseline_occurrence_id IN (SELECT id FROM baseline_occurrence WHERE workspace_id = ?)").bind(workspaceId));
+    // Platform assignments cite immutable occurrence identities from the active
+    // projection. A replacement import creates a new review queue instead of
+    // silently carrying installation claims onto different source evidence.
+    statements.push(db.prepare("DELETE FROM platform_baseline_assignment WHERE baseline_occurrence_id IN (SELECT id FROM baseline_occurrence WHERE workspace_id = ?)").bind(workspaceId));
     // Change effects may cite a working occurrence as supporting evidence. The
     // analytical effect survives a new import, but its ephemeral projection
     // pointer is cleared before the old occurrence is replaced.
@@ -137,6 +148,7 @@ export async function POST(request: Request) {
     // stakeholder workbook. A fresh demo import recreates them immediately in
     // /api/demo after source materialization.
     statements.push(db.prepare("DELETE FROM work_package_dependency WHERE predecessor_work_package_id IN (SELECT id FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%') OR successor_work_package_id IN (SELECT id FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%')"));
+    statements.push(db.prepare("DELETE FROM work_package_objective WHERE work_package_id IN (SELECT id FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%')"));
     statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%'"));
     statements.push(db.prepare("DELETE FROM objective_effect_attribution WHERE objective_id LIKE 'demo-objective-%'"));
     statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id LIKE 'demo-objective-%' OR dependent_change_request_id LIKE 'demo-change-%'"));
@@ -158,6 +170,7 @@ export async function POST(request: Request) {
     statements.push(db.prepare("DELETE FROM change_dependency WHERE predecessor_request_id LIKE 'demo-change-%' OR successor_request_id LIKE 'demo-change-%'"));
     statements.push(db.prepare("DELETE FROM change_effect WHERE change_request_id LIKE 'demo-change-%'"));
     statements.push(db.prepare("DELETE FROM change_request WHERE id LIKE 'demo-change-%'"));
+    statements.push(db.prepare("DELETE FROM platform_baseline_assignment WHERE platform_id LIKE 'demo-platform-%'"));
     statements.push(db.prepare("DELETE FROM platform_organization WHERE platform_id LIKE 'demo-platform-%'"));
     statements.push(db.prepare("DELETE FROM platform WHERE id LIKE 'demo-platform-%'"));
     statements.push(db.prepare("DELETE FROM release_profile WHERE id LIKE 'demo-release-profile-%'"));
@@ -179,9 +192,9 @@ export async function POST(request: Request) {
       const resourceId = stableId("resource",tierId,resourceName);
       const hostId = stableId("host",resourceId,hostName);
       const productName = cell(row.LongName) || cell(row.ShortName);
-      const productId = productName ? stableId("product",productName) : null;
+      const productId = productName ? productIdentity(productName) : null;
       const oem = cell(row.OEM);
-      const orgId = oem ? stableId("org",oem) : null;
+      const orgId = oem ? organizationIdentity(oem) : null;
       const deploymentId = productId ? stableId("deploy",productId,hostId) : null;
       const sourceRowId = stableId("row",packageId,rowIndex+2);
 
@@ -190,11 +203,11 @@ export async function POST(request: Request) {
       add(`baseline:${reportedBaselineId}`, "INSERT INTO configuration_baseline (id,program_id,release_id,name,normalized_name,maturity,as_of,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at", reportedBaselineId,programId,releaseId,baselineName,normalized(baselineName),"reported",asOf,"reported",now,now);
       const workingBaselineName = `${releaseName} Working baseline`;
       add(`baseline:${workingBaselineId}`, "INSERT INTO configuration_baseline (id,program_id,release_id,name,normalized_name,maturity,as_of,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET as_of=excluded.as_of,status=excluded.status,updated_at=excluded.updated_at", workingBaselineId,programId,releaseId,workingBaselineName,normalized(workingBaselineName),"working",asOf,"working",now,now);
-      if (orgId) add(`org:${orgId}`, "INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", orgId,programId,oem,normalized(oem),"supplier",now,now);
+      if (orgId) add(`org:${orgId}`, "INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET organization_type=COALESCE(organization.organization_type,excluded.organization_type),updated_at=excluded.updated_at", orgId,programId,oem,normalized(oem),"supplier",now,now);
       add(`node:${tierId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", tierId,programId,null,"tier",tierName,normalized(tierName),now,now);
       add(`node:${resourceId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", resourceId,programId,tierId,"resource",resourceName,normalized(resourceName),now,now);
       add(`node:${hostId}`, "INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at", hostId,programId,resourceId,"host",hostName,normalized(hostName),now,now);
-      if (productId) add(`product:${productId}`, "INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,owner_organization_id=excluded.owner_organization_id,updated_at=excluded.updated_at", productId,programId,productName,normalized(productName),cell(row.ShortName),cell(row.TechStackType),cell(row["Software Type"]),orgId,now,now);
+      if (productId) add(`product:${productId}`, "INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET short_name=COALESCE(product.short_name,excluded.short_name),product_type=COALESCE(excluded.product_type,product.product_type),software_classification=COALESCE(excluded.software_classification,product.software_classification),owner_organization_id=COALESCE(excluded.owner_organization_id,product.owner_organization_id),updated_at=excluded.updated_at", productId,programId,productName,normalized(productName),cell(row.ShortName),cell(row.TechStackType),cell(row["Software Type"]),orgId,now,now);
       if (productId && orgId) add(`supplier:${productId}:${orgId}`, "INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at", productId,orgId,"supplier",now,now);
       const capabilityName = cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]);
       const capabilityId = capabilityName ? stableId("capability",capabilityName) : null;

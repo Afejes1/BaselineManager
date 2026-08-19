@@ -64,7 +64,8 @@ type InitiativeRow = {
   consequence: string | null; desired_outcome: string | null; decision_ask: string | null; created_at: string; updated_at: string; primary_release_name: string | null;
 };
 
-type WorkPackageRow = { id: string; initiative_id: string | null; change_request_id: string | null; objective_id: string | null; parent_id: string | null; wbs_code: string; title: string; owner: string | null; planned_start: string | null; due_date: string | null; actual_start: string | null; actual_finish: string | null; status: WorkPackageStatus; definition_of_done: string | null; progress_basis: string | null; notes: string | null; sort_order: number; created_at: string; updated_at: string };
+type WorkPackageRow = { id: string; initiative_id: string | null; change_request_id: string | null; objective_id: string | null; parent_id: string | null; wbs_code: string; title: string; owner: string | null; planned_start: string | null; due_date: string | null; actual_start: string | null; actual_finish: string | null; status: WorkPackageStatus; work_type: "analysis" | "coordination" | "verification" | "decision_support" | "other"; definition_of_done: string | null; progress_basis: string | null; notes: string | null; sort_order: number; created_at: string; updated_at: string };
+type WorkPackageObjectiveRow = { work_package_id: string; objective_id: string; relationship: "supports" | "assesses" | "verifies" | "coordinates"; rationale: string | null };
 type WorkPackageDependencyRow = { id: string; predecessor_work_package_id: string; successor_work_package_id: string; relationship: "FS" | "SS" | "FF" | "SF"; lag_days: number; status: "proposed" | "accepted" | "rejected" | "retired"; rationale: string; source_reference: string | null; updated_at: string };
 type ScopeRow = { id: string; initiative_id: string; scope_kind: "product" | "release" | "capability" | "occurrence" | "configuration_node"; scope_id: string; display_label: string | null };
 type RecordRow = { id: string; record_type: GovernanceRecordType; external_reference: string | null; title: string; status: GovernanceRecordStatus; owner: string | null; occurred_at: string | null; due_date: string | null; summary: string | null; decision_ask: string | null; impact: string | null; created_at: string; updated_at: string };
@@ -74,10 +75,11 @@ type BriefRow = { id: string; initiative_id: string | null; initiative_title: st
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
 
 export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> {
-  const [initiativeResult, scopeResult, workPackageResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult] = await Promise.all([
+  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult] = await Promise.all([
     db.prepare("SELECT i.*, r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
     db.prepare("SELECT w.* FROM work_package w LEFT JOIN initiative i ON i.id=w.initiative_id LEFT JOIN incumbent_objective o ON o.id=w.objective_id LEFT JOIN change_request cr ON cr.id=COALESCE(w.change_request_id,o.change_request_id) WHERE i.program_id=? OR o.program_id=? OR cr.program_id=? ORDER BY COALESCE(w.initiative_id,''),COALESCE(w.objective_id,''),w.sort_order,w.wbs_code").bind(PROGRAM_ID, PROGRAM_ID, PROGRAM_ID).all<WorkPackageRow>(),
+    db.prepare("SELECT l.work_package_id,l.objective_id,l.relationship,l.rationale FROM work_package_objective l JOIN work_package w ON w.id=l.work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY l.created_at").bind(PROGRAM_ID).all<WorkPackageObjectiveRow>(),
     db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id LEFT JOIN initiative i ON i.id=w.initiative_id LEFT JOIN incumbent_objective o ON o.id=w.objective_id WHERE i.program_id=? OR o.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID, PROGRAM_ID).all<WorkPackageDependencyRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
     db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,CASE WHEN o.id IS NOT NULL THEN 'Source occurrence' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence o ON l.entity_kind='occurrence' AND o.id=l.entity_id").all<LinkRow>(),
@@ -90,6 +92,8 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
   for (const entry of scopeResult.results) scopes.set(entry.initiative_id, [...(scopes.get(entry.initiative_id) ?? []), entry]);
   const workPackages = new Map<string, WorkPackageRow[]>();
   for (const entry of workPackageResult.results) if (entry.initiative_id) workPackages.set(entry.initiative_id, [...(workPackages.get(entry.initiative_id) ?? []), entry]);
+  const objectivesByWorkPackage = new Map<string, WorkPackageObjectiveRow[]>();
+  for (const entry of workObjectiveResult.results) objectivesByWorkPackage.set(entry.work_package_id, [...(objectivesByWorkPackage.get(entry.work_package_id) ?? []), entry]);
   const links = new Map<string, LinkRow[]>();
   for (const entry of linkResult.results) links.set(entry.governance_record_id, [...(links.get(entry.governance_record_id) ?? []), entry]);
   const documentsByRecord = new Map<string, DocumentRow[]>();
@@ -103,10 +107,10 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
       id: entry.id, title: entry.title, status: entry.status, priority: entry.priority, owner: entry.owner, targetDate: entry.target_date,
       consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, primaryReleaseId: entry.primary_release_id,
       primaryReleaseName: entry.primary_release_name, scope: (scopes.get(entry.id) ?? []).map((scope) => ({ id: scope.id, scopeKind: scope.scope_kind, scopeId: scope.scope_id, displayLabel: scope.display_label })),
-      workPackages: (workPackages.get(entry.id) ?? []).map(mapWorkPackage),
+      workPackages: (workPackages.get(entry.id) ?? []).map((work) => mapWorkPackage(work, objectivesByWorkPackage.get(work.id) ?? [])),
       linkedRecordCount: recordLinksByInitiative.get(entry.id) ?? 0, createdAt: entry.created_at, updatedAt: entry.updated_at,
     })),
-    workPackages: workPackageResult.results.map(mapWorkPackage),
+    workPackages: workPackageResult.results.map((work) => mapWorkPackage(work, objectivesByWorkPackage.get(work.id) ?? [])),
     workPackageDependencies: workDependencyResult.results.map((entry) => ({ id: entry.id, predecessorWorkPackageId: entry.predecessor_work_package_id, successorWorkPackageId: entry.successor_work_package_id, relationship: entry.relationship, lagDays: entry.lag_days, status: entry.status, rationale: entry.rationale, sourceReference: entry.source_reference, updatedAt: entry.updated_at })),
     records: recordResult.results.map((entry) => ({
       id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, impact: entry.impact,
@@ -122,8 +126,8 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
   };
 }
 
-function mapWorkPackage(work: WorkPackageRow) {
-  return { id: work.id, initiativeId: work.initiative_id, changeRequestId: work.change_request_id, objectiveId: work.objective_id, parentId: work.parent_id, wbsCode: work.wbs_code, title: work.title, owner: work.owner, plannedStart: work.planned_start, dueDate: work.due_date, actualStart: work.actual_start, actualFinish: work.actual_finish, status: work.status, definitionOfDone: work.definition_of_done, progressBasis: work.progress_basis, notes: work.notes, sortOrder: work.sort_order, createdAt: work.created_at, updatedAt: work.updated_at };
+function mapWorkPackage(work: WorkPackageRow, objectiveLinks: WorkPackageObjectiveRow[]) {
+  return { id: work.id, initiativeId: work.initiative_id, changeRequestId: work.change_request_id, objectiveId: work.objective_id, parentId: work.parent_id, wbsCode: work.wbs_code, title: work.title, owner: work.owner, plannedStart: work.planned_start, dueDate: work.due_date, actualStart: work.actual_start, actualFinish: work.actual_finish, status: work.status, workType: work.work_type, objectiveLinks: objectiveLinks.map((item) => ({ objectiveId: item.objective_id, relationship: item.relationship, rationale: item.rationale })), definitionOfDone: work.definition_of_done, progressBasis: work.progress_basis, notes: work.notes, sortOrder: work.sort_order, createdAt: work.created_at, updatedAt: work.updated_at };
 }
 
 function emptySnapshot(): BriefSnapshot {
@@ -195,32 +199,38 @@ export async function createWorkPackage(db: Database, actor: Actor, body: Record
   const initiativeId = clean(body.initiativeId);
   const objectiveId = clean(body.objectiveId);
   const title = clean(body.title);
-  if ((!initiativeId && !objectiveId) || !title) throw new Error("A work package needs an Objective or Initiative context and a title.");
+  if (!initiativeId || !title) throw new Error("A Government work package requires an Initiative and a title.");
+  const initiative = await db.prepare("SELECT id FROM initiative WHERE id=? AND program_id=?").bind(initiativeId, PROGRAM_ID).first<{ id: string }>();
+  if (!initiative) throw new Error("Choose an Initiative from this program.");
   let changeRequestId = clean(body.changeRequestId) || null;
   if (objectiveId) {
     const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
     if (!objective) throw new Error("Choose an LM Objective from this program.");
     if (changeRequestId && changeRequestId !== objective.change_request_id) throw new Error("The work package Change Request must own the selected Objective.");
     changeRequestId = objective.change_request_id;
-    if (initiativeId) {
-      const linked = await db.prepare("SELECT id FROM initiative_change_request WHERE initiative_id=? AND change_request_id=?").bind(initiativeId, changeRequestId).first<{ id: string }>();
-      if (!linked) throw new Error("The Objective's Change Request must be linked to the selected Initiative.");
-    }
+    const linked = await db.prepare("SELECT id FROM initiative_change_request WHERE initiative_id=? AND change_request_id=?").bind(initiativeId, changeRequestId).first<{ id: string }>();
+    if (!linked) throw new Error("The Objective's Change Request must be linked to the selected Initiative.");
   }
   const parentId = clean(body.parentId) || null;
   if (parentId) {
-    const parent = await db.prepare("SELECT objective_id FROM work_package WHERE id=?").bind(parentId).first<{ objective_id: string | null }>();
-    if (!parent || parent.objective_id !== (objectiveId || null)) throw new Error("A child work package must use the same Objective as its parent.");
+    const parent = await db.prepare("SELECT initiative_id FROM work_package WHERE id=?").bind(parentId).first<{ initiative_id: string | null }>();
+    if (!parent || parent.initiative_id !== initiativeId) throw new Error("A child work package must use the same Initiative as its parent.");
   }
-  const count = objectiveId ? await db.prepare("SELECT COUNT(*) AS count FROM work_package WHERE objective_id=?").bind(objectiveId).first<{ count: number }>() : await db.prepare("SELECT COUNT(*) AS count FROM work_package WHERE initiative_id=?").bind(initiativeId).first<{ count: number }>();
+  const count = await db.prepare("SELECT COUNT(*) AS count FROM work_package WHERE initiative_id=?").bind(initiativeId).first<{ count: number }>();
   const workPackageId = id("wbs");
   const at = now();
   const code = clean(body.wbsCode) || `WP-${String(Number(count?.count ?? 0) + 1).padStart(2, "0")}`;
   const status = workPackageStatusSet.has(body.status as WorkPackageStatus) ? body.status as WorkPackageStatus : "planned";
-  await db.batch([
-    db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, initiativeId || null, changeRequestId, objectiveId || null, parentId, code, title, nullable(body.owner), nullable(body.plannedStart), nullable(body.dueDate), status, nullable(body.definitionOfDone), nullable(body.progressBasis), nullable(body.notes), Number(count?.count ?? 0), at, at),
+  const workType = new Set(["analysis", "coordination", "verification", "decision_support", "other"]).has(clean(body.workType)) ? clean(body.workType) : "analysis";
+  const relationship = new Set(["supports", "assesses", "verifies", "coordinates"]).has(clean(body.objectiveRelationship)) ? clean(body.objectiveRelationship) : "supports";
+  const statements: D1PreparedStatement[] = [
+    db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, initiativeId, changeRequestId, objectiveId || null, parentId, code, title, nullable(body.owner), nullable(body.plannedStart), nullable(body.dueDate), status, workType, nullable(body.definitionOfDone), nullable(body.progressBasis), nullable(body.notes), Number(count?.count ?? 0), at, at),
+  ];
+  if (objectiveId) statements.push(db.prepare("INSERT INTO work_package_objective (id,work_package_id,objective_id,relationship,rationale,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id("wbs-objective"), workPackageId, objectiveId, relationship, nullable(body.objectiveRationale), actor.id, at, at));
+  statements.push(
     audit(db, actor, "work_package_created", "work_package", workPackageId, { initiativeId: initiativeId || null, changeRequestId, objectiveId: objectiveId || null, code, title, status }),
-  ]);
+  );
+  await db.batch(statements);
   return workPackageId;
 }
 
@@ -230,9 +240,17 @@ export async function updateWorkPackage(db: Database, actor: Actor, body: Record
   const current = await db.prepare("SELECT * FROM work_package WHERE id=?").bind(workPackageId).first<WorkPackageRow>();
   if (!current) throw new Error("The requested work package no longer exists.");
   const status = workPackageStatusSet.has(body.status as WorkPackageStatus) ? body.status as WorkPackageStatus : current.status;
-  const next = { title: clean(body.title) || current.title, code: clean(body.wbsCode) || current.wbs_code, owner: body.owner === undefined ? current.owner : nullable(body.owner), plannedStart: body.plannedStart === undefined ? current.planned_start : nullable(body.plannedStart), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), actualStart: body.actualStart === undefined ? current.actual_start : nullable(body.actualStart), actualFinish: body.actualFinish === undefined ? current.actual_finish : nullable(body.actualFinish), status, definitionOfDone: body.definitionOfDone === undefined ? current.definition_of_done : nullable(body.definitionOfDone), progressBasis: body.progressBasis === undefined ? current.progress_basis : nullable(body.progressBasis), notes: body.notes === undefined ? current.notes : nullable(body.notes) };
+  const nextParentId = body.parentId === undefined ? current.parent_id : clean(body.parentId) || null;
+  if (nextParentId) {
+    const candidates = await db.prepare("SELECT id,parent_id,initiative_id FROM work_package WHERE initiative_id=?").bind(current.initiative_id).all<{ id: string; parent_id: string | null; initiative_id: string }>();
+    if (!candidates.results.some((item) => item.id === nextParentId)) throw new Error("The parent package must belong to the same Initiative.");
+    const parents = new Map(candidates.results.map((item) => [item.id, item.parent_id])); let cursor: string | null | undefined = nextParentId; const visited = new Set<string>();
+    while (cursor) { if (cursor === workPackageId) throw new Error("That parent would create a WBS hierarchy cycle."); if (visited.has(cursor)) throw new Error("The WBS already contains a hierarchy cycle."); visited.add(cursor); cursor = parents.get(cursor); }
+  }
+  const workType = new Set(["analysis", "coordination", "verification", "decision_support", "other"]).has(clean(body.workType)) ? clean(body.workType) : current.work_type;
+  const next = { title: clean(body.title) || current.title, code: clean(body.wbsCode) || current.wbs_code, parentId: nextParentId, workType, owner: body.owner === undefined ? current.owner : nullable(body.owner), plannedStart: body.plannedStart === undefined ? current.planned_start : nullable(body.plannedStart), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), actualStart: body.actualStart === undefined ? current.actual_start : nullable(body.actualStart), actualFinish: body.actualFinish === undefined ? current.actual_finish : nullable(body.actualFinish), status, definitionOfDone: body.definitionOfDone === undefined ? current.definition_of_done : nullable(body.definitionOfDone), progressBasis: body.progressBasis === undefined ? current.progress_basis : nullable(body.progressBasis), notes: body.notes === undefined ? current.notes : nullable(body.notes) };
   await db.batch([
-    db.prepare("UPDATE work_package SET wbs_code=?,title=?,owner=?,planned_start=?,due_date=?,actual_start=?,actual_finish=?,status=?,definition_of_done=?,progress_basis=?,notes=?,updated_at=? WHERE id=?").bind(next.code, next.title, next.owner, next.plannedStart, next.dueDate, next.actualStart, next.actualFinish, next.status, next.definitionOfDone, next.progressBasis, next.notes, now(), workPackageId),
+    db.prepare("UPDATE work_package SET parent_id=?,wbs_code=?,title=?,owner=?,planned_start=?,due_date=?,actual_start=?,actual_finish=?,status=?,work_type=?,definition_of_done=?,progress_basis=?,notes=?,updated_at=? WHERE id=?").bind(next.parentId, next.code, next.title, next.owner, next.plannedStart, next.dueDate, next.actualStart, next.actualFinish, next.status, next.workType, next.definitionOfDone, next.progressBasis, next.notes, now(), workPackageId),
     audit(db, actor, "work_package_updated", "work_package", workPackageId, next, current),
   ]);
 }

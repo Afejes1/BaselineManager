@@ -31,6 +31,46 @@ export const products = sqliteTable("product", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), canonicalName: text("canonical_name").notNull(), normalizedName: text("normalized_name").notNull(), shortName: text("short_name"), productType: text("product_type"), softwareClassification: text("software_classification"), ownerOrganizationId: text("owner_organization_id").references(() => organizations.id), ...timestamps,
 }, (t) => [uniqueIndex("product_name_uq").on(t.programId, t.normalizedName), index("product_search_ix").on(t.programId, t.shortName)]);
 
+// Canonical aliases are steward decisions.  They are deliberately separate
+// from source rows so an imported spelling remains visible while future
+// materialization and analyst searches resolve it to the governed identity.
+export const canonicalAliases = sqliteTable("canonical_alias", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  entityKind: text("entity_kind").notNull(),
+  entityId: text("entity_id").notNull(),
+  alias: text("alias").notNull(),
+  normalizedAlias: text("normalized_alias").notNull(),
+  namespace: text("namespace").notNull().default("name"),
+  sourceReference: text("source_reference"),
+  status: text("status").notNull().default("accepted"),
+  reviewedByUserId: text("reviewed_by_user_id").references(() => appUsers.id),
+  reviewedAt: text("reviewed_at"),
+  ...timestamps,
+}, (t) => [
+  check("canonical_alias_kind", sql`${t.entityKind} IN ('product','organization','configuration_node')`),
+  check("canonical_alias_status", sql`${t.status} IN ('proposed','accepted','rejected','retired')`),
+  uniqueIndex("canonical_alias_name_uq").on(t.programId, t.entityKind, t.namespace, t.normalizedAlias),
+  index("canonical_alias_entity_ix").on(t.entityKind, t.entityId, t.status),
+]);
+
+export const canonicalMergeEvents = sqliteTable("canonical_merge_event", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  entityKind: text("entity_kind").notNull(),
+  sourceEntityId: text("source_entity_id").notNull(),
+  targetEntityId: text("target_entity_id").notNull(),
+  rationale: text("rationale").notNull(),
+  sourceReference: text("source_reference"),
+  mergedByUserId: text("merged_by_user_id").references(() => appUsers.id),
+  mergedAt: text("merged_at").notNull(),
+}, (t) => [
+  check("canonical_merge_kind", sql`${t.entityKind} IN ('product','organization','configuration_node')`),
+  check("canonical_merge_not_self", sql`${t.sourceEntityId} <> ${t.targetEntityId}`),
+  uniqueIndex("canonical_merge_source_uq").on(t.programId, t.entityKind, t.sourceEntityId),
+  index("canonical_merge_target_ix").on(t.entityKind, t.targetEntityId, t.mergedAt),
+]);
+
 export const productSuppliers = sqliteTable("product_supplier", {
   productId: text("product_id").notNull().references(() => products.id), organizationId: text("organization_id").notNull().references(() => organizations.id), supplierRole: text("supplier_role").notNull(), ...timestamps,
 }, (t) => [uniqueIndex("product_supplier_uq").on(t.productId, t.organizationId, t.supplierRole)]);
@@ -243,6 +283,32 @@ export const platformOrganizations = sqliteTable("platform_organization", {
   check("platform_organization_relationship", sql`${t.relationshipType} IN ('owner','operator','integrator','support','supplier')`),
   uniqueIndex("platform_organization_uq").on(t.platformId, t.organizationId, t.relationshipType),
   index("platform_organization_org_ix").on(t.organizationId, t.relationshipType),
+]);
+
+// A Platform is stable.  Its baseline assignments are release-specific facts.
+// Keeping this relationship explicit avoids treating a mutable source host as
+// the identity of an ALOU/OCK/OBK/PMA installation.
+export const platformBaselineAssignments = sqliteTable("platform_baseline_assignment", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  baselineOccurrenceId: text("baseline_occurrence_id").notNull().references(() => baselineOccurrences.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  assignmentRole: text("assignment_role").notNull().default("primary"),
+  confidence: text("confidence").notNull().default("assessed"),
+  reviewStatus: text("review_status").notNull().default("not_reviewed"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  reviewedByUserId: text("reviewed_by_user_id").references(() => appUsers.id),
+  reviewedAt: text("reviewed_at"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("platform_assignment_role", sql`${t.assignmentRole} IN ('primary','supporting')`),
+  check("platform_assignment_confidence", sql`${t.confidence} IN ('reported','assessed','confirmed')`),
+  check("platform_assignment_review", sql`${t.reviewStatus} IN ('not_reviewed','reviewed','follow_up')`),
+  uniqueIndex("platform_assignment_occurrence_role_uq").on(t.baselineOccurrenceId, t.assignmentRole),
+  index("platform_assignment_platform_release_ix").on(t.platformId, t.releaseId, t.reviewStatus),
 ]);
 
 // A release profile describes how a release is being used analytically. It is
@@ -655,6 +721,7 @@ export const workPackages = sqliteTable("work_package", {
   actualStart: text("actual_start"),
   actualFinish: text("actual_finish"),
   status: text("status").notNull().default("planned"),
+  workType: text("work_type").notNull().default("analysis"),
   definitionOfDone: text("definition_of_done"),
   progressBasis: text("progress_basis"),
   notes: text("notes"),
@@ -662,11 +729,29 @@ export const workPackages = sqliteTable("work_package", {
   ...timestamps,
 }, (t) => [
   check("work_package_status", sql`${t.status} IN ('planned','in_progress','on_hold','complete')`),
-  check("work_package_context", sql`${t.objectiveId} IS NOT NULL OR ${t.initiativeId} IS NOT NULL`),
+  check("work_package_type", sql`${t.workType} IN ('analysis','coordination','verification','decision_support','other')`),
+  check("work_package_context", sql`${t.initiativeId} IS NOT NULL`),
   uniqueIndex("work_package_objective_code_uq").on(t.objectiveId, t.wbsCode),
   index("work_package_initiative_status_ix").on(t.initiativeId, t.status, t.dueDate),
   index("work_package_objective_status_ix").on(t.objectiveId, t.status, t.dueDate),
   index("work_package_request_ix").on(t.changeRequestId, t.status),
+]);
+
+// Government work packages support or assess incumbent Objectives; they are
+// not children owned by the Objective.  The association is many-to-many so a
+// verification or coordination package may cover several Objectives.
+export const workPackageObjectives = sqliteTable("work_package_objective", {
+  id: text("id").primaryKey(),
+  workPackageId: text("work_package_id").notNull().references(() => workPackages.id),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  relationship: text("relationship").notNull().default("supports"),
+  rationale: text("rationale"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("work_package_objective_relationship", sql`${t.relationship} IN ('supports','assesses','verifies','coordinates')`),
+  uniqueIndex("work_package_objective_uq").on(t.workPackageId, t.objectiveId, t.relationship),
+  index("work_package_objective_objective_ix").on(t.objectiveId, t.relationship),
 ]);
 
 export const workPackageDependencies = sqliteTable("work_package_dependency", {

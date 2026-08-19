@@ -18,6 +18,33 @@ export type PlatformRecord = {
   directReleaseCount: number;
 };
 
+export type PlatformAssignment = {
+  id: string;
+  platformId: string;
+  baselineOccurrenceId: string;
+  releaseId: string;
+  releaseName: string;
+  productName: string;
+  sourceKey: string;
+  hostName: string;
+  assignmentRole: "primary" | "supporting";
+  confidence: "reported" | "assessed" | "confirmed";
+  reviewStatus: "not_reviewed" | "reviewed" | "follow_up";
+  sourceReference: string | null;
+  sourceAsOf: string | null;
+  reviewedAt: string | null;
+};
+
+export type PlatformOccurrenceOption = {
+  id: string;
+  releaseId: string;
+  releaseName: string;
+  productName: string;
+  sourceKey: string;
+  placement: string;
+  primaryPlatformId: string | null;
+};
+
 export type PlatformOrganization = {
   id: string;
   platformId: string;
@@ -38,9 +65,10 @@ export type ReleaseProfile = {
 
 export type PlatformPortfolio = {
   platforms: PlatformRecord[];
+  assignments: PlatformAssignment[];
+  occurrenceOptions: PlatformOccurrenceOption[];
   relationships: PlatformOrganization[];
   releaseProfiles: ReleaseProfile[];
   organizations: Array<{ id: string; name: string }>;
   releases: Array<{ id: string; name: string }>;
 };
-

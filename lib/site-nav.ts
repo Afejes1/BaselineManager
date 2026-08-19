@@ -10,10 +10,13 @@ export type NavItem = {
 export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Baseline Records", icon: "▦", enabled: true, section: "Baseline" },
   { href: "/intake", label: "Import & Data Quality", icon: "⇣", enabled: true, section: "Baseline" },
+  { href: "/control", label: "Analyst Control", icon: "◎", enabled: true, section: "Baseline" },
+  { href: "/stewardship", label: "Identity Stewardship", icon: "≡", enabled: true, section: "Baseline" },
   { href: "/releases", label: "Releases", icon: "▤", enabled: true, section: "Baseline" },
   { href: "/products", label: "Products", icon: "◦", enabled: true, section: "Views" },
   { href: "/platforms", label: "Platforms", icon: "⌂", enabled: true, section: "Views" },
   { href: "/topology", label: "Deployment Topology", icon: "⌘", enabled: true, section: "Views" },
+  { href: "/pbs", label: "Product Deployment", icon: "⌗", enabled: true, section: "Views" },
   { href: "/changes", label: "Change Requests", icon: "◫", enabled: true, section: "Decisions" },
   { href: "/objectives", label: "LM Objectives", icon: "▣", enabled: true, section: "Decisions" },
   { href: "/delivery", label: "Delivery WBS", icon: "⌗", enabled: true, section: "Decisions" },

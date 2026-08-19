@@ -112,7 +112,16 @@ function sameDeploymentState(existing: DeploymentStateRow, row: Record24) {
     && normalized(existing.language) === normalized(row["SW Language"]);
 }
 
-function materializationIds(row: Record24, mode: "working" | "reported", packageId?: string) {
+type IdentityAliases = { product: Map<string, string>; organization: Map<string, string> };
+async function identityAliases(db: D1Database): Promise<IdentityAliases> {
+  const rows = await db.prepare("SELECT entity_kind,entity_id,normalized_alias FROM canonical_alias WHERE program_id=? AND namespace='name' AND status='accepted' AND entity_kind IN ('product','organization')").bind(programId).all<{ entity_kind: "product" | "organization"; entity_id: string; normalized_alias: string }>();
+  return {
+    product: new Map(rows.results.filter((item) => item.entity_kind === "product").map((item) => [item.normalized_alias, item.entity_id])),
+    organization: new Map(rows.results.filter((item) => item.entity_kind === "organization").map((item) => [item.normalized_alias, item.entity_id])),
+  };
+}
+
+function materializationIds(row: Record24, mode: "working" | "reported", packageId?: string, aliases?: IdentityAliases) {
   const releaseName = cell(row.ReleaseName) || "Unassigned";
   const releaseId = stableId("release", releaseName);
   const baselineId = mode === "working"
@@ -125,18 +134,18 @@ function materializationIds(row: Record24, mode: "working" | "reported", package
   const resourceId = stableId("resource", tierId, resourceName);
   const hostId = stableId("host", resourceId, hostName);
   const productName = cell(row.LongName) || cell(row.ShortName);
-  const productId = productName ? stableId("product", productName) : null;
+  const productId = productName ? aliases?.product.get(normalized(productName)) || stableId("product", productName) : null;
   const oem = cell(row.OEM);
-  const organizationId = oem ? stableId("org", oem) : null;
+  const organizationId = oem ? aliases?.organization.get(normalized(oem)) || stableId("org", oem) : null;
   const deploymentId = productId ? stableId("deploy", productId, hostId) : null;
   const capabilityName = cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]);
   const capabilityId = capabilityName ? stableId("capability", capabilityName) : null;
   return { releaseName, releaseId, baselineId, tierName, resourceName, hostName, tierId, resourceId, hostId, productName, productId, oem, organizationId, deploymentId, capabilityName, capabilityId };
 }
 
-function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: string, occurrenceId: string, revision: number, beforePayload: string | null, action: string, isNew = false) {
+function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: string, occurrenceId: string, revision: number, beforePayload: string | null, action: string, isNew = false, aliases?: IdentityAliases) {
   const now = nowIso();
-  const ids = materializationIds(row, "working");
+  const ids = materializationIds(row, "working", undefined, aliases);
   const status = requiresReview(row) ? "review" : "working";
   const baselineName = `${ids.releaseName} Working baseline`;
   const statements: D1PreparedStatement[] = [
@@ -148,9 +157,9 @@ function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: strin
     db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.hostId, programId, ids.resourceId, "host", ids.hostName, normalized(ids.hostName), now, now),
   ];
 
-  if (ids.organizationId) statements.push(db.prepare("INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.organizationId, programId, ids.oem, normalized(ids.oem), "supplier", now, now));
+  if (ids.organizationId) statements.push(db.prepare("INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET organization_type=COALESCE(organization.organization_type,excluded.organization_type),updated_at=excluded.updated_at").bind(ids.organizationId, programId, ids.oem, normalized(ids.oem), "supplier", now, now));
   if (ids.productId) {
-    statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,owner_organization_id=excluded.owner_organization_id,updated_at=excluded.updated_at").bind(ids.productId, programId, ids.productName, normalized(ids.productName), cell(row.ShortName), cell(row.TechStackType), cell(row["Software Type"]), ids.organizationId, now, now));
+    statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET short_name=COALESCE(product.short_name,excluded.short_name),product_type=COALESCE(excluded.product_type,product.product_type),software_classification=COALESCE(excluded.software_classification,product.software_classification),owner_organization_id=COALESCE(excluded.owner_organization_id,product.owner_organization_id),updated_at=excluded.updated_at").bind(ids.productId, programId, ids.productName, normalized(ids.productName), cell(row.ShortName), cell(row.TechStackType), cell(row["Software Type"]), ids.organizationId, now, now));
   }
   if (ids.productId && ids.organizationId) statements.push(db.prepare("INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.productId, ids.organizationId, "supplier", now, now));
   if (ids.capabilityId) statements.push(db.prepare("INSERT INTO capability (id,program_id,parent_id,code,name,normalized_name,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,updated_at=excluded.updated_at").bind(ids.capabilityId, programId, null, null, ids.capabilityName, normalized(ids.capabilityName), "Governed from working baseline projection", now, now));
@@ -216,7 +225,8 @@ export async function PATCH(request: Request) {
     if (!current) return Response.json({ error: "The selected source occurrence is no longer in the current workspace." }, { status: 404 });
     if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided source occurrence before editing it." }, { status: 409 });
     if (current.revision !== revision) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
-    const ids = materializationIds(row, "working");
+    const aliases = await identityAliases(env.DB);
+    const ids = materializationIds(row, "working", undefined, aliases);
     const nodePeers = await env.DB.prepare("SELECT projection_payload FROM baseline_occurrence WHERE workspace_id=? AND id<>? AND baseline_id=? AND configuration_node_id=?").bind(workspaceId, current.id, ids.baselineId, ids.hostId).all<PeerOccurrence>();
     if (nodePeers.results.some((peer) => {
       const peerRow = readProjection(peer.projection_payload);
@@ -241,7 +251,7 @@ export async function PATCH(request: Request) {
         return Response.json({ error: "This edit conflicts with a different source occurrence's reported runtime state at the same release deployment. Resolve the two source rows before changing the canonical deployment state." }, { status: 409 });
       }
     }
-    const materialized = materializeCurrentRow(env.DB, row, current.source_row_id, current.id, revision, current.projection_payload, "baseline_occurrence_updated");
+    const materialized = materializeCurrentRow(env.DB, row, current.source_row_id, current.id, revision, current.projection_payload, "baseline_occurrence_updated", false, aliases);
     const result = await env.DB.batch(materialized.statements);
     const update = result[result.length - 2];
     if (!update.success || Number(update.meta.changes ?? 0) !== 1) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
@@ -281,7 +291,8 @@ export async function POST(request: Request) {
       env.DB.prepare("INSERT INTO source_row_24 (id,source_package_id,source_key,row_number,row_hash,raw_payload,materialization_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(sourceRowId, sourcePackageId, cell(row["#"]), 1, stableId("hash", JSON.stringify(row)), JSON.stringify(row), "review", now, now),
       env.DB.prepare("INSERT INTO baseline_occurrence (id,program_id,workspace_id,source_row_id,projection_payload,materialization_status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(occurrenceId, programId, workspaceId, sourceRowId, JSON.stringify(row), "review", 0, now, now),
     ];
-    const materialized = materializeCurrentRow(env.DB, row, sourceRowId, occurrenceId, 0, null, "baseline_occurrence_created");
+    const aliases = await identityAliases(env.DB);
+    const materialized = materializeCurrentRow(env.DB, row, sourceRowId, occurrenceId, 0, null, "baseline_occurrence_created", false, aliases);
     const result = await env.DB.batch([...initial, ...materialized.statements]);
     const update = result[result.length - 2];
     if (!update.success || Number(update.meta.changes ?? 0) !== 1) throw new Error("The new source occurrence could not be materialized.");
