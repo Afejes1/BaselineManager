@@ -83,7 +83,6 @@ function isActivePath(pathname: string, href: string) {
 }
 
 const occurrenceDiffColumns = [
-  "ReleaseName",
   "Tier",
   "Resource",
   "HW_Host",
@@ -918,7 +917,11 @@ export function BaselineManager() {
                           const isCurrent = index === selectedIndex;
                           const deltas = occurrenceDiffColumns
                             .filter((column) => text(row[column]) !== text(selected[column]))
-                            .map((column) => `${column}: ${text(selected[column]) || "—"} → ${text(row[column]) || "—"}`);
+                            .map((column) => ({
+                              column,
+                              selectedValue: text(selected[column]),
+                              comparedValue: text(row[column]),
+                            }));
                           const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
                           return <button type="button" key={`${text(row.ReleaseName)}:${index}`} className={`occurrence-row ${isCurrent ? "occurrence-row-current" : ""}`} onClick={() => selectRecord(index)}>
                             <div className="occurrence-row-head">
@@ -927,7 +930,31 @@ export function BaselineManager() {
                               <span className={`mark mark-${rowQuality.level}`}>{rowQuality.label}</span>
                             </div>
                             <div className="occurrence-meta">{fieldPairs(["ShortName","LongName","Tier","Resource","HW_Host","Containerized","Container Technology"], row)}</div>
-                            <p><strong>From selected baseline</strong> {deltas.length === 0 ? "No changed fields." : deltas.join(" · ")}</p>
+                            <div className="occurrence-diff">
+                              {deltas.length === 0 ? (
+                                <p className="occurrence-diff-empty">Same tracked configuration values as selected {text(selected.ReleaseName) || "release"}.</p>
+                              ) : (
+                                <>
+                                  <div className="occurrence-diff-heading">
+                                    <strong>{deltas.length} changed field{deltas.length === 1 ? "" : "s"}</strong>
+                                    <span>Selected {text(selected.ReleaseName) || "release"} <b aria-hidden="true">→</b> {text(row.ReleaseName) || "release"}</span>
+                                  </div>
+                                  <div className="occurrence-diff-grid">
+                                    {deltas.map(({ column, selectedValue, comparedValue }) => {
+                                      const changeKind = !selectedValue ? "added" : !comparedValue ? "removed" : "changed";
+                                      return <div className={`occurrence-diff-item occurrence-diff-${changeKind}`} key={column}>
+                                        <span className="occurrence-diff-field">{column}</span>
+                                        <div className="occurrence-diff-values" aria-label={`${column}: selected ${selectedValue || "not reported"}; compared ${comparedValue || "not reported"}`}>
+                                          <span className="occurrence-diff-before">{selectedValue ? <del>{selectedValue}</del> : <em>Not reported</em>}</span>
+                                          <b className="occurrence-diff-arrow" aria-hidden="true">→</b>
+                                          <span className="occurrence-diff-after">{comparedValue ? <ins>{comparedValue}</ins> : <em>Not reported</em>}</span>
+                                        </div>
+                                      </div>;
+                                    })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
                             {isCurrent && <small className="occurrence-current-chip">Current row in focus</small>}
                           </button>;
                         })}
