@@ -113,6 +113,49 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 .quality-info { display:inline-grid; place-items:center; flex:0 0 auto; width:17px; height:17px; padding:0; border:1px solid #aebdb5; border-radius:50%; background:#fff; color:#315f49; font:700 10px var(--font-geist-sans); text-transform:none; letter-spacing:0; }
 .quality-info:hover { border-color:#3e755b; background:#edf5f0; }
 .quality-summary { align-items:center; }
+
+/* Object workspaces and cross-object call records */
+.object-tabs { margin-bottom:18px; background:#fff; border:1px solid var(--line); padding:0 12px; }
+.object-tabs button { display:flex; align-items:center; gap:7px; }
+.object-tabs button span { min-width:20px; padding:2px 6px; border-radius:10px; background:#edf2ef; color:#4f6258; font:700 10px var(--font-geist-mono); text-align:center; }
+.call-note-modal { width:min(920px,calc(100vw - 36px)); max-height:calc(100vh - 36px); overflow:auto; }
+.object-link-picker { margin-top:18px; padding:14px; border:1px solid var(--line); background:#f5f8f6; }
+.object-link-picker .search { width:100%; margin:10px 0; }
+.locked-object-link { display:flex; align-items:center; gap:12px; border-left:3px solid var(--green); background:#fff; padding:10px 12px; }
+.locked-object-link strong { color:var(--green); font-size:10px; letter-spacing:.07em; text-transform:uppercase; }
+.object-link-results { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; max-height:230px; overflow:auto; }
+.object-link-results label { display:flex; gap:9px; align-items:flex-start; padding:9px 10px; border:1px solid #d5dfd9; background:#fff; cursor:pointer; }
+.object-link-results label.selected { border-color:#5d8e76; background:#edf6f1; }
+.object-link-results label input { margin-top:3px; }
+.object-link-results label span,.object-link-results label small { display:block; min-width:0; }
+.object-link-results label strong { font-size:12px; }
+.object-link-results label small { margin-top:2px; color:var(--muted); font-size:10px; }
+.object-record-list { display:grid; gap:12px; }
+.object-record-card { border:1px solid var(--line); border-left:4px solid #4d829d; background:#fff; padding:16px 18px; }
+.object-record-card header { display:flex; justify-content:space-between; gap:12px; }
+.object-record-card h3 { margin:9px 0 6px; }
+
+/* Report decomposition must remain readable at ordinary desktop widths. */
+.mcp-decomposition-grid, .report-tabs~.domain-section>.domain-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:14px; }
+.mcp-decomposition-grid .domain-card, .report-tabs~.domain-section>.domain-list>.domain-card { min-width:0; overflow:hidden; }
+.mcp-decomposition-grid .section-toolbar, .report-tabs~.domain-section>.domain-list .section-toolbar { align-items:flex-start; }
+.mcp-decomposition-grid .section-toolbar>div, .report-tabs~.domain-section>.domain-list .section-toolbar>div { min-width:0; }
+.mcp-decomposition-grid .section-toolbar h3, .report-tabs~.domain-section>.domain-list .section-toolbar h3 { overflow-wrap:anywhere; }
+.mcp-decomposition-grid .wbs-branch, .report-tabs~.domain-section>.domain-list .wbs-branch { display:grid; grid-template-columns:minmax(0,1fr); gap:5px; margin-top:12px; padding:12px 14px; }
+.mcp-decomposition-grid .wbs-branch span, .report-tabs~.domain-section>.domain-list .wbs-branch span { color:var(--muted); overflow-wrap:anywhere; }
+
+.wbs-purpose { display:grid; grid-template-columns:1.2fr repeat(3,minmax(170px,.7fr)); border:1px solid var(--line); background:#fff; margin-bottom:18px; }
+.wbs-purpose>div { padding:16px 18px; border-right:1px solid var(--line); }
+.wbs-purpose>div:last-child { border-right:0; }
+.wbs-purpose span { display:block; color:var(--muted); font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.08em; }
+.wbs-purpose strong { display:block; margin-top:6px; font-size:14px; }
+.wbs-purpose p { margin:6px 0 0; color:var(--muted); font-size:11px; }
+
+@media (max-width:900px) {
+  .object-link-results { grid-template-columns:1fr; }
+  .wbs-purpose { grid-template-columns:1fr; }
+  .wbs-purpose>div { border-right:0; border-bottom:1px solid var(--line); }
+}
 .quality-summary>div { display:flex; flex:1; min-width:0; flex-direction:column; gap:2px; }
 .quality-summary strong { color:#30443a; font-size:10px; }
 .quality-summary span:not(.mark) { color:#728078; font-size:9px; line-height:1.4; }

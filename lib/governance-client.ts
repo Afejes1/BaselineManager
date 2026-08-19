@@ -36,7 +36,7 @@ export function useGovernancePortfolio() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ action, ...payload }),
     });
-    const result = await response.json() as { error?: string };
+    const result = await response.json() as { error?: string; id?: string };
     if (!response.ok) throw new Error(result.error || "The governance update could not be saved.");
     await reload();
     return result;

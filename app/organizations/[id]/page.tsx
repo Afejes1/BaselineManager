@@ -12,9 +12,11 @@ import {
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { ObjectRecordsPanel, ObjectTabBar } from "../../../components/object-workspace";
 import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useChangePortfolio } from "../../../lib/change-client";
 import { usePlatformPortfolio } from "../../../lib/platform-client";
+import type { ManagedRecord24 } from "../../../lib/baseline-client";
 
 function decodeId(value: string) {
   try {
@@ -31,9 +33,10 @@ export default function OrganizationDetailPage() {
   const { portfolio: changes } = useChangePortfolio();
   const { portfolio: platforms } = usePlatformPortfolio();
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("overview");
 
 
-  const orgRows = useMemo(() => getOrganizationRows(rows, supplierIdentity(orgId)), [rows, orgId]);
+  const orgRows = useMemo(() => getOrganizationRows(rows, supplierIdentity(orgId)) as ManagedRecord24[], [rows, orgId]);
   const visibleRows = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return orgRows;
@@ -57,6 +60,7 @@ export default function OrganizationDetailPage() {
   }, [orgRows]);
 
   const supplierName = orgRows[0]?.OEM ? text(orgRows[0].OEM) : orgId;
+  const canonicalOrganization = platforms.organizations.find((item) => item.name.toLowerCase() === supplierName.toLowerCase());
   const productIds = new Set(orgRows.map((row) => row.__meta.productId).filter(Boolean));
   const directOrgEffects = changes.effects.filter((effect) => effect.subjectKind === "organization" && effect.subjectLabel.toLowerCase() === supplierName.toLowerCase());
   const productEffects = changes.effects.filter((effect) => effect.subjectKind === "product" && productIds.has(effect.subjectId));
@@ -84,6 +88,7 @@ export default function OrganizationDetailPage() {
       subtitle="OEM and supplier relationship view"
       releaseScope={`${metrics.products} products · ${metrics.releases} releases`}
       contextMode="record"
+      objectContext={canonicalOrganization ? { kind: "organization", id: canonicalOrganization.id, label: supplierName } : undefined}
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>
@@ -98,9 +103,13 @@ export default function OrganizationDetailPage() {
         <div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} pending funding decisions</small></div>
       </section>
 
-      <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">ACCOUNTABILITY & CHANGE</span><h3>Where this organization participates</h3></div><Link href="/changes">Funding portfolio</Link></div><div className="chip-list">{platformRelationships.map((relation) => <Link className="domain-chip" key={relation.id} href={`/platforms/${encodeURIComponent(relation.platformId)}`}><strong>{relation.relationshipType}</strong><span>{platforms.platforms.find((item) => item.id === relation.platformId)?.code || relation.platformId}</span></Link>)}</div><div className="domain-list" style={{ marginTop: 14 }}>{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.knockOnEffects || request.impactSummary || request.summary || "Impact not yet assessed."}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No attributed Change Request impact</h3><p>No request is directly linked to this organization or its reported products.</p></article> : null}</div></section>
+      <ObjectTabBar active={tab} onChange={setTab} tabs={[{ id: "overview", label: "Overview" }, { id: "products", label: "Products & releases", count: metrics.products }, { id: "change", label: "Change & platforms", count: changeRequests.length }, { id: "evidence", label: "Calls & evidence" }]} />
 
-      <section className="domain-section">
+      {tab === "overview" ? <section className="dashboard-grid"><article className="domain-card"><span className="eyebrow">ORGANIZATION PROFILE</span><h3>{supplierName}</h3><p>Supplier / OEM relationship in the working technical baseline.</p><p className="entity-meta">{metrics.products} products · {metrics.releases} releases · {orgRows.length} baseline records</p></article><article className="domain-card"><span className="eyebrow">ACCOUNTABILITY COVERAGE</span><h3>{platformRelationships.length} Platform relationships</h3><p>{platformRelationships.map((item) => item.relationshipType).filter((value, index, values) => values.indexOf(value) === index).join(" · ") || "No explicit Platform accountability is recorded."}</p></article></section> : null}
+
+      {tab === "change" ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">ACCOUNTABILITY & CHANGE</span><h3>Where this organization participates</h3></div><Link href="/changes">Funding portfolio</Link></div><div className="chip-list">{platformRelationships.map((relation) => <Link className="domain-chip" key={relation.id} href={`/platforms/${encodeURIComponent(relation.platformId)}`}><strong>{relation.relationshipType}</strong><span>{platforms.platforms.find((item) => item.id === relation.platformId)?.code || relation.platformId}</span></Link>)}</div><div className="domain-list" style={{ marginTop: 14 }}>{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.knockOnEffects || request.impactSummary || request.summary || "Impact not yet assessed."}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No attributed Change Request impact</h3><p>No request is directly linked to this organization or its reported products.</p></article> : null}</div></section> : null}
+
+      {tab === "products" ? <section className="domain-section">
         <h3>Supplier rows</h3>
         <div className="domain-table-wrap">
           <table>
@@ -129,7 +138,8 @@ export default function OrganizationDetailPage() {
             </tbody>
           </table>
         </div>
-      </section>
+      </section> : null}
+      {tab === "evidence" && canonicalOrganization ? <ObjectRecordsPanel context={{ kind: "organization", id: canonicalOrganization.id, label: supplierName }} /> : null}
     </DomainPageShell>
   );
 }

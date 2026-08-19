@@ -19,10 +19,12 @@ export default function EvidencePage() {
   const [title, setTitle] = useState("");
   const [externalReference, setExternalReference] = useState("");
   const [owner, setOwner] = useState("");
+  const [participants, setParticipants] = useState("");
   const [occurredAt, setOccurredAt] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [summary, setSummary] = useState("");
   const [decisionAsk, setDecisionAsk] = useState("");
+  const [actionItems, setActionItems] = useState("");
   const [impact, setImpact] = useState("");
   const [initiativeId, setInitiativeId] = useState(() => searchParams.get("initiative") || "");
   const [baselineAnchor, setBaselineAnchor] = useState(() => {
@@ -30,7 +32,9 @@ export default function EvidencePage() {
     return occurrenceId ? `occurrence|${occurrenceId}` : configurationNodeId ? `configuration_node|${configurationNodeId}` : productId ? `product|${productId}` : releaseId ? `release|${releaseId}` : "";
   });
   const [file, setFile] = useState<File | null>(null);
-  const records = portfolio?.records ?? [];
+  const rawRecords = portfolio?.records ?? [];
+  const selectedRecordId = searchParams.get("record") || "";
+  const records = useMemo(() => selectedRecordId ? [...rawRecords].sort((left, right) => Number(right.id === selectedRecordId) - Number(left.id === selectedRecordId)) : rawRecords, [rawRecords, selectedRecordId]);
   const initiatives = portfolio?.initiatives ?? [];
 
   const baselineOptions = useMemo(() => {
@@ -46,7 +50,7 @@ export default function EvidencePage() {
   }, [rows]);
 
   function openCreate() {
-    setRecordType("mcp"); setStatus("open"); setTitle(""); setExternalReference(""); setOwner(""); setOccurredAt(""); setDueDate(""); setSummary(""); setDecisionAsk(""); setImpact(""); setFile(null); setShowCreate(true);
+    setRecordType("mcp"); setStatus("open"); setTitle(""); setExternalReference(""); setOwner(""); setParticipants(""); setOccurredAt(""); setDueDate(""); setSummary(""); setDecisionAsk(""); setActionItems(""); setImpact(""); setFile(null); setShowCreate(true);
   }
   async function createRecord() {
     if (!title.trim()) { setNotice("Enter a record title."); return; }
@@ -56,7 +60,7 @@ export default function EvidencePage() {
       if (initiativeId) links.push({ kind: "initiative", id: initiativeId, relationship: "supports" });
       const [kind, id] = baselineAnchor.split("|");
       if (id && ["release", "product", "configuration_node", "occurrence"].includes(kind)) links.push({ kind, id, relationship: "affects" });
-      const created = await mutate("create_governance_record", { recordType, status, title, externalReference, owner, occurredAt, dueDate, summary, decisionAsk, impact, links });
+      const created = await mutate("create_governance_record", { recordType, status, title, externalReference, owner, participants, occurredAt, dueDate, summary, decisionAsk, actionItems, impact, links });
       if (file && created.id) {
         const data = new FormData(); data.set("file", file); data.set("governanceRecordId", String(created.id)); data.set("initiativeId", initiativeId);
         const response = await fetch("/api/documents", { method: "POST", body: data });

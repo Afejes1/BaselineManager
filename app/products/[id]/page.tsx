@@ -3,30 +3,25 @@
 import Link from "../../../components/app-link";
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import {
-  getProductRows,
-  text,
-  type Record24,
-} from "../../../lib/baseline-data";
+import { getProductRows, text, type Record24 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { ObjectRecordsPanel, ObjectTabBar, type ObjectContext } from "../../../components/object-workspace";
 import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useChangePortfolio } from "../../../lib/change-client";
 import { usePlatformPortfolio } from "../../../lib/platform-client";
+import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
+import { useGovernancePortfolio } from "../../../lib/governance-client";
+import type { ManagedRecord24 } from "../../../lib/baseline-client";
 
-function decodeId(value: string) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
+function decodeId(value: string) { try { return decodeURIComponent(value); } catch { return value; } }
+function unique(values: string[]) { return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); }
 
 function summarizeRows(rows: Record24[]) {
-  const releases = Array.from(new Set(rows.map((row) => text(row.ReleaseName)).filter(Boolean))).sort();
-  const tiers = Array.from(new Set(rows.map((row) => text(row.Tier)).filter(Boolean))).sort();
-  const hosts = Array.from(new Set(rows.map((row) => text(row.HW_Host)).filter(Boolean))).sort();
-  const resources = Array.from(new Set(rows.map((row) => text(row.Resource)).filter(Boolean))).sort();
+  const releases = unique(rows.map((row) => text(row.ReleaseName)));
+  const tiers = unique(rows.map((row) => text(row.Tier)));
+  const hosts = unique(rows.map((row) => text(row.HW_Host)));
+  const resources = unique(rows.map((row) => text(row.Resource)));
   const issueCount = rows.filter((row) => dataQualityFor(row).level === "issue").length;
   const warningCount = rows.filter((row) => dataQualityFor(row).level === "review").length;
   return { releases, tiers, hosts, resources, issueCount, warningCount };
@@ -38,104 +33,50 @@ export default function ProductDetailPage() {
   const { rows } = useWorkspaceContext();
   const { portfolio: changes } = useChangePortfolio();
   const { portfolio: platformPortfolio } = usePlatformPortfolio();
+  const { workspace: decisionWorkspace } = useInitiativeDecisions();
+  const { portfolio: governance } = useGovernancePortfolio();
   const [query, setQuery] = useState("");
+  const [tab, setTab] = useState("overview");
 
-
-  const productRows = useMemo(() => getProductRows(rows, productId), [rows, productId]);
-  const { releases, tiers, hosts, resources } = useMemo(() => summarizeRows(productRows), [productRows]);
+  const productRows = useMemo(() => getProductRows(rows, productId) as ManagedRecord24[], [rows, productId]);
+  const { releases, tiers, hosts, resources, issueCount, warningCount } = useMemo(() => summarizeRows(productRows), [productRows]);
   const canonical = productRows[0] ? text(productRows[0].LongName || productRows[0].ShortName || "Unnamed product") : "Product not found";
+  const canonicalProductId = productRows.find((row) => row.__meta.productId)?.__meta.productId || "";
   const supplier = text(productRows[0]?.OEM || "Unassigned");
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleRows = useMemo(() => {
-    if (!normalizedQuery) return productRows;
-    return productRows.filter((row) => {
-      const haystack = `${text(row.ReleaseName)} ${text(row.Tier)} ${text(row.Resource)} ${text(row.HW_Host)} ${text(row["SW Language"])} ${text(row["Container Technology"])} ${text(row.OEM)}`.toLowerCase();
-      return haystack.includes(normalizedQuery);
-    });
-  }, [productRows, normalizedQuery]);
-
-  const metrics = {
-    releases: releases.length,
-    tiers: tiers.length,
-    resources: resources.length,
-    hosts: hosts.length,
-  };
+  const visibleRows = useMemo(() => !normalizedQuery ? productRows : productRows.filter((row) => `${text(row.ReleaseName)} ${text(row.Tier)} ${text(row.Resource)} ${text(row.HW_Host)} ${text(row["SW Language"])} ${text(row["Container Technology"])} ${text(row.OEM)}`.toLowerCase().includes(normalizedQuery)), [productRows, normalizedQuery]);
   const canonicalProductIds = new Set(productRows.map((row) => row.__meta.productId).filter(Boolean));
   const changeEffects = changes.effects.filter((effect) => effect.subjectKind === "product" && canonicalProductIds.has(effect.subjectId));
   const changeRequestIds = new Set(changeEffects.map((effect) => effect.changeRequestId));
   const changeRequests = changes.requests.filter((request) => changeRequestIds.has(request.id));
+  const effectIds = new Set(changeEffects.map((effect) => effect.id));
+  const objectiveIds = new Set((decisionWorkspace?.objectiveEffectAttributions || []).filter((item) => effectIds.has(item.changeEffectId)).map((item) => item.objectiveId));
+  const objectives = (decisionWorkspace?.objectives || []).filter((item) => objectiveIds.has(item.id) || changeRequestIds.has(item.changeRequestId));
+  const initiativeIds = new Set((decisionWorkspace?.links || []).filter((item) => changeRequestIds.has(item.changeRequestId)).map((item) => item.initiativeId));
+  const initiatives = (decisionWorkspace?.initiatives || []).filter((item) => initiativeIds.has(item.id));
+  const workPackages = (governance?.workPackages || []).filter((item) => item.objectiveLinks.some((link) => objectiveIds.has(link.objectiveId)) || Boolean(item.objectiveId && objectiveIds.has(item.objectiveId)));
   const platformByOccurrence = new Map(platformPortfolio.assignments.filter((item) => item.assignmentRole === "primary").map((item) => [item.baselineOccurrenceId, platformPortfolio.platforms.find((platform) => platform.id === item.platformId)]));
   const productPlatforms = Array.from(new Map(productRows.map((row) => platformByOccurrence.get(row.__meta.occurrenceId)).filter(Boolean).map((platform) => [platform!.id, platform!])).values());
+  const capabilities = unique(productRows.map((row) => text(row["Technical Capability Satisfied by this SW/Tech - Notes"])));
+  const languages = unique(productRows.map((row) => text(row["SW Language"])));
+  const classifications = unique(productRows.map((row) => text(row["Software Type"])));
+  const runtimeProfiles = unique(productRows.map((row) => [text(row.Containerized), text(row["Container Technology"]), text(row["Container Type"])].filter(Boolean).join(" · ")));
+  const objectContext: ObjectContext | undefined = canonicalProductId ? { kind: "product", id: canonicalProductId, label: canonical } : undefined;
 
-  return (
-    <DomainPageShell
-      title={`Product: ${canonical}`}
-      subtitle="Product baseline, release history, and related decisions"
-      releaseScope={`${productRows.length || 0} reported rows`}
-      contextMode="record"
-      actions={(
-        <label className="search" style={{ width: "280px" }}>
-          <span>⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search placements or release rows" />
-        </label>
-      )}
-    >
-      <section className="summary">
-        <div className="metric">
-          <span>Source rows</span>
-          <strong>{productRows.length}</strong>
-          <small>Across {metrics.releases} releases</small>
-        </div>
-        <div className="metric"><span>Platform context</span><strong>{productPlatforms.length}</strong><small>{metrics.tiers} tiers · {metrics.resources} resources · {metrics.hosts} hosts</small></div>
-        <div className="metric"><span>Supplier</span><strong>{supplier || "Unassigned"}</strong><small>Primary source owner</small></div>
-        <div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} funding decisions pending</small></div>
-      </section>
+  if (!productRows.length) return <DomainPageShell title="Product not found" subtitle="No working baseline records match this product." contextMode="record"><section className="domain-section"><Link href="/products">Return to Products</Link></section></DomainPageShell>;
 
-      <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">CHANGE IMPACT</span><h3>Government funding decisions affecting this product</h3></div><Link href="/changes">Open Change Request portfolio</Link></div><div className="domain-list">{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.impactSummary || request.summary || "Impact not yet assessed."}</p><p className="entity-meta">{request.governmentPriority} priority · {request.requestedReleaseName || "target release unassigned"}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No linked Change Requests</h3><p>This product is represented in the baseline, but no funding request currently changes it.</p></article> : null}</div></section>
+  return <DomainPageShell title={`Product: ${canonical}`} subtitle="Cross-release product record, deployment history, decisions, delivery, and evidence" releaseScope={`${productRows.length} baseline records · ${releases.length} releases`} contextMode="record" objectContext={objectContext} actions={<label className="search" style={{ width: "280px" }}><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search placements or release records" /></label>}>
+    <section className="summary"><div className="metric"><span>Baseline records</span><strong>{productRows.length}</strong><small>Across {releases.length} releases</small></div><div className="metric"><span>Platforms</span><strong>{productPlatforms.length}</strong><small>{tiers.length} tiers · {resources.length} resources · {hosts.length} hosts</small></div><div className="metric"><span>Supplier</span><strong>{supplier || "Unassigned"}</strong><small>{classifications.join(" · ") || "Classification not recorded"}</small></div><div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} funding decisions pending</small></div></section>
+    <ObjectTabBar active={tab} onChange={setTab} tabs={[{ id: "overview", label: "Overview" }, { id: "baseline", label: "Release history", count: productRows.length }, { id: "delivery", label: "Change & delivery", count: changeRequests.length + objectives.length }, { id: "evidence", label: "Calls & evidence" }]} />
 
-      <section className="domain-section">
-        <h3>Cross-domain links</h3>
-        <div className="chip-list">
-          <Link href={`/organizations/${encodeURIComponent(supplier)}`} className="domain-chip"><strong>Supplier</strong><span>{supplier || "Unassigned"}</span></Link>
-          {releases.map((release) => <Link key={release} href={`/releases/${encodeURIComponent(release)}`} className="domain-chip"><strong>Release</strong><span>{release}</span></Link>)}
-          {productPlatforms.map((platform) => <Link key={platform.id} href={`/platforms/${encodeURIComponent(platform.id)}`} className="domain-chip"><strong>Platform</strong><span>{platform.code} · {platform.name}</span></Link>)}
-        </div>
-      </section>
+    {tab === "overview" ? <><section className="dashboard-grid"><article className="domain-card"><span className="eyebrow">PRODUCT IDENTITY</span><h3>{text(productRows[0].ShortName) || canonical}</h3><div className="record-facts"><div><dt>Canonical name</dt><dd>{canonical}</dd></div><div><dt>Product type</dt><dd>{unique(productRows.map((row) => text(row.TechStackType))).join(" · ") || "Not recorded"}</dd></div><div><dt>Software classification</dt><dd>{classifications.join(" · ") || "Not recorded"}</dd></div><div><dt>Language</dt><dd>{languages.join(" · ") || "Not recorded"}</dd></div></div></article><article className="domain-card"><span className="eyebrow">RUNTIME & QUALITY</span><h3>{runtimeProfiles.join(" / ") || "Runtime not reported"}</h3><p>{issueCount} blocking findings · {warningCount} warnings across all release records.</p><p className="entity-actions"><Link href={`/?product=${encodeURIComponent(productId)}`}>Open baseline grid</Link></p></article></section>
+      <section className="domain-section"><h3>Related objects</h3><div className="chip-list"><Link href={`/organizations/${encodeURIComponent(supplier)}`} className="domain-chip"><strong>Supplier</strong><span>{supplier || "Unassigned"}</span></Link>{releases.map((release) => <Link key={release} href={`/releases/${encodeURIComponent(release)}`} className="domain-chip"><strong>Release</strong><span>{release}</span></Link>)}{productPlatforms.map((platform) => <Link key={platform.id} href={`/platforms/${encodeURIComponent(platform.id)}`} className="domain-chip"><strong>Platform</strong><span>{platform.code} · {platform.name}</span></Link>)}{capabilities.map((capability) => <Link key={capability} href={`/capabilities/${encodeURIComponent(capability)}`} className="domain-chip"><strong>Capability</strong><span>{capability}</span></Link>)}</div></section></> : null}
 
-      <section className="domain-section">
-        <h3>Working baseline records</h3>
-        <section className="domain-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Release</th>
-                <th>Tier</th>
-                <th>Resource</th>
-                <th>Host</th>
-                <th>Storage</th>
-                <th>Language</th>
-                <th>Runtime</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row) => (
-                <tr key={`${String(row.ReleaseName)}:${String(row["#"])}`}>
-                  <td>{text(row.ReleaseName) || "Unassigned"}</td>
-                  <td>{text(row.Tier) || "Unassigned"}</td>
-                  <td>{text(row.Resource) || "Unassigned"}</td>
-                  <td className="mono">{text(row.HW_Host) || "Unassigned"}</td>
-                  <td>{`${text(row["HW_Storage_Type"]) || "—"}${text(row["HW_Storage (GB)"]) ? ` / ${text(row["HW_Storage (GB)"])}` : ""}`}</td>
-                  <td>{text(row["SW Language"]) || "—"}</td>
-                  <td>{`${text(row.Containerized) || "—"} · ${text(row["Container Technology"]) || "—"}`}</td>
-                </tr>
-              ))}
-              {!visibleRows.length ? (
-                <tr><td colSpan={7} className="empty">{productRows.length ? "No records match your search." : "No baseline records are attached to this product."}</td></tr>
-              ) : null}
-            </tbody>
-          </table>
-        </section>
-      </section>
-    </DomainPageShell>
-  );
+    {tab === "baseline" ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RELEASE HISTORY</span><h3>One working baseline record per reported release position</h3></div><span>{visibleRows.length} shown</span></div><div className="domain-table-wrap"><table><thead><tr><th>Release</th><th>Placement</th><th>Host</th><th>Capacity</th><th>Language</th><th>Runtime</th><th>Record</th></tr></thead><tbody>{visibleRows.map((row) => <tr key={row.__meta.occurrenceId}><td><Link href={`/releases/${encodeURIComponent(text(row.ReleaseName))}`}>{text(row.ReleaseName) || "Unassigned"}</Link></td><td>{text(row.Tier) || "Unassigned"}<small>{text(row.Resource) || "Unassigned"}</small></td><td className="mono">{text(row.HW_Host) || "Unassigned"}</td><td>{text(row["HW_Storage_Type"]) || "—"} / {text(row["HW_Storage (GB)"]) || "—"} GB<small>{text(row.HW_CPU_CORES) || "—"} CPU · {text(row["HW_RAM (GB)"]) || "—"} GB RAM</small></td><td>{text(row["SW Language"]) || "—"}</td><td>{[text(row.Containerized), text(row["Container Technology"]), text(row["Container Type"])].filter(Boolean).join(" · ") || "—"}</td><td><Link href={`/occurrences/${encodeURIComponent(row.__meta.occurrenceId)}`}>Record reference</Link></td></tr>)}{!visibleRows.length ? <tr><td colSpan={7} className="empty">No records match the search.</td></tr> : null}</tbody></table></div></section> : null}
+
+    {tab === "delivery" ? <><section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">CHANGE IMPACT</span><h3>Government funding decisions affecting this product</h3></div><Link href="/changes">Open Change Request portfolio</Link></div><div className="domain-list">{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.impactSummary || request.summary || "Impact not yet assessed."}</p><p className="entity-meta">{request.governmentPriority} priority · {request.requestedReleaseName || "target release unassigned"}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No linked Change Requests</h3><p>No funding request currently changes this product.</p></article> : null}</div></section>
+      <section className="split-layout"><article className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">LM DELIVERY</span><h3>Objectives affecting this product</h3></div><span>{objectives.length}</span></div>{objectives.map((objective) => <p className="entity-actions" key={objective.id}><Link href={`/objectives/${encodeURIComponent(objective.id)}`}>{objective.externalIdentifier} · {objective.title}</Link><span className={`status-pill status-${objective.status}`}>{objective.status.replaceAll("_", " ")}</span></p>)}{!objectives.length ? <p className="empty">No LM Objective is attributed to this product.</p> : null}</article><article className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">GOVERNMENT ANALYSIS</span><h3>Initiatives and WBS packages</h3></div><span>{workPackages.length} work packages</span></div>{initiatives.map((initiative) => <p className="entity-actions" key={initiative.id}><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link></p>)}{workPackages.map((work) => <p className="entity-actions" key={work.id}><Link href={`/delivery/${encodeURIComponent(work.id)}`}>{work.wbsCode} · {work.title}</Link><span className={`status-pill status-${work.status}`}>{work.status.replaceAll("_", " ")}</span></p>)}{!initiatives.length && !workPackages.length ? <p className="empty">No Initiative or Government work package is linked through the affected Objectives.</p> : null}</article></section></> : null}
+
+    {tab === "evidence" && objectContext ? <ObjectRecordsPanel context={objectContext} /> : null}
+  </DomainPageShell>;
 }

@@ -11,6 +11,7 @@ export type WorkPackageStatus = typeof workPackageStatuses[number];
 export type GovernanceRecordType = typeof governanceRecordTypes[number];
 export type GovernanceRecordStatus = typeof governanceRecordStatuses[number];
 export type BriefStatus = typeof briefStatuses[number];
+export type GovernanceEntityKind = "initiative" | "work_package" | "release" | "product" | "capability" | "occurrence" | "configuration_node" | "platform" | "organization" | "change_request" | "objective";
 
 export type ScopeLink = {
   id: string;
@@ -76,10 +77,18 @@ export type Initiative = {
 
 export type GovernanceLink = {
   id: string;
-  entityKind: "initiative" | "work_package" | "release" | "product" | "capability" | "occurrence" | "configuration_node";
+  entityKind: GovernanceEntityKind;
   entityId: string;
   relationship: string;
   displayLabel: string | null;
+};
+
+export type ObjectCatalogItem = {
+  kind: GovernanceEntityKind;
+  id: string;
+  label: string;
+  detail: string;
+  href: string | null;
 };
 
 export type EvidenceDocument = {
@@ -101,9 +110,11 @@ export type GovernanceRecord = {
   status: GovernanceRecordStatus;
   owner: string | null;
   occurredAt: string | null;
+  participants: string | null;
   dueDate: string | null;
   summary: string | null;
   decisionAsk: string | null;
+  actionItems: string | null;
   impact: string | null;
   links: GovernanceLink[];
   documents: EvidenceDocument[];

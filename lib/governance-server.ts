@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { BriefSnapshot, BriefStatus, GovernanceRecordStatus, GovernanceRecordType, InitiativePriority, InitiativeStatus, Portfolio, WorkPackageStatus } from "./governance-model";
+import type { BriefSnapshot, BriefStatus, GovernanceEntityKind, GovernanceRecordStatus, GovernanceRecordType, InitiativePriority, InitiativeStatus, ObjectCatalogItem, Portfolio, WorkPackageStatus } from "./governance-model";
 
 export const PROGRAM_ID = "program-jsf";
 // This is the existing authoritative baseline workspace. Governance records
@@ -68,8 +68,8 @@ type WorkPackageRow = { id: string; initiative_id: string | null; change_request
 type WorkPackageObjectiveRow = { work_package_id: string; objective_id: string; relationship: "supports" | "assesses" | "verifies" | "coordinates"; rationale: string | null };
 type WorkPackageDependencyRow = { id: string; predecessor_work_package_id: string; successor_work_package_id: string; relationship: "FS" | "SS" | "FF" | "SF"; lag_days: number; status: "proposed" | "accepted" | "rejected" | "retired"; rationale: string; source_reference: string | null; updated_at: string };
 type ScopeRow = { id: string; initiative_id: string; scope_kind: "product" | "release" | "capability" | "occurrence" | "configuration_node"; scope_id: string; display_label: string | null };
-type RecordRow = { id: string; record_type: GovernanceRecordType; external_reference: string | null; title: string; status: GovernanceRecordStatus; owner: string | null; occurred_at: string | null; due_date: string | null; summary: string | null; decision_ask: string | null; impact: string | null; created_at: string; updated_at: string };
-type LinkRow = { id: string; governance_record_id: string; entity_kind: "initiative" | "work_package" | "release" | "product" | "capability" | "occurrence" | "configuration_node"; entity_id: string; relationship: string; display_label: string | null };
+type RecordRow = { id: string; record_type: GovernanceRecordType; external_reference: string | null; title: string; status: GovernanceRecordStatus; owner: string | null; occurred_at: string | null; participants: string | null; due_date: string | null; summary: string | null; decision_ask: string | null; action_items: string | null; impact: string | null; created_at: string; updated_at: string };
+type LinkRow = { id: string; governance_record_id: string; entity_kind: GovernanceEntityKind; entity_id: string; relationship: string; display_label: string | null };
 type DocumentRow = { id: string; governance_record_id: string | null; initiative_id: string | null; file_name: string; content_type: string | null; byte_size: number; description: string | null; created_at: string };
 type BriefRow = { id: string; initiative_id: string | null; initiative_title: string | null; title: string; status: BriefStatus; notes: string | null; snapshot_payload: string; body_markdown: string; published_at: string | null; created_at: string; updated_at: string };
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
@@ -82,7 +82,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT l.work_package_id,l.objective_id,l.relationship,l.rationale FROM work_package_objective l JOIN work_package w ON w.id=l.work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY l.created_at").bind(PROGRAM_ID).all<WorkPackageObjectiveRow>(),
     db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id LEFT JOIN initiative i ON i.id=w.initiative_id LEFT JOIN incumbent_objective o ON o.id=w.objective_id WHERE i.program_id=? OR o.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID, PROGRAM_ID).all<WorkPackageDependencyRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
-    db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,CASE WHEN o.id IS NOT NULL THEN 'Source occurrence' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence o ON l.entity_kind='occurrence' AND o.id=l.entity_id").all<LinkRow>(),
+    db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,pl.code || ' · ' || pl.name,org.name,cr.external_identifier || ' · ' || cr.title,obj.external_identifier || ' · ' || obj.title,w.wbs_code || ' · ' || w.title,CASE WHEN bo.id IS NOT NULL THEN 'Baseline record' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN work_package w ON l.entity_kind='work_package' AND w.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence bo ON l.entity_kind='occurrence' AND bo.id=l.entity_id LEFT JOIN platform pl ON l.entity_kind='platform' AND pl.id=l.entity_id LEFT JOIN organization org ON l.entity_kind='organization' AND org.id=l.entity_id LEFT JOIN change_request cr ON l.entity_kind='change_request' AND cr.id=l.entity_id LEFT JOIN incumbent_objective obj ON l.entity_kind='objective' AND obj.id=l.entity_id").all<LinkRow>(),
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
@@ -113,7 +113,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     workPackages: workPackageResult.results.map((work) => mapWorkPackage(work, objectivesByWorkPackage.get(work.id) ?? [])),
     workPackageDependencies: workDependencyResult.results.map((entry) => ({ id: entry.id, predecessorWorkPackageId: entry.predecessor_work_package_id, successorWorkPackageId: entry.successor_work_package_id, relationship: entry.relationship, lagDays: entry.lag_days, status: entry.status, rationale: entry.rationale, sourceReference: entry.source_reference, updatedAt: entry.updated_at })),
     records: recordResult.results.map((entry) => ({
-      id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, impact: entry.impact,
+      id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, participants: entry.participants, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, actionItems: entry.action_items, impact: entry.impact,
       links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label })),
       documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
       createdAt: entry.created_at, updatedAt: entry.updated_at,
@@ -124,6 +124,44 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     })),
     activity: activityResult.results.map((entry) => ({ id: entry.id, action: entry.action, entityKind: entry.entity_kind, entityId: entry.entity_id, actorName: entry.actor_name || "Baseline steward", createdAt: entry.created_at })),
   };
+}
+
+type CatalogRow = { kind: GovernanceEntityKind; id: string; label: string; detail: string | null };
+
+function routeSlug(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "unassigned";
+}
+
+function catalogHref(item: CatalogRow) {
+  if (item.kind === "product") return `/products/${encodeURIComponent(routeSlug(item.label))}`;
+  if (item.kind === "organization") return `/organizations/${encodeURIComponent(routeSlug(item.label))}`;
+  if (item.kind === "capability") return `/capabilities/${encodeURIComponent(routeSlug(item.label))}`;
+  if (item.kind === "release") return `/releases/${encodeURIComponent(item.label)}`;
+  if (item.kind === "platform") return `/platforms/${encodeURIComponent(item.id)}`;
+  if (item.kind === "change_request") return `/changes/${encodeURIComponent(item.id)}`;
+  if (item.kind === "objective") return `/objectives/${encodeURIComponent(item.id)}`;
+  if (item.kind === "initiative") return `/initiatives/${encodeURIComponent(item.id)}`;
+  if (item.kind === "work_package") return `/delivery/${encodeURIComponent(item.id)}`;
+  if (item.kind === "occurrence") return `/occurrences/${encodeURIComponent(item.id)}`;
+  return null;
+}
+
+export async function objectCatalog(db: Database): Promise<ObjectCatalogItem[]> {
+  const result = await db.prepare(`
+    SELECT 'product' AS kind,id,canonical_name AS label,COALESCE(short_name,product_type,'Product') AS detail FROM product WHERE program_id=?
+    UNION ALL SELECT 'platform',id,code || ' · ' || name,UPPER(platform_type) || ' Platform' FROM platform WHERE program_id=?
+    UNION ALL SELECT 'organization',id,name,COALESCE(organization_type,'Organization') FROM organization WHERE program_id=?
+    UNION ALL SELECT 'release',id,name,'Release · ' || status FROM release WHERE program_id=?
+    UNION ALL SELECT 'configuration_node',id,name,REPLACE(node_type,'_',' ') FROM configuration_node WHERE program_id=?
+    UNION ALL SELECT 'capability',id,name,'Capability' FROM capability WHERE program_id=?
+    UNION ALL SELECT 'change_request',id,external_identifier || ' · ' || title,'Change Request · ' || decision_status FROM change_request WHERE program_id=?
+    UNION ALL SELECT 'objective',id,external_identifier || ' · ' || title,'LM Objective · ' || status FROM incumbent_objective WHERE program_id=?
+    UNION ALL SELECT 'initiative',id,title,'Initiative · ' || status FROM initiative WHERE program_id=?
+    UNION ALL SELECT 'work_package',w.id,w.wbs_code || ' · ' || w.title,'Government work package · ' || w.status FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=?
+    UNION ALL SELECT 'occurrence',bo.id,COALESCE(json_extract(bo.projection_payload,'$.LongName'),json_extract(bo.projection_payload,'$.ShortName'),json_extract(bo.projection_payload,'$."#"'),'Baseline record'),COALESCE(json_extract(bo.projection_payload,'$.ReleaseName'),'Release unassigned') || ' · Baseline record' FROM baseline_occurrence bo WHERE bo.program_id=? AND bo.lifecycle_status='active'
+    ORDER BY kind,label
+  `).bind(PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID).all<CatalogRow>();
+  return result.results.map((item) => ({ kind: item.kind, id: item.id, label: item.label, detail: item.detail || "", href: catalogHref(item) }));
 }
 
 function mapWorkPackage(work: WorkPackageRow, objectiveLinks: WorkPackageObjectiveRow[]) {
@@ -286,7 +324,7 @@ export async function saveWorkPackageDependency(db: Database, actor: Actor, body
 }
 
 function governanceLinks(value: unknown) {
-  const validKinds = new Set(["initiative", "work_package", "release", "product", "capability", "occurrence", "configuration_node"]);
+  const validKinds = new Set(["initiative", "work_package", "release", "product", "capability", "occurrence", "configuration_node", "platform", "organization", "change_request", "objective"]);
   const unique = new Map<string, { kind: string; id: string; relationship: string }>();
   for (const entry of asArray<Record<string, unknown>>(value)) {
     const kind = clean(entry.kind);
@@ -307,7 +345,7 @@ export async function createGovernanceRecord(db: Database, actor: Actor, body: R
   const at = now();
   const links = governanceLinks(body.links);
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO governance_record (id,program_id,record_type,external_reference,title,status,owner,occurred_at,due_date,summary,decision_ask,impact,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(recordId, PROGRAM_ID, type, nullable(body.externalReference), title, status, nullable(body.owner), nullable(body.occurredAt), nullable(body.dueDate), nullable(body.summary), nullable(body.decisionAsk), nullable(body.impact), actor.id, at, at),
+    db.prepare("INSERT INTO governance_record (id,program_id,record_type,external_reference,title,status,owner,occurred_at,participants,due_date,summary,decision_ask,action_items,impact,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(recordId, PROGRAM_ID, type, nullable(body.externalReference), title, status, nullable(body.owner), nullable(body.occurredAt), nullable(body.participants), nullable(body.dueDate), nullable(body.summary), nullable(body.decisionAsk), nullable(body.actionItems), nullable(body.impact), actor.id, at, at),
   ];
   for (const link of links) statements.push(db.prepare("INSERT INTO governance_record_link (id,governance_record_id,entity_kind,entity_id,relationship,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("record-link"), recordId, link.kind, link.id, link.relationship, at, at));
   statements.push(audit(db, actor, "governance_record_created", "governance_record", recordId, { type, title, status, links }));
@@ -321,9 +359,9 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   const current = await db.prepare("SELECT * FROM governance_record WHERE id=? AND program_id=?").bind(recordId, PROGRAM_ID).first<RecordRow>();
   if (!current) throw new Error("The requested governance record no longer exists.");
   const status = recordStatusSet.has(body.status as GovernanceRecordStatus) ? body.status as GovernanceRecordStatus : current.status;
-  const next = { title: clean(body.title) || current.title, status, owner: body.owner === undefined ? current.owner : nullable(body.owner), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), summary: body.summary === undefined ? current.summary : nullable(body.summary), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), impact: body.impact === undefined ? current.impact : nullable(body.impact) };
+  const next = { title: clean(body.title) || current.title, status, owner: body.owner === undefined ? current.owner : nullable(body.owner), participants: body.participants === undefined ? current.participants : nullable(body.participants), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), summary: body.summary === undefined ? current.summary : nullable(body.summary), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), actionItems: body.actionItems === undefined ? current.action_items : nullable(body.actionItems), impact: body.impact === undefined ? current.impact : nullable(body.impact) };
   await db.batch([
-    db.prepare("UPDATE governance_record SET title=?,status=?,owner=?,due_date=?,summary=?,decision_ask=?,impact=?,updated_at=? WHERE id=?").bind(next.title, next.status, next.owner, next.dueDate, next.summary, next.decisionAsk, next.impact, now(), recordId),
+    db.prepare("UPDATE governance_record SET title=?,status=?,owner=?,participants=?,due_date=?,summary=?,decision_ask=?,action_items=?,impact=?,updated_at=? WHERE id=?").bind(next.title, next.status, next.owner, next.participants, next.dueDate, next.summary, next.decisionAsk, next.actionItems, next.impact, now(), recordId),
     audit(db, actor, "governance_record_updated", "governance_record", recordId, next, current),
   ]);
 }

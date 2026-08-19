@@ -6,6 +6,7 @@ import Link from "./app-link";
 import { usePathname } from "next/navigation";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
 import { WorkspaceContextControl, useWorkspaceContext, type ContextMode } from "./workspace-context";
+import { CallNoteControl, type ObjectContext } from "./object-workspace";
 
 type DomainPageShellProps = {
   title: string;
@@ -16,6 +17,7 @@ type DomainPageShellProps = {
   breadcrumb?: Array<{ label: string; href?: string }>;
   contextMode?: ContextMode;
   recordRelease?: string;
+  objectContext?: ObjectContext;
 };
 
 function isActiveItem(pathname: string, itemHref: string) {
@@ -23,7 +25,7 @@ function isActiveItem(pathname: string, itemHref: string) {
   return pathname.startsWith(`${itemHref}/`) && itemHref !== "/";
 }
 
-export function DomainPageShell({ title, subtitle, actions, children, releaseScope, breadcrumb, contextMode = "portfolio", recordRelease }: DomainPageShellProps) {
+export function DomainPageShell({ title, subtitle, actions, children, releaseScope, breadcrumb, contextMode = "portfolio", recordRelease, objectContext }: DomainPageShellProps) {
   const pathname = usePathname();
   const { releaseLens } = useWorkspaceContext();
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
@@ -83,7 +85,7 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
             <h1>{title}</h1>
             {subtitle ? <div className="top-subtitle">{subtitle}</div> : null}
           </div>
-          <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} />{actions}</div>
+          <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} /><CallNoteControl context={objectContext} />{actions}</div>
         </header>
         {breadcrumb?.length ? <nav className="breadcrumb" aria-label="Breadcrumb">
           {breadcrumb.map((item, index) => <span key={`${item.label}:${index}`}>

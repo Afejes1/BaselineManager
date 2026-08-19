@@ -782,9 +782,11 @@ export const governanceRecords = sqliteTable("governance_record", {
   status: text("status").notNull().default("open"),
   owner: text("owner"),
   occurredAt: text("occurred_at"),
+  participants: text("participants"),
   dueDate: text("due_date"),
   summary: text("summary"),
   decisionAsk: text("decision_ask"),
+  actionItems: text("action_items"),
   impact: text("impact"),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
@@ -803,7 +805,7 @@ export const governanceRecordLinks = sqliteTable("governance_record_link", {
   relationship: text("relationship").notNull().default("affects"),
   ...timestamps,
 }, (t) => [
-  check("governance_record_link_kind", sql`${t.entityKind} IN ('initiative','work_package','release','product','capability','occurrence','configuration_node')`),
+  check("governance_record_link_kind", sql`${t.entityKind} IN ('initiative','work_package','release','product','capability','occurrence','configuration_node','platform','organization','change_request','objective')`),
   uniqueIndex("governance_record_link_uq").on(t.governanceRecordId, t.entityKind, t.entityId, t.relationship),
   index("governance_record_link_target_ix").on(t.entityKind, t.entityId),
 ]);
