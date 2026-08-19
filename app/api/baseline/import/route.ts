@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     if (!body.fileName || !Array.isArray(body.rows)) return Response.json({ error:"fileName and rows are required" }, { status:400 });
     for (const row of body.rows) {
       const keys = Object.keys(row);
-      if (keys.length !== 24 || TECHNICAL_BASELINE_COLUMNS.some((column,index) => keys[index] !== column)) return Response.json({ error:"Every row must preserve the exact 24-column contract." }, { status:400 });
+      if (keys.length !== 24 || TECHNICAL_BASELINE_COLUMNS.some((column,index) => keys[index] !== column)) return Response.json({ error:"Every A2O Tech Stack row must preserve the approved column contract." }, { status:400 });
     }
 
     const db = env.DB;

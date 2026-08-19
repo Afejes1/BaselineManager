@@ -652,7 +652,7 @@ export function BaselineManager() {
               <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
               <span>Active baseline · ReleaseName retained on every record</span>
             </div>
-            <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · 24-column format</small></div>
+            <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · A2O Tech Stack</small></div>
             <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
             <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
           </section>
@@ -794,7 +794,7 @@ export function BaselineManager() {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No workbook is active. Import the required 24-column workbook to begin."}</div>}
+                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No A2O Tech Stack workbook is active. Import it to begin."}</div>}
               </div>}
               {!workspaceError && !loading && <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><b>All loaded</b></div></footer>}
             </>
@@ -898,7 +898,7 @@ export function BaselineManager() {
                       </button>
                       <span>Last reviewed <strong>{reviewDate(selectedReview.reviewedAt)}</strong></span>
                     </div>
-                    <p>Stored separately from the 24 source columns and retained across sessions.</p>
+                    <p>Stored separately from A2O Tech Stack fields and retained across sessions.</p>
                   </section>
                 )}
 
@@ -965,7 +965,7 @@ export function BaselineManager() {
 
                 {activeDetailTab === "normalized" && normalizedProjection && (
                   <section className="normalized-view">
-                    <div className="section-heading"><h4>Linked data</h4><span>Product and configuration data linked from this 24-column record</span></div>
+                    <div className="section-heading"><h4>Linked data</h4><span>Product and configuration data linked from this A2O Tech Stack record</span></div>
                     <div className="normalized-grid">
                       <div className="normal-card">
                         <h5>Product node</h5>
@@ -1026,7 +1026,7 @@ export function BaselineManager() {
       <section className="import-modal quality-help-modal" role="dialog" aria-modal="true" aria-labelledby="quality-help-title">
         <span className="eyebrow">AUTOMATED HEALTH CHECKS</span>
         <h2 id="quality-help-title">Why does the system check each row?</h2>
-        <p>Automated checks identify missing or inconsistent source values. They are <strong>not one of the 24 spreadsheet columns</strong> and are not included in XLSX export.</p>
+        <p>Automated checks identify missing or inconsistent source values. They are <strong>not A2O Tech Stack fields</strong> and are not included in XLSX export.</p>
         <div className="quality-key">
           <div><Mark quality={{ level: "ready", label: "Pass", issues: [] }} /><span>No configured source-value checks failed.</span></div>
           <div><Mark quality={{ level: "review", label: "Warning", issues: [] }} /><span>The row is usable, but a value is incomplete or inconsistent.</span></div>

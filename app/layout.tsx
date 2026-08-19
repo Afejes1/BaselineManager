@@ -14,10 +14,10 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "V3 Technical Baseline Manager",
-  description: "Manage the F-35 technical baseline from the required 24-column workbook.",
+  description: "Manage the F-35 technical baseline from the A2O Tech Stack workbook.",
   openGraph: {
     title: "V3 Technical Baseline Manager",
-    description: "Manage the required 24-column workbook as a technical baseline.",
+    description: "Manage the A2O Tech Stack workbook as a technical baseline.",
     type: "website",
     images: [{ url: "/og.png", width: 1739, height: 907, alt: "V3 Technical Baseline data transformation" }],
   },
