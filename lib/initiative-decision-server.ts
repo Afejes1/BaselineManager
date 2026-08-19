@@ -175,10 +175,11 @@ export async function saveObjectiveEffectAttribution(db: Database, actor: Actor,
   const objectiveId = clean(body.objectiveId);
   const changeEffectId = clean(body.changeEffectId);
   if (!objectiveId || !changeEffectId) throw new Error("Objective and Change Effect are required.");
-  const objective = await db.prepare("SELECT id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string }>();
-  const effect = await db.prepare("SELECT ce.id FROM change_effect ce JOIN change_request cr ON cr.id=ce.change_request_id WHERE ce.id=? AND cr.program_id=?").bind(changeEffectId, PROGRAM_ID).first<{ id: string }>();
+  const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
+  const effect = await db.prepare("SELECT ce.id,ce.change_request_id FROM change_effect ce JOIN change_request cr ON cr.id=ce.change_request_id WHERE ce.id=? AND cr.program_id=?").bind(changeEffectId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
   if (!objective) throw new Error("Objective was not found.");
   if (!effect) throw new Error("Change Effect was not found.");
+  if (effect.change_request_id !== objective.change_request_id) throw new Error("An Objective can attribute only technical effects owned by its owning Change Request.");
   const attribution = oneOf<ObjectiveAttribution>(body.attribution, ["primary", "contributing", "uncertain"], "contributing");
   const confidence = oneOf<ObjectiveAttributionConfidence>(body.confidence, ["unassessed", "low", "medium", "high"], "unassessed");
   const rationale = clean(body.rationale);
