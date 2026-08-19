@@ -18,6 +18,9 @@ The local prototype stores its database and uploaded evidence under
 
 Python and .NET are not required.
 
+The supported SheetJS package is vendored under `vendor` so XLSX capability is
+reproducible without relying on the outdated npm registry release.
+
 ## First-time setup
 
 From this `site` directory:
@@ -93,3 +96,11 @@ native runtime files.
 
 See [docs/LOCAL_OPERATOR_RUNBOOK.md](docs/LOCAL_OPERATOR_RUNBOOK.md) for the
 value-producing analyst workflow and recovery procedures.
+
+## MVP branch scope
+
+This branch intentionally excludes automated tests, lint tooling, migration
+generation tooling, starter examples, and air-gap deployment packaging. It
+retains the production build, checked-in database migrations, local verification,
+and all application capabilities. Use the main development branch when changing
+the database schema or preparing a managed multi-user deployment.
