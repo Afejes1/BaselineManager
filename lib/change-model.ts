@@ -1,5 +1,6 @@
 export type GovernmentPriority = "unranked" | "low" | "medium" | "high" | "critical";
 export type FundingDecision = "pending" | "fund" | "defer" | "decline";
+export type ChangeRequestReferenceStatus = "active" | "closed" | "superseded";
 export type ChangeSubjectKind = "product" | "platform" | "configuration_node" | "occurrence" | "release" | "organization";
 export type ChangeAction = "add" | "remove" | "move" | "modify" | "assess";
 export type DependencyType = "requires" | "enables" | "blocks" | "conflicts" | "overlaps";
@@ -24,6 +25,8 @@ export type ChangeRequest = {
   decisionAuthority: string | null;
   decisionAt: string | null;
   decisionRationale: string | null;
+  referenceStatus: ChangeRequestReferenceStatus;
+  lifecycleRationale: string | null;
   summary: string | null;
   consequenceIfFunded: string | null;
   consequenceIfDeferred: string | null;
@@ -59,4 +62,3 @@ export type ChangePortfolio = {
   releases: Array<{ id: string; name: string }>;
   subjects: Array<{ kind: ChangeSubjectKind; id: string; label: string }>;
 };
-

@@ -12,24 +12,45 @@ export const sourcePackages = sqliteTable("source_package", {
 }, (t) => [uniqueIndex("source_package_hash_uq").on(t.programId, t.contentHash), index("source_package_status_ix").on(t.programId, t.status, t.receivedAt)]);
 
 export const releases = sqliteTable("release", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), code: text("code"), normalizedCode: text("normalized_code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), status: text("status").notNull().default("planned"), targetDate: text("target_date"), actualDate: text("actual_date"), ...timestamps,
-}, (t) => [uniqueIndex("release_code_uq").on(t.programId, t.normalizedCode), uniqueIndex("release_name_uq").on(t.programId, t.normalizedName), index("release_status_ix").on(t.programId, t.status)]);
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), code: text("code"), normalizedCode: text("normalized_code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), status: text("status").notNull().default("planned"), description: text("description"), owner: text("owner"), predecessorReleaseId: text("predecessor_release_id"), targetDate: text("target_date"), actualDate: text("actual_date"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
+}, (t) => [check("release_status", sql`${t.status} IN ('proposed','planned','in_development','integration','test','fielding','operational','superseded','cancelled')`), uniqueIndex("release_code_uq").on(t.programId, t.normalizedCode), uniqueIndex("release_name_uq").on(t.programId, t.normalizedName), index("release_status_ix").on(t.programId, t.status), index("release_predecessor_ix").on(t.programId, t.predecessorReleaseId)]);
+
+export const releaseMilestones = sqliteTable("release_milestone", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  milestoneType: text("milestone_type").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("planned"),
+  plannedDate: text("planned_date"),
+  forecastDate: text("forecast_date"),
+  actualDate: text("actual_date"),
+  owner: text("owner"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  notes: text("notes"),
+  ...timestamps,
+}, (t) => [
+  check("release_milestone_status", sql`${t.status} IN ('planned','at_risk','complete','cancelled')`),
+  uniqueIndex("release_milestone_type_uq").on(t.releaseId, t.milestoneType, t.title),
+  index("release_milestone_release_ix").on(t.releaseId, t.status, t.plannedDate),
+]);
 
 export const configurationBaselines = sqliteTable("configuration_baseline", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), releaseId: text("release_id").notNull().references(() => releases.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), maturity: text("maturity").notNull().default("reported"), asOf: text("as_of").notNull(), status: text("status").notNull().default("working"), description: text("description"), parentBaselineId: text("parent_baseline_id"), ...timestamps,
 }, (t) => [uniqueIndex("baseline_release_name_asof_uq").on(t.releaseId, t.normalizedName, t.asOf), index("baseline_release_ix").on(t.programId, t.releaseId, t.status)]);
 
 export const organizations = sqliteTable("organization", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), organizationType: text("organization_type"), ...timestamps,
-}, (t) => [uniqueIndex("organization_name_uq").on(t.programId, t.normalizedName)]);
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), organizationType: text("organization_type"), description: text("description"), lifecycleStatus: text("lifecycle_status").notNull().default("active"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
+}, (t) => [check("organization_lifecycle_status", sql`${t.lifecycleStatus} IN ('active','inactive','retired')`), uniqueIndex("organization_name_uq").on(t.programId, t.normalizedName), index("organization_status_ix").on(t.programId, t.lifecycleStatus)]);
 
 export const configurationNodes = sqliteTable("configuration_node", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), parentId: text("parent_id"), nodeType: text("node_type").notNull(), code: text("code"), normalizedCode: text("normalized_code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), description: text("description"), ownerOrganizationId: text("owner_organization_id").references(() => organizations.id), ...timestamps,
-}, (t) => [check("configuration_node_not_self", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`), uniqueIndex("configuration_node_code_uq").on(t.programId, t.normalizedCode), uniqueIndex("configuration_node_position_uq").on(t.programId, t.parentId, t.nodeType, t.normalizedName), index("configuration_node_parent_ix").on(t.programId, t.parentId, t.nodeType)]);
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), parentId: text("parent_id"), nodeType: text("node_type").notNull(), code: text("code"), normalizedCode: text("normalized_code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), description: text("description"), ownerOrganizationId: text("owner_organization_id").references(() => organizations.id), lifecycleStatus: text("lifecycle_status").notNull().default("active"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
+}, (t) => [check("configuration_node_not_self", sql`${t.parentId} IS NULL OR ${t.parentId} <> ${t.id}`), check("configuration_node_lifecycle_status", sql`${t.lifecycleStatus} IN ('active','retired')`), uniqueIndex("configuration_node_code_uq").on(t.programId, t.normalizedCode), uniqueIndex("configuration_node_position_uq").on(t.programId, t.parentId, t.nodeType, t.normalizedName), index("configuration_node_parent_ix").on(t.programId, t.parentId, t.nodeType), index("configuration_node_status_ix").on(t.programId, t.lifecycleStatus)]);
 
 export const products = sqliteTable("product", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), canonicalName: text("canonical_name").notNull(), normalizedName: text("normalized_name").notNull(), shortName: text("short_name"), productType: text("product_type"), softwareClassification: text("software_classification"), ownerOrganizationId: text("owner_organization_id").references(() => organizations.id), ...timestamps,
-}, (t) => [uniqueIndex("product_name_uq").on(t.programId, t.normalizedName), index("product_search_ix").on(t.programId, t.shortName)]);
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), canonicalName: text("canonical_name").notNull(), normalizedName: text("normalized_name").notNull(), shortName: text("short_name"), productType: text("product_type"), softwareClassification: text("software_classification"), ownerOrganizationId: text("owner_organization_id").references(() => organizations.id), description: text("description"), lifecycleStatus: text("lifecycle_status").notNull().default("active"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
+}, (t) => [check("product_lifecycle_status", sql`${t.lifecycleStatus} IN ('active','retired')`), uniqueIndex("product_name_uq").on(t.programId, t.normalizedName), index("product_search_ix").on(t.programId, t.shortName), index("product_status_ix").on(t.programId, t.lifecycleStatus)]);
 
 // Canonical aliases are steward decisions.  They are deliberately separate
 // from source rows so an imported spelling remains visible while future
@@ -76,8 +97,8 @@ export const productSuppliers = sqliteTable("product_supplier", {
 }, (t) => [uniqueIndex("product_supplier_uq").on(t.productId, t.organizationId, t.supplierRole)]);
 
 export const capabilities = sqliteTable("capability", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), parentId: text("parent_id"), code: text("code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), description: text("description"), ...timestamps,
-}, (t) => [uniqueIndex("capability_name_uq").on(t.programId, t.normalizedName), index("capability_parent_ix").on(t.programId, t.parentId)]);
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), parentId: text("parent_id"), code: text("code"), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), description: text("description"), lifecycleStatus: text("lifecycle_status").notNull().default("active"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
+}, (t) => [check("capability_lifecycle_status", sql`${t.lifecycleStatus} IN ('draft','active','retired')`), uniqueIndex("capability_name_uq").on(t.programId, t.normalizedName), index("capability_parent_ix").on(t.programId, t.parentId), index("capability_status_ix").on(t.programId, t.lifecycleStatus)]);
 
 export const productCapabilities = sqliteTable("product_capability", {
   productId: text("product_id").notNull().references(() => products.id), capabilityId: text("capability_id").notNull().references(() => capabilities.id), relationship: text("relationship").notNull().default("satisfies"), rationale: text("rationale"), ...timestamps,
@@ -362,6 +383,8 @@ export const changeRequests = sqliteTable("change_request", {
   decisionAt: text("decision_at"),
   decisionByUserId: text("decision_by_user_id").references(() => appUsers.id),
   decisionRationale: text("decision_rationale"),
+  referenceStatus: text("reference_status").notNull().default("active"),
+  lifecycleRationale: text("lifecycle_rationale"),
   summary: text("summary"),
   consequenceIfFunded: text("consequence_if_funded"),
   consequenceIfDeferred: text("consequence_if_deferred"),
@@ -372,6 +395,7 @@ export const changeRequests = sqliteTable("change_request", {
 }, (t) => [
   check("change_request_priority", sql`${t.governmentPriority} IN ('unranked','low','medium','high','critical')`),
   check("change_request_decision", sql`${t.decisionStatus} IN ('pending','fund','defer','decline')`),
+  check("change_request_reference_status", sql`${t.referenceStatus} IN ('active','closed','superseded')`),
   uniqueIndex("change_request_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
   index("change_request_decision_ix").on(t.programId, t.decisionStatus, t.governmentPriority),
   index("change_request_release_ix").on(t.programId, t.requestedReleaseId),

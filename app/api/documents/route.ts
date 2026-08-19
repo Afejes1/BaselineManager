@@ -46,3 +46,25 @@ export async function GET(request: Request) {
     return Response.json({ error: error instanceof Error ? error.message : "The evidence document could not be opened." }, { status: 500 });
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const actor = await ensureActor(env.DB, request);
+    requireWriter(actor);
+    const payload = await request.json() as { id?: string; rationale?: string };
+    const documentId = String(payload.id || "").trim();
+    const rationale = String(payload.rationale || "").trim();
+    if (!documentId || !rationale) return Response.json({ error: "Document and removal rationale are required." }, { status: 400 });
+    const document = await env.DB.prepare("SELECT * FROM evidence_document WHERE id=? AND program_id=?").bind(documentId, PROGRAM_ID).first<Record<string, unknown>>();
+    if (!document) return Response.json({ error: "Evidence document not found." }, { status: 404 });
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM evidence_document WHERE id=? AND program_id=?").bind(documentId, PROGRAM_ID),
+      audit(env.DB, actor, "evidence_document_removed", "evidence_document", documentId, { rationale }, document),
+    ]);
+    const bucket = documentsBucket();
+    if (bucket && typeof document.r2_key === "string") await bucket.delete(document.r2_key);
+    return Response.json({ ok: true });
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "The evidence document could not be removed." }, { status: 500 });
+  }
+}

@@ -5,15 +5,17 @@ import { useParams } from "next/navigation";
 import Link from "../../../components/app-link";
 import { ProvenanceKey } from "../../../components/provenance-key";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { ViewportModal } from "../../../components/viewport-modal";
+import { AuditHistoryPanel } from "../../../components/governed-object";
 import { ObjectRecordsPanel } from "../../../components/object-workspace";
 import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
-import { displayStatus, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
+import { displayStatus, initiativePriorities, initiativeStatuses, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
 import { readable, selectInitiativeBundle, tierLabel } from "../../../lib/initiative-decision-model";
 import { estimateVariance } from "../../../lib/initiative-readiness";
 
-type Tab = "decision" | "delivery" | "requirements" | "timeline" | "baseline" | "evidence";
+type Tab = "decision" | "delivery" | "requirements" | "timeline" | "baseline" | "evidence" | "history";
 type Draft = Record<string, string>;
 const empty = (values: Draft): Draft => values;
 const dateLabel = (value: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : "Not set";
@@ -39,6 +41,9 @@ export default function InitiativeDetailPage() {
   const [signoffDraft, setSignoffDraft] = useState<Draft>(empty({ criterionId: "", signoffRole: "Government acceptance authority", signer: "", decision: "pending", rationale: "" }));
   const [milestoneDraft, setMilestoneDraft] = useState<Draft>(empty({ changeRequestId: "", objectiveId: "", title: "", milestoneType: "delivery", plannedDate: "", status: "planned", consequenceIfMissed: "", owner: "" }));
   const [workDraft, setWorkDraft] = useState<Draft>(empty({ title: "", wbsCode: "", owner: "", dueDate: "", status: "planned", notes: "" }));
+  const [initiativeEditOpen, setInitiativeEditOpen] = useState(false);
+  const [initiativeEdit, setInitiativeEdit] = useState<Draft>(empty({ title: "", releaseName: "", owner: "", targetDate: "", status: "draft", priority: "medium", consequence: "", desiredOutcome: "", decisionAsk: "" }));
+  const [initiativeProducts, setInitiativeProducts] = useState<Set<string>>(new Set());
 
   const bundle = useMemo(() => decision.workspace ? selectInitiativeBundle(decision.workspace, initiativeId) : null, [decision.workspace, initiativeId]);
   const initiative = governance.portfolio?.initiatives.find((item) => item.id === initiativeId) || null;
@@ -63,9 +68,11 @@ export default function InitiativeDetailPage() {
       setRequirementDraft((current) => ({ ...current, objectiveId: current.objectiveId || itemValue(bundle.objectives[0]?.id) }));
       setCriterionDraft((current) => ({ ...current, objectiveId: current.objectiveId || itemValue(bundle.objectives[0]?.id) }));
       setSignoffDraft((current) => ({ ...current, criterionId: current.criterionId || itemValue(bundle.criteria[0]?.id) }));
+      setInitiativeEdit({ title: item.title, releaseName: item.primaryReleaseName || "", owner: item.owner || "", targetDate: item.targetDate || "", status: item.status, priority: item.priority, consequence: item.consequence || "", desiredOutcome: item.desiredOutcome || "", decisionAsk: item.decisionAsk || "" });
+      setInitiativeProducts(new Set(initiative?.scope.filter((scope) => scope.scopeKind === "product").map((scope) => scope.scopeId) || []));
     }, 0);
     return () => window.clearTimeout(handle);
-  }, [bundle, decision.workspace?.changes.requests, linkedRequestIds]);
+  }, [bundle, decision.workspace?.changes.requests, initiative?.scope, linkedRequestIds]);
 
   const field = (setDraft: React.Dispatch<React.SetStateAction<Draft>>, name: string) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setDraft((current) => ({ ...current, [name]: event.target.value }));
   async function submit(event: FormEvent, action: string, payload: Record<string, unknown>, message: string, reset?: () => void) {
@@ -80,11 +87,20 @@ export default function InitiativeDetailPage() {
     catch (reason) { setNotice(reason instanceof Error ? reason.message : "The work package could not be saved."); }
     finally { setSaving(false); }
   }
+  async function saveInitiative() {
+    setSaving(true); setNotice("");
+    try {
+      const productScopes = Array.from(initiativeProducts).map((productId) => { const row = rows.find((item) => item.__meta.productId === productId); return { id: productId, label: String(row?.LongName || row?.ShortName || productId) }; });
+      await governance.mutate("update_initiative", { initiativeId, ...initiativeEdit, productScopes });
+      setInitiativeEditOpen(false); setNotice("Initiative record saved.");
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The Initiative could not be saved."); }
+    finally { setSaving(false); }
+  }
 
   if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading" contextMode="portfolio"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
   if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative" contextMode="portfolio"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
 
-  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link href="/initiatives">← Initiatives</Link></>}>
+  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
     <ProvenanceKey compact />
     <section className="kpi-grid" aria-label="Initiative decision summary">
       <div className="kpi-card"><span>Decision readiness</span><strong>{assessment?.score ?? 0}%</strong><small>{readable(assessment?.stage || "not_ready")}</small></div>
@@ -92,7 +108,7 @@ export default function InitiativeDetailPage() {
       <div className="kpi-card"><span>Technical delivery</span><strong>{bundle.objectives.length}</strong><small>Incumbent Objectives</small></div>
       <div className="kpi-card"><span>Trace & acceptance</span><strong>{assessment?.requirementsTraced || 0}/{bundle.requirements.length}</strong><small>{assessment?.criteriaPassed || 0}/{bundle.criteria.length} criteria passed</small></div>
     </section>
-    <nav className="detail-tabs" aria-label="Initiative views">{(["decision", "delivery", "requirements", "timeline", "baseline", "evidence"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "decision" ? "Decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Baseline & WBS" : item === "evidence" ? "Calls & evidence" : "Timeline"}</button>)}</nav>
+    <nav className="detail-tabs" aria-label="Initiative views">{(["decision", "delivery", "requirements", "timeline", "baseline", "evidence", "history"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "decision" ? "Decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Baseline & WBS" : item === "evidence" ? "Calls & evidence" : displayStatus(item)}</button>)}</nav>
 
     {tab === "decision" && <div className="decision-workspace">
       <section className="as-is-to-be" aria-label="Current and target state"><article className="state-panel state-current"><span className="eyebrow">LEFT · WHERE WE ARE</span><h2>As-Is</h2><p>{bundle.initiative.asIsStatement || "Current state has not been substantiated."}</p></article><div className="state-arrow"><span>Decision path</span><strong>→</strong><small>{bundle.changeRequests.length} linked CRs</small></div><article className="state-panel state-target"><span className="eyebrow">RIGHT · WHERE WE NEED TO BE</span><h2>To-Be</h2><p>{bundle.initiative.toBeStatement || "Target state has not been defined."}</p></article></section>
@@ -119,6 +135,8 @@ export default function InitiativeDetailPage() {
 
     {tab === "baseline" && <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">EVIDENCE SCOPE + GOVERNMENT WBS</span><h3>Technical facts and accountable Government work</h3></div><span>{sourceRows.length} baseline records · {initiative.workPackages.length} WBS packages</span></div><div className="split-layout"><article className="domain-card"><h3>Products in baseline scope</h3>{[...productLabels.entries()].map(([id, label]) => <p className="entity-actions" key={id}><Link href={`/products/${encodeURIComponent(id)}`}>{label}</Link></p>)}{!productLabels.size && <p className="empty">Release-wide scope; no product restriction.</p>}<p className="entity-actions"><Link href="/pbs">Open product structure</Link><Link href="/">Open baseline records</Link></p></article><article className="domain-card"><h3>Role of the WBS</h3><p>The WBS tracks Government analysis and coordination work. It does not duplicate the supplier Objective register.</p><p className="entity-meta">Examples: independent estimate, requirement reconciliation, evidence review, leadership decision preparation.</p></article></div><div className="domain-table-wrap"><table><thead><tr><th>WBS</th><th>Government work package</th><th>Owner</th><th>Due</th><th>Status</th></tr></thead><tbody>{initiative.workPackages.map((item) => <tr key={item.id}><td className="mono">{item.wbsCode}</td><td>{item.title}<small>{item.notes}</small></td><td>{item.owner || "Unassigned"}</td><td>{dateLabel(item.dueDate)}</td><td><select value={item.status} onChange={(event) => void governance.mutate("update_work_package", { workPackageId: item.id, status: event.target.value })}>{workPackageStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></td></tr>)}</tbody></table></div><details className="governed-editor"><summary>Add a Government WBS work package</summary><form onSubmit={(event) => void addWork(event)}><div className="form-grid"><label className="modal-field">Title<input required value={workDraft.title} onChange={field(setWorkDraft, "title")} /></label><label className="modal-field">WBS code<input value={workDraft.wbsCode} onChange={field(setWorkDraft, "wbsCode")} placeholder="Auto: WP-01" /></label><label className="modal-field">Owner<input value={workDraft.owner} onChange={field(setWorkDraft, "owner")} /></label><label className="modal-field">Due date<input type="date" value={workDraft.dueDate} onChange={field(setWorkDraft, "dueDate")} /></label><label className="modal-field">Status<select value={workDraft.status} onChange={field(setWorkDraft, "status")}>{workPackageStatuses.map((status: WorkPackageStatus) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></label></div><label className="modal-field">Definition of done / notes<textarea rows={3} value={workDraft.notes} onChange={field(setWorkDraft, "notes")} /></label><button className="primary-button" disabled={saving}>Add WBS package</button></form></details></section>}
     {tab === "evidence" ? <ObjectRecordsPanel context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} /> : null}
+    {tab === "history" ? <AuditHistoryPanel kind="initiative" id={bundle.initiative.id} label={bundle.initiative.title} /> : null}
+    {initiativeEditOpen ? <ViewportModal onDismiss={() => setInitiativeEditOpen(false)} dismissDisabled={saving} labelledBy="initiative-editor-title" className="wide-modal"><span className="eyebrow">INITIATIVE LIFECYCLE</span><h2 id="initiative-editor-title">Edit Initiative</h2><div className="form-grid"><label className="modal-field">Title<input required value={initiativeEdit.title} onChange={field(setInitiativeEdit, "title")} /></label><label className="modal-field">Release scope<select value={initiativeEdit.releaseName} onChange={field(setInitiativeEdit, "releaseName")}><option value="">Cross-release</option>{Array.from(new Set(rows.map((row) => String(row.ReleaseName || "")).filter(Boolean))).map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="modal-field">Status<select value={initiativeEdit.status} onChange={field(setInitiativeEdit, "status")}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={initiativeEdit.priority} onChange={field(setInitiativeEdit, "priority")}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Accountable owner<input value={initiativeEdit.owner} onChange={field(setInitiativeEdit, "owner")} /></label><label className="modal-field">Target date<input type="date" value={initiativeEdit.targetDate} onChange={field(setInitiativeEdit, "targetDate")} /></label></div><label className="modal-field">Desired outcome<textarea rows={3} value={initiativeEdit.desiredOutcome} onChange={field(setInitiativeEdit, "desiredOutcome")} /></label><label className="modal-field">Decision required<textarea rows={3} value={initiativeEdit.decisionAsk} onChange={field(setInitiativeEdit, "decisionAsk")} /></label><label className="modal-field">Consequence of delay<textarea rows={3} value={initiativeEdit.consequence} onChange={field(setInitiativeEdit, "consequence")} /></label><fieldset className="modal-field"><legend>Products in scope</legend><div className="object-link-results">{Array.from(new Map(rows.filter((row) => row.__meta.productId).map((row) => [row.__meta.productId!, String(row.LongName || row.ShortName || row.__meta.productId)])).entries()).map(([productId, label]) => <label key={productId} className={initiativeProducts.has(productId) ? "selected" : ""}><input aria-label={`Add ${label} to initiative scope`} type="checkbox" checked={initiativeProducts.has(productId)} onChange={() => setInitiativeProducts((current) => { const next = new Set(current); if (next.has(productId)) next.delete(productId); else next.add(productId); return next; })} /><span><strong>{label}</strong><small>Canonical Product</small></span></label>)}</div></fieldset><footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setInitiativeEditOpen(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving || !initiativeEdit.title.trim()} onClick={() => void saveInitiative()}>{saving ? "Saving…" : "Save Initiative"}</button></footer></ViewportModal> : null}
     {notice && <div className="toast" role="status">{notice}</div>}
   </DomainPageShell>;
 }

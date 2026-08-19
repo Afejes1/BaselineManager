@@ -37,7 +37,7 @@ export function ViewportModal({ children, onDismiss, labelledBy, className = "",
         if (event.target === event.currentTarget && !dismissDisabled) onDismiss();
       }}
     >
-      <section className={`import-modal ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={labelledBy} onMouseDown={(event) => event.stopPropagation()}>
+      <section className={`import-modal ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
         {children}
       </section>
     </div>,

@@ -33,7 +33,7 @@ function deploymentName(placement: Placement) {
   return placement.productId ? <Link href={`/products/${encodeURIComponent(placement.productId)}`}>{placement.productName}</Link> : "Host record only";
 }
 
-function DeploymentPyramid({ placement, onEditDeployment }: { placement: Placement; onEditDeployment?: (placement: Placement) => void }) {
+function DeploymentPyramid({ placement, onEditDeployment }: { placement: Placement & { profile: ManagedDeploymentProfile | null }; onEditDeployment?: (placement: Placement) => void }) {
   const profile = placement.profile;
   const version = profile?.applicationVersion || "Not reported";
   const installation = profile?.installationLocation || "Not reported";

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { audit, PROGRAM_ID, requireWriter } from "./governance-server";
-import type { ChangeAction, ChangeDependency, ChangeEffect, ChangePortfolio, ChangeRequest, ChangeSubjectKind, DependencyType, FundingDecision, GovernmentPriority } from "./change-model";
+import type { ChangeAction, ChangeDependency, ChangeEffect, ChangePortfolio, ChangeRequest, ChangeRequestReferenceStatus, ChangeSubjectKind, DependencyType, FundingDecision, GovernmentPriority } from "./change-model";
 
 type Database = typeof env.DB;
 type Actor = { id: string; displayName: string; role: "steward" | "editor" | "viewer" };
@@ -11,6 +11,7 @@ const nullable = (value: unknown) => clean(value) || null;
 const normalized = (value: unknown) => clean(value).normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 const priorities = new Set<GovernmentPriority>(["unranked", "low", "medium", "high", "critical"]);
 const decisions = new Set<FundingDecision>(["pending", "fund", "defer", "decline"]);
+const referenceStatuses = new Set<ChangeRequestReferenceStatus>(["active", "closed", "superseded"]);
 const subjects = new Set<ChangeSubjectKind>(["product", "platform", "configuration_node", "occurrence", "release", "organization"]);
 const actions = new Set<ChangeAction>(["add", "remove", "move", "modify", "assess"]);
 const dependencyTypes = new Set<DependencyType>(["requires", "enables", "blocks", "conflicts", "overlaps"]);
@@ -27,7 +28,7 @@ async function ensureTypes(db: Database) {
 }
 
 type RequestRow = {
-  id: string; type_id: string; type_code: string; type_label: string; external_system: string | null; external_identifier: string; title: string; external_status: string | null; external_owner: string | null; source_locator: string | null; source_as_of: string | null; requested_release_id: string | null; requested_release_name: string | null; government_priority: GovernmentPriority; decision_status: FundingDecision; decision_authority: string | null; decision_at: string | null; decision_rationale: string | null; summary: string | null; consequence_if_funded: string | null; consequence_if_deferred: string | null; impact_summary: string | null; knock_on_effects: string | null; updated_at: string;
+  id: string; type_id: string; type_code: string; type_label: string; external_system: string | null; external_identifier: string; title: string; external_status: string | null; external_owner: string | null; source_locator: string | null; source_as_of: string | null; requested_release_id: string | null; requested_release_name: string | null; government_priority: GovernmentPriority; decision_status: FundingDecision; decision_authority: string | null; decision_at: string | null; decision_rationale: string | null; reference_status: ChangeRequestReferenceStatus; lifecycle_rationale: string | null; summary: string | null; consequence_if_funded: string | null; consequence_if_deferred: string | null; impact_summary: string | null; knock_on_effects: string | null; updated_at: string;
 };
 type EffectRow = {
   id: string; change_request_id: string; subject_kind: ChangeSubjectKind; subject_id: string; subject_label: string | null; action: ChangeAction; aspect: string; from_release_id: string | null; from_release_name: string | null; to_release_id: string | null; to_release_name: string | null; current_value: string | null; target_value: string | null; consequence: string | null; rationale: string | null; confidence: "reported" | "assessed" | "confirmed"; source_occurrence_id: string | null;
@@ -57,7 +58,7 @@ export async function changePortfolio(db: Database): Promise<ChangePortfolio> {
     db.prepare("SELECT bo.id,COALESCE(sr.source_key,'Source occurrence') || ' · ' || COALESCE(r.name,'Unassigned release') AS label FROM baseline_occurrence bo JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.program_id=? AND bo.lifecycle_status='active' ORDER BY r.name,sr.row_number").bind(PROGRAM_ID).all<{ id: string; label: string }>(),
     db.prepare("SELECT id,name AS label FROM organization WHERE program_id=? ORDER BY name").bind(PROGRAM_ID).all<{ id: string; label: string }>(),
   ]);
-  const requests: ChangeRequest[] = requestResult.results.map((row) => ({ id: row.id, typeId: row.type_id, typeCode: row.type_code, typeLabel: row.type_label, externalSystem: row.external_system, externalIdentifier: row.external_identifier, title: row.title, externalStatus: row.external_status, externalOwner: row.external_owner, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, requestedReleaseId: row.requested_release_id, requestedReleaseName: row.requested_release_name, governmentPriority: row.government_priority, decisionStatus: row.decision_status, decisionAuthority: row.decision_authority, decisionAt: row.decision_at, decisionRationale: row.decision_rationale, summary: row.summary, consequenceIfFunded: row.consequence_if_funded, consequenceIfDeferred: row.consequence_if_deferred, impactSummary: row.impact_summary, knockOnEffects: row.knock_on_effects, updatedAt: row.updated_at }));
+  const requests: ChangeRequest[] = requestResult.results.map((row) => ({ id: row.id, typeId: row.type_id, typeCode: row.type_code, typeLabel: row.type_label, externalSystem: row.external_system, externalIdentifier: row.external_identifier, title: row.title, externalStatus: row.external_status, externalOwner: row.external_owner, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, requestedReleaseId: row.requested_release_id, requestedReleaseName: row.requested_release_name, governmentPriority: row.government_priority, decisionStatus: row.decision_status, decisionAuthority: row.decision_authority, decisionAt: row.decision_at, decisionRationale: row.decision_rationale, referenceStatus: row.reference_status, lifecycleRationale: row.lifecycle_rationale, summary: row.summary, consequenceIfFunded: row.consequence_if_funded, consequenceIfDeferred: row.consequence_if_deferred, impactSummary: row.impact_summary, knockOnEffects: row.knock_on_effects, updatedAt: row.updated_at }));
   const effects: ChangeEffect[] = effectResult.results.map((row) => ({ id: row.id, changeRequestId: row.change_request_id, subjectKind: row.subject_kind, subjectId: row.subject_id, subjectLabel: row.subject_label || row.subject_id, action: row.action, aspect: row.aspect, fromReleaseId: row.from_release_id, fromReleaseName: row.from_release_name, toReleaseId: row.to_release_id, toReleaseName: row.to_release_name, currentValue: row.current_value, targetValue: row.target_value, consequence: row.consequence, rationale: row.rationale, confidence: row.confidence, sourceOccurrenceId: row.source_occurrence_id }));
   const dependencies: ChangeDependency[] = dependencyResult.results.map((row) => ({ id: row.id, predecessorRequestId: row.predecessor_request_id, successorRequestId: row.successor_request_id, dependencyType: row.dependency_type, rationale: row.rationale }));
   return {
@@ -112,6 +113,54 @@ export async function setFundingDecision(db: Database, actor: Actor, body: Recor
     db.prepare("UPDATE change_request SET decision_status=?,decision_authority=?,decision_at=?,decision_by_user_id=?,decision_rationale=?,updated_at=? WHERE id=? AND program_id=?")
       .bind(decisionStatus, decisionStatus === "pending" ? null : authority, decisionStatus === "pending" ? null : at, decisionStatus === "pending" ? null : actor.id, decisionStatus === "pending" ? null : rationale, at, requestId, PROGRAM_ID),
     audit(db, actor, "change_request_funding_decision_recorded", "change_request", requestId, { decisionStatus, authority, rationale }, before),
+  ]);
+  return requestId;
+}
+
+export async function setChangeRequestLifecycle(db: Database, actor: Actor, body: Record<string, unknown>) {
+  requireWriter(actor);
+  const requestId = clean(body.id);
+  const referenceStatus = clean(body.referenceStatus) as ChangeRequestReferenceStatus;
+  const rationale = clean(body.lifecycleRationale);
+  if (!requestId || !referenceStatuses.has(referenceStatus)) throw new Error("Choose a valid Change Request lifecycle state.");
+  if (referenceStatus !== "active" && !rationale) throw new Error("A rationale is required to close or supersede a Change Request reference.");
+  const before = await db.prepare("SELECT reference_status,lifecycle_rationale FROM change_request WHERE id=? AND program_id=?").bind(requestId, PROGRAM_ID).first<Record<string, unknown>>();
+  if (!before) throw new Error("Change Request was not found.");
+  const at = atNow();
+  await db.batch([
+    db.prepare("UPDATE change_request SET reference_status=?,lifecycle_rationale=?,updated_at=? WHERE id=? AND program_id=?")
+      .bind(referenceStatus, referenceStatus === "active" ? null : rationale, at, requestId, PROGRAM_ID),
+    audit(db, actor, "change_request_lifecycle_changed", "change_request", requestId, { referenceStatus, rationale: referenceStatus === "active" ? null : rationale }, before),
+  ]);
+  return requestId;
+}
+
+export async function retireChangeEffect(db: Database, actor: Actor, body: Record<string, unknown>) {
+  requireWriter(actor);
+  const effectId = clean(body.effectId);
+  const rationale = clean(body.rationale);
+  if (!effectId || !rationale) throw new Error("Effect and retirement rationale are required.");
+  const before = await db.prepare("SELECT ce.* FROM change_effect ce JOIN change_request cr ON cr.id=ce.change_request_id WHERE ce.id=? AND cr.program_id=?").bind(effectId, PROGRAM_ID).first<Record<string, unknown>>();
+  if (!before) throw new Error("Affected-object link was not found.");
+  const requestId = String(before.change_request_id);
+  await db.batch([
+    db.prepare("DELETE FROM change_effect WHERE id=?").bind(effectId),
+    audit(db, actor, "change_effect_retired", "change_request", requestId, { rationale }, before),
+  ]);
+  return requestId;
+}
+
+export async function retireChangeDependency(db: Database, actor: Actor, body: Record<string, unknown>) {
+  requireWriter(actor);
+  const dependencyId = clean(body.dependencyId);
+  const rationale = clean(body.rationale);
+  if (!dependencyId || !rationale) throw new Error("Dependency and retirement rationale are required.");
+  const before = await db.prepare("SELECT cd.* FROM change_dependency cd JOIN change_request cr ON cr.id=cd.successor_request_id WHERE cd.id=? AND cr.program_id=?").bind(dependencyId, PROGRAM_ID).first<Record<string, unknown>>();
+  if (!before) throw new Error("Change Request dependency was not found.");
+  const requestId = String(before.successor_request_id);
+  await db.batch([
+    db.prepare("DELETE FROM change_dependency WHERE id=?").bind(dependencyId),
+    audit(db, actor, "change_dependency_retired", "change_request", requestId, { rationale }, before),
   ]);
   return requestId;
 }

@@ -12,7 +12,7 @@ type Actor = Portfolio["actor"];
 
 const initiativeStatusSet = new Set<InitiativeStatus>(["draft", "active", "decision_required", "closed"]);
 const initiativePrioritySet = new Set<InitiativePriority>(["low", "medium", "high", "critical"]);
-const workPackageStatusSet = new Set<WorkPackageStatus>(["planned", "in_progress", "on_hold", "complete"]);
+const workPackageStatusSet = new Set<WorkPackageStatus>(["planned", "in_progress", "on_hold", "complete", "cancelled"]);
 const recordTypeSet = new Set<GovernanceRecordType>(["mcp", "technical_call", "decision", "risk", "question", "technical_note"]);
 const recordStatusSet = new Set<GovernanceRecordStatus>(["open", "in_review", "approved", "closed", "superseded"]);
 const briefStatusSet = new Set<BriefStatus>(["draft", "reviewed", "published", "superseded"]);
@@ -376,11 +376,19 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   const current = await db.prepare("SELECT * FROM governance_record WHERE id=? AND program_id=?").bind(recordId, PROGRAM_ID).first<RecordRow>();
   if (!current) throw new Error("The requested governance record no longer exists.");
   const status = recordStatusSet.has(body.status as GovernanceRecordStatus) ? body.status as GovernanceRecordStatus : current.status;
-  const next = { title: clean(body.title) || current.title, status, owner: body.owner === undefined ? current.owner : nullable(body.owner), participants: body.participants === undefined ? current.participants : nullable(body.participants), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), summary: body.summary === undefined ? current.summary : nullable(body.summary), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), actionItems: body.actionItems === undefined ? current.action_items : nullable(body.actionItems), impact: body.impact === undefined ? current.impact : nullable(body.impact) };
-  await db.batch([
-    db.prepare("UPDATE governance_record SET title=?,status=?,owner=?,participants=?,due_date=?,summary=?,decision_ask=?,action_items=?,impact=?,updated_at=? WHERE id=?").bind(next.title, next.status, next.owner, next.participants, next.dueDate, next.summary, next.decisionAsk, next.actionItems, next.impact, now(), recordId),
-    audit(db, actor, "governance_record_updated", "governance_record", recordId, next, current),
-  ]);
+  const type = recordTypeSet.has(body.recordType as GovernanceRecordType) ? body.recordType as GovernanceRecordType : current.record_type;
+  const next = { recordType: type, externalReference: body.externalReference === undefined ? current.external_reference : nullable(body.externalReference), title: clean(body.title) || current.title, status, owner: body.owner === undefined ? current.owner : nullable(body.owner), occurredAt: body.occurredAt === undefined ? current.occurred_at : nullable(body.occurredAt), participants: body.participants === undefined ? current.participants : nullable(body.participants), dueDate: body.dueDate === undefined ? current.due_date : nullable(body.dueDate), summary: body.summary === undefined ? current.summary : nullable(body.summary), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), actionItems: body.actionItems === undefined ? current.action_items : nullable(body.actionItems), impact: body.impact === undefined ? current.impact : nullable(body.impact) };
+  const statements: D1PreparedStatement[] = [
+    db.prepare("UPDATE governance_record SET record_type=?,external_reference=?,title=?,status=?,owner=?,occurred_at=?,participants=?,due_date=?,summary=?,decision_ask=?,action_items=?,impact=?,updated_at=? WHERE id=?").bind(next.recordType, next.externalReference, next.title, next.status, next.owner, next.occurredAt, next.participants, next.dueDate, next.summary, next.decisionAsk, next.actionItems, next.impact, now(), recordId),
+  ];
+  if (body.links !== undefined) {
+    const links = governanceLinks(body.links);
+    statements.push(db.prepare("DELETE FROM governance_record_link WHERE governance_record_id=?").bind(recordId));
+    const at = now();
+    for (const link of links) statements.push(db.prepare("INSERT INTO governance_record_link (id,governance_record_id,entity_kind,entity_id,relationship,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("record-link"), recordId, link.kind, link.id, link.relationship, at, at));
+    statements.push(audit(db, actor, "governance_record_updated", "governance_record", recordId, { ...next, links }, current));
+  } else statements.push(audit(db, actor, "governance_record_updated", "governance_record", recordId, next, current));
+  await db.batch(statements);
 }
 
 type SourceScopeRow = { projection_payload: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
@@ -449,7 +457,7 @@ function briefMarkdown(title: string, initiative: InitiativeRow, snapshot: Brief
   return `# ${title}\n\n## Decision / outcome\n${initiative.decision_ask || "Decision ask not yet recorded."}\n\n${initiative.desired_outcome || "Desired outcome not yet recorded."}\n\n## Scope snapshot\n- As of: ${snapshot.asOf}\n- Release scope: ${snapshot.releaseName}\n- Source records: ${snapshot.sourceRows}\n- Products: ${snapshot.products}\n- Releases: ${snapshot.releases}\n- Records needing review: ${snapshot.reviewRows}\n\n## Consequence\n${initiative.consequence || "Not yet recorded."}\n\n## Representative products\n${products}\n\n## Linked Government record(s)\n${linked}\n`;
 }
 
-export type DocumentBucket = { put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string } }) => Promise<unknown>; get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string; contentDisposition?: string } } | null> };
+export type DocumentBucket = { put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string } }) => Promise<unknown>; get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string; contentDisposition?: string } } | null>; delete: (key: string) => Promise<void> };
 
 export function documentsBucket() {
   return (env as unknown as { DOCUMENTS?: DocumentBucket }).DOCUMENTS;

@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { addChangeDependency, addChangeEffect, assignOccurrences, changePortfolio, saveChangeRequest, setFundingDecision } from "../../../lib/change-server";
+import { addChangeDependency, addChangeEffect, assignOccurrences, changePortfolio, retireChangeDependency, retireChangeEffect, saveChangeRequest, setChangeRequestLifecycle, setFundingDecision } from "../../../lib/change-server";
 import { ensureActor } from "../../../lib/governance-server";
 
 export async function GET(request: Request) {
@@ -14,8 +14,11 @@ export async function POST(request: Request) {
     const action = typeof body.action === "string" ? body.action : "";
     const id = action === "save_request" ? await saveChangeRequest(env.DB, actor, body)
       : action === "set_decision" ? await setFundingDecision(env.DB, actor, body)
+      : action === "set_lifecycle" ? await setChangeRequestLifecycle(env.DB, actor, body)
       : action === "add_effect" ? await addChangeEffect(env.DB, actor, body)
       : action === "add_dependency" ? await addChangeDependency(env.DB, actor, body)
+      : action === "retire_effect" ? await retireChangeEffect(env.DB, actor, body)
+      : action === "retire_dependency" ? await retireChangeDependency(env.DB, actor, body)
       : action === "assign_occurrences" ? await assignOccurrences(env.DB, actor, body) : null;
     if (!id) return Response.json({ error: "Unknown Change Request action." }, { status: 400 });
     return Response.json({ ok: true, id });
@@ -24,4 +27,3 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status: message.includes("viewer") ? 403 : 400 });
   }
 }
-

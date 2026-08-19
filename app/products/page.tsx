@@ -8,26 +8,30 @@ import {
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
 import { useWorkspaceContext } from "../../components/workspace-context";
+import { useMasterData } from "../../lib/master-data-client";
+import { MasterEntityEditorDialog } from "../../components/master-data-editor";
 
 export default function ProductsPage() {
   const { scopedRows, releaseLens } = useWorkspaceContext();
+  const master = useMasterData();
   const [query, setQuery] = useState("");
+  const [creating, setCreating] = useState(false);
 
 
   const productSummaries = useMemo<ProductSummary[]>(() => getProductSummaries(scopedRows), [scopedRows]);
+  const combined = useMemo(() => {
+    const sourceByName = new Map(productSummaries.map((item) => [item.canonical.trim().toLowerCase(), item]));
+    const governed = master.portfolio.products.map((item) => ({ master: item, summary: sourceByName.get(item.canonicalName.trim().toLowerCase()) }));
+    const governedNames = new Set(governed.map((item) => item.master.canonicalName.trim().toLowerCase()));
+    return [...governed, ...productSummaries.filter((item) => !governedNames.has(item.canonical.trim().toLowerCase())).map((summary) => ({ master: undefined, summary }))];
+  }, [master.portfolio.products, productSummaries]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return productSummaries;
-    return productSummaries.filter((product) => {
-      return (
-        product.canonical.toLowerCase().includes(normalized) ||
-        product.shortName.toLowerCase().includes(normalized) ||
-        product.supplier.toLowerCase().includes(normalized)
-      );
-    });
-  }, [productSummaries, query]);
+    if (!normalized) return combined;
+    return combined.filter(({ master: record, summary }) => `${record?.canonicalName || summary?.canonical || ""} ${record?.shortName || summary?.shortName || ""} ${summary?.supplier || ""} ${record?.lifecycleStatus || ""}`.toLowerCase().includes(normalized));
+  }, [combined, query]);
 
-  const canonicalCount = productSummaries.length;
+  const canonicalCount = combined.length;
   const uniqueSuppliers = new Set(productSummaries.map((product) => product.supplier || "Unassigned")).size;
   const totalRows = productSummaries.reduce((sum, product) => sum + product.rowCount, 0);
   const releaseCount = new Set(productSummaries.flatMap((product) => product.releases)).size;
@@ -38,12 +42,11 @@ export default function ProductsPage() {
       subtitle="Products reported in the working baseline"
       releaseScope={releaseLens || "All releases"}
       contextMode="filter"
-      actions={(
-        <label className="search" style={{ width: "280px" }}>
+      actions={(<>
+        <label className="search" style={{ width: "260px" }}>
           <span>⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by product or supplier" />
-        </label>
-      )}
+        </label><button className="primary-button" type="button" onClick={() => setCreating(true)}>＋ New Product</button></>)}
     >
       <div className="summary">
         <div className="metric"><span>Products</span><strong>{canonicalCount}</strong><small>From {totalRows} baseline records</small></div>
@@ -52,15 +55,16 @@ export default function ProductsPage() {
       </div>
 
       <section className="domain-list">
-        {filtered.map((product) => (
-          <article key={product.id} className="domain-card">
-            <h3><Link href={`/products/${encodeURIComponent(product.id)}`}>{product.canonical}</Link></h3>
-            <p className="entity-metric">{product.shortName || "Unnamed alias"} · {product.rowCount} baseline records · {product.rowCount > 0 ? `${product.tiers} tiers` : "No tier data"}</p>
-            <p className="entity-meta"><strong>Supplier:</strong> <Link href={`/organizations/${encodeURIComponent(product.supplier)}`}>{product.supplier || "Unassigned"}</Link></p>
-            <p className="entity-meta"><strong>Releases:</strong> {product.releases.join(", ") || "Unassigned"}</p>
+        {filtered.map(({ master: record, summary: product }) => (
+          <article key={record?.id || product?.id} className="domain-card">
+            <span className={`status-pill status-${record?.lifecycleStatus || "active"}`}>{record?.lifecycleStatus || "active"}</span>
+            <h3><Link href={`/products/${encodeURIComponent(record?.id || product?.id || "")}`}>{record?.canonicalName || product?.canonical}</Link></h3>
+            <p className="entity-metric">{record?.shortName || product?.shortName || "Short name not recorded"} · {product?.rowCount || 0} baseline records</p>
+            <p className="entity-meta"><strong>Supplier:</strong> {product?.supplier || master.portfolio.organizations.find((item) => item.id === record?.ownerOrganizationId)?.name || "Unassigned"}</p>
+            <p className="entity-meta"><strong>Releases:</strong> {product?.releases.join(", ") || "No baseline records yet"}</p>
             <p className="entity-actions">
-              <Link href={`/products/${encodeURIComponent(product.id)}`}>Open product</Link>
-              <span>{product.issueCount} issues · {product.warningCount} warnings</span>
+              <Link className="mini-action" href={`/products/${encodeURIComponent(record?.id || product?.id || "")}`}>Open Product</Link>
+              <span>{product?.issueCount || 0} issues · {product?.warningCount || 0} warnings</span>
             </p>
           </article>
         ))}
@@ -68,6 +72,7 @@ export default function ProductsPage() {
           <div className="empty">No products match this filter.</div>
         ) : null}
       </section>
+      {creating ? <MasterEntityEditorDialog kind="product" portfolio={master.portfolio} onDismiss={() => setCreating(false)} onSaved={() => { setCreating(false); void master.reload(); }} /> : null}
     </DomainPageShell>
   );
 }
