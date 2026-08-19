@@ -18,6 +18,9 @@ The local prototype stores its database and uploaded evidence under
 
 Python and .NET are not required.
 
+The supported SheetJS package is vendored under `vendor` so XLSX capability is
+reproducible without relying on the outdated npm registry release.
+
 ## First-time setup
 
 From this `site` directory:
