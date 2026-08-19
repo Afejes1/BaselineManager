@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { createExecutiveBrief, createGovernanceRecord, createInitiative, createWorkPackage, ensureActor, portfolio, recordBriefPublication, updateExecutiveBrief, updateGovernanceRecord, updateInitiative, updateWorkPackage } from "../../../lib/governance-server";
+import { createExecutiveBrief, createGovernanceRecord, createInitiative, createWorkPackage, ensureActor, portfolio, recordBriefPublication, saveWorkPackageDependency, updateExecutiveBrief, updateGovernanceRecord, updateInitiative, updateWorkPackage } from "../../../lib/governance-server";
 
 export async function GET(request: Request) {
   try {
@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     else if (action === "update_initiative") await updateInitiative(env.DB, actor, body);
     else if (action === "create_work_package") id = await createWorkPackage(env.DB, actor, body);
     else if (action === "update_work_package") await updateWorkPackage(env.DB, actor, body);
+    else if (action === "save_work_package_dependency") id = await saveWorkPackageDependency(env.DB, actor, body);
     else if (action === "create_governance_record") id = await createGovernanceRecord(env.DB, actor, body);
     else if (action === "update_governance_record") await updateGovernanceRecord(env.DB, actor, body);
     else if (action === "create_executive_brief") id = await createExecutiveBrief(env.DB, actor, body);

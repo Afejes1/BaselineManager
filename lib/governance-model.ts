@@ -21,16 +21,35 @@ export type ScopeLink = {
 
 export type WorkPackage = {
   id: string;
-  initiativeId: string;
+  initiativeId: string | null;
+  changeRequestId: string | null;
+  objectiveId: string | null;
   parentId: string | null;
   wbsCode: string;
   title: string;
   owner: string | null;
+  plannedStart: string | null;
   dueDate: string | null;
+  actualStart: string | null;
+  actualFinish: string | null;
   status: WorkPackageStatus;
+  definitionOfDone: string | null;
+  progressBasis: string | null;
   notes: string | null;
   sortOrder: number;
   createdAt: string;
+  updatedAt: string;
+};
+
+export type WorkPackageDependency = {
+  id: string;
+  predecessorWorkPackageId: string;
+  successorWorkPackageId: string;
+  relationship: "FS" | "SS" | "FF" | "SF";
+  lagDays: number;
+  status: "proposed" | "accepted" | "rejected" | "retired";
+  rationale: string;
+  sourceReference: string | null;
   updatedAt: string;
 };
 
@@ -140,6 +159,8 @@ export type IntakePackage = {
 export type Portfolio = {
   actor: { id: string; displayName: string; role: "steward" | "editor" | "viewer" };
   initiatives: Initiative[];
+  workPackages: WorkPackage[];
+  workPackageDependencies: WorkPackageDependency[];
   records: GovernanceRecord[];
   briefs: ExecutiveBrief[];
   activity: ActivityEvent[];

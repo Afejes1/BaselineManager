@@ -2,6 +2,10 @@ import type { ChangePortfolio, ChangeRequest } from "./change-model.js";
 
 export type InitiativeChangeRelationship = "delivers" | "enables" | "constrains" | "supports";
 export type ObjectiveStatus = "proposed" | "planned" | "in_progress" | "blocked" | "verification" | "complete" | "cancelled";
+export type ObjectiveDependencyRelationship = "requires" | "enables" | "blocks" | "consumes";
+export type ObjectiveDependencyStatus = "proposed" | "accepted" | "rejected" | "retired";
+export type ObjectiveAttribution = "primary" | "contributing" | "uncertain";
+export type ObjectiveAttributionConfidence = "unassessed" | "low" | "medium" | "high";
 export type EstimateSource = "incumbent" | "government" | "independent";
 export type EstimateConfidence = "unassessed" | "low" | "medium" | "high";
 export type RequirementAction = "add" | "modify" | "retire" | "verify" | "none";
@@ -65,6 +69,7 @@ export type IncumbentObjective = {
   changeRequestId: string;
   externalSystem: string;
   externalIdentifier: string;
+  externalItemType?: string;
   title: string;
   summary: string | null;
   technicalOwner: string | null;
@@ -76,6 +81,32 @@ export type IncumbentObjective = {
   sourceLocator: string | null;
   sourceAsOf: string | null;
   estimates: ObjectiveEstimate[];
+  updatedAt: string;
+};
+
+export type ChangeRequestObjectiveDependency = {
+  id: string;
+  dependentChangeRequestId: string;
+  prerequisiteObjectiveId: string;
+  relationship: ObjectiveDependencyRelationship;
+  status: ObjectiveDependencyStatus;
+  rationale: string;
+  sourceReference: string | null;
+  sourceAsOf: string | null;
+  evidenceReference: string | null;
+  updatedAt: string;
+};
+
+export type ObjectiveEffectAttributionRecord = {
+  id: string;
+  objectiveId: string;
+  changeEffectId: string;
+  attribution: ObjectiveAttribution;
+  rationale: string;
+  sourceReference: string | null;
+  sourceAsOf: string | null;
+  evidenceReference: string | null;
+  confidence: ObjectiveAttributionConfidence;
   updatedAt: string;
 };
 
@@ -165,6 +196,9 @@ export type InitiativeDecisionWorkspace = {
   initiatives: InitiativeDecisionProfile[];
   links: InitiativeChangeLink[];
   objectives: IncumbentObjective[];
+  /** Optional for backwards-compatible consumers of the decision bundle. */
+  objectiveDependencies?: ChangeRequestObjectiveDependency[];
+  objectiveEffectAttributions?: ObjectiveEffectAttributionRecord[];
   requirements: RequirementTrace[];
   criteria: AcceptanceCriterion[];
   milestones: InitiativeMilestone[];
@@ -177,6 +211,8 @@ export type InitiativeDecisionBundle = {
   links: InitiativeChangeLink[];
   changeRequests: ChangeRequest[];
   objectives: IncumbentObjective[];
+  objectiveDependencies?: ChangeRequestObjectiveDependency[];
+  objectiveEffectAttributions?: ObjectiveEffectAttributionRecord[];
   requirements: RequirementTrace[];
   criteria: AcceptanceCriterion[];
   milestones: InitiativeMilestone[];
@@ -193,5 +229,5 @@ export function selectInitiativeBundle(workspace: InitiativeDecisionWorkspace, i
   const requestIds = new Set(links.map((item) => item.changeRequestId));
   const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }

@@ -1,0 +1,42 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import * as XLSX from "xlsx";
+import Link from "../../../components/app-link";
+import { DomainPageShell } from "../../../components/domain-shell";
+import { OBJECTIVE_IMPORT_COLUMNS, normalizeObjectiveImportRow, type ObjectiveImportPreview, type ObjectiveImportRow } from "../../../lib/objective-import";
+
+type History = { id: string; external_system: string; file_name: string; sheet_name: string | null; received_at: string; status: string; row_count: number; added_count: number; changed_count: number; unchanged_count: number; blocked_count: number };
+
+export default function ObjectiveImportPage() {
+  const [fileName, setFileName] = useState("");
+  const [sheetName, setSheetName] = useState("");
+  const [rows, setRows] = useState<ObjectiveImportRow[]>([]);
+  const [preview, setPreview] = useState<ObjectiveImportPreview | null>(null);
+  const [history, setHistory] = useState<History[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => { void loadHistory(); }, []);
+  async function loadHistory() { try { const response = await fetch("/api/objectives/import", { cache: "no-store" }); const payload = await response.json() as { packages?: History[] }; setHistory(payload.packages || []); } catch { setHistory([]); } }
+  async function chooseFile(file: File | undefined) {
+    if (!file) return;
+    setMessage(""); setPreview(null); setFileName(file.name);
+    try { const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" }); const first = workbook.SheetNames[0]; if (!first) throw new Error("The workbook has no worksheets."); setSheetName(first); const incoming = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[first], { defval: "", raw: false }).map(normalizeObjectiveImportRow); setRows(incoming); if (!incoming.length) throw new Error("The worksheet has no Objective records."); }
+    catch (reason) { setRows([]); setMessage(reason instanceof Error ? reason.message : "The Objective workbook could not be read."); }
+  }
+  async function call(mode: "preview" | "apply") {
+    setBusy(true); setMessage("");
+    try { const response = await fetch("/api/objectives/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, fileName, sheetName, rows }) }); const payload = await response.json() as { preview?: ObjectiveImportPreview; error?: string }; if (!response.ok) throw new Error(payload.error || "Objective import could not be processed."); if (payload.preview) setPreview(payload.preview); setMessage(mode === "apply" ? "LM Objective source package applied. Government analysis records were not overwritten." : "Preview complete. Review every changed and blocked record before applying."); if (mode === "apply") await loadHistory(); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : "Objective import could not be processed."); }
+    finally { setBusy(false); }
+  }
+  function downloadTemplate() { const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[...OBJECTIVE_IMPORT_COLUMNS]]), "LM Objectives"); XLSX.writeFile(workbook, "LM_Objective_Import_Template.xlsx"); }
+
+  return <DomainPageShell title="LM Objective Import" subtitle="Stage and reconcile an incumbent Jira or spreadsheet export without replacing Government analysis." releaseScope={`${history.length} retained packages`} actions={<><Link className="ghost-button" href="/objectives">Return to Objectives</Link><button className="ghost-button" type="button" onClick={downloadTemplate}>Download template</button></>}>
+    <section className="decision-principle"><strong>Import boundary</strong><span>Match on external system and Objective ID. Silent reparenting is blocked. Estimates, requirements, acceptance, dependencies, and Government decisions are never overwritten by this import.</span></section>
+    <section className="split-layout"><article className="domain-section"><span className="eyebrow">SOURCE PACKAGE</span><h3>Select LM Objective workbook</h3><p>Use the controlled template or a matching export. Status and dates remain source claims and retain their source-as-of date.</p><label className="modal-field">Excel workbook<input type="file" accept=".xlsx,.xls" onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>{fileName ? <p className="entity-meta">{fileName} · {sheetName} · {rows.length} records</p> : null}<div className="entity-actions"><button className="primary-button" disabled={!rows.length || busy} onClick={() => void call("preview")}>{busy ? "Processing…" : "Preview reconciliation"}</button></div></article><article className="domain-section"><span className="eyebrow">APPLY RULES</span><h3>Controlled source refresh</h3><ul><li>New Objective: create beneath the referenced MCP.</li><li>Changed Objective: update supplier-owned source fields only.</li><li>Unchanged Objective: retain a source confirmation snapshot.</li><li>Different owner MCP: block and require a governed reparent action.</li></ul></article></section>
+    {preview ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RECONCILIATION PREVIEW</span><h3>Source changes before application</h3></div><button className="primary-button" disabled={!preview.canApply || busy} onClick={() => void call("apply")}>{preview.canApply ? "Apply source package" : "Resolve blocking issues"}</button></div><section className="summary"><div className="metric"><span>Add</span><strong>{preview.added}</strong><small>New LM Objectives</small></div><div className="metric"><span>Change</span><strong>{preview.changed}</strong><small>Supplier fields only</small></div><div className="metric"><span>Unchanged</span><strong>{preview.unchanged}</strong><small>Source confirmed</small></div><div className="metric"><span>Blocked</span><strong>{preview.blocked}</strong><small>Package cannot apply</small></div></section><div className="domain-table-wrap"><table><thead><tr><th>Row</th><th>Objective</th><th>Owner MCP</th><th>Disposition</th><th>Changed fields / issues</th></tr></thead><tbody>{preview.rows.map((item) => <tr key={`${item.key}:${item.rowNumber}`}><td className="mono">{item.rowNumber}</td><td><strong>{item.row.ExternalIdentifier}</strong><small>{item.row.Title}</small></td><td>{item.row.OwningChangeRequest}</td><td><span className={`status-pill status-${item.disposition}`}>{item.disposition}</span></td><td>{item.issues.length ? item.issues.map((issue) => <small className="error-copy" key={`${issue.code}:${issue.message}`}>{issue.message}</small>) : item.changedFields.length ? item.changedFields.join(", ") : "No source changes"}</td></tr>)}</tbody></table></div></section> : null}
+    <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">SOURCE HISTORY</span><h3>Retained LM Objective packages</h3></div><span>{history.length} packages</span></div><div className="domain-table-wrap"><table><thead><tr><th>File</th><th>External system</th><th>Received</th><th>Rows</th><th>Reconciliation</th><th>Status</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}><td><strong>{item.file_name}</strong><small>{item.sheet_name || "First worksheet"}</small></td><td>{item.external_system}</td><td>{new Date(item.received_at).toLocaleString()}</td><td>{item.row_count}</td><td>+{item.added_count} · Δ{item.changed_count} · ={item.unchanged_count} · !{item.blocked_count}</td><td><span className={`status-pill status-${item.status}`}>{item.status}</span></td></tr>)}{!history.length ? <tr><td colSpan={6} className="empty">No LM Objective source package has been applied.</td></tr> : null}</tbody></table></div></section>
+    {message ? <p className="toast">{message}</p> : null}
+  </DomainPageShell>;
+}

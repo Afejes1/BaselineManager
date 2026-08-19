@@ -50,6 +50,20 @@
       "when": 1787106337920,
       "tag": "0006_initiative_decision_chain",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787148000000,
+      "tag": "0007_objective_relationships",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787151600000,
+      "tag": "0008_objective_delivery",
+      "breakpoints": true
     }
   ]
 }

@@ -417,6 +417,7 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
   externalSystem: text("external_system").notNull(),
   externalIdentifier: text("external_identifier").notNull(),
+  externalItemType: text("external_item_type").notNull().default("Objective"),
   title: text("title").notNull(),
   summary: text("summary"),
   technicalOwner: text("technical_owner"),
@@ -433,6 +434,94 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   check("incumbent_objective_status", sql`${t.status} IN ('proposed','planned','in_progress','blocked','verification','complete','cancelled')`),
   uniqueIndex("incumbent_objective_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
   index("incumbent_objective_request_ix").on(t.changeRequestId, t.status, t.plannedFinish),
+]);
+
+// A Change Request may depend on a specific Objective owned by another
+// Change Request. This is deliberately separate from change_dependency so the
+// dependency remains precise without implying that the entire owning request
+// is required.
+export const changeRequestObjectiveDependencies = sqliteTable("change_request_objective_dependency", {
+  id: text("id").primaryKey(),
+  dependentChangeRequestId: text("dependent_change_request_id").notNull().references(() => changeRequests.id),
+  prerequisiteObjectiveId: text("prerequisite_objective_id").notNull().references(() => incumbentObjectives.id),
+  relationship: text("relationship").notNull().default("requires"),
+  status: text("status").notNull().default("proposed"),
+  rationale: text("rationale").notNull(),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  evidenceReference: text("evidence_reference"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("change_request_objective_dependency_relationship", sql`${t.relationship} IN ('requires','enables','blocks','consumes')`),
+  check("change_request_objective_dependency_status", sql`${t.status} IN ('proposed','accepted','rejected','retired')`),
+  uniqueIndex("change_request_objective_dependency_uq").on(t.dependentChangeRequestId, t.prerequisiteObjectiveId, t.relationship),
+  index("change_request_objective_dependency_objective_ix").on(t.prerequisiteObjectiveId, t.status),
+  index("change_request_objective_dependency_request_ix").on(t.dependentChangeRequestId, t.status),
+]);
+
+// Attribution identifies which technical effects an Objective is expected to
+// deliver. The effect remains owned by its Change Request; this table records
+// the evidence-backed contribution without duplicating the effect.
+export const objectiveEffectAttributions = sqliteTable("objective_effect_attribution", {
+  id: text("id").primaryKey(),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  changeEffectId: text("change_effect_id").notNull().references(() => changeEffects.id),
+  attribution: text("attribution").notNull().default("contributing"),
+  rationale: text("rationale").notNull(),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  evidenceReference: text("evidence_reference"),
+  confidence: text("confidence").notNull().default("unassessed"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("objective_effect_attribution_kind", sql`${t.attribution} IN ('primary','contributing','uncertain')`),
+  check("objective_effect_attribution_confidence", sql`${t.confidence} IN ('unassessed','low','medium','high')`),
+  uniqueIndex("objective_effect_attribution_uq").on(t.objectiveId, t.changeEffectId),
+  index("objective_effect_attribution_effect_ix").on(t.changeEffectId, t.attribution),
+  index("objective_effect_attribution_objective_ix").on(t.objectiveId, t.attribution),
+]);
+
+// Objective imports are a separate governed intake stream from the A2O Tech
+// Stack. Source snapshots remain immutable; applying a package updates only
+// supplier-owned Objective fields and never Government analysis records.
+export const objectiveSourcePackages = sqliteTable("objective_source_package", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  externalSystem: text("external_system").notNull(),
+  fileName: text("file_name").notNull(),
+  sheetName: text("sheet_name"),
+  contentHash: text("content_hash").notNull(),
+  receivedAt: text("received_at").notNull(),
+  status: text("status").notNull().default("staged"),
+  rowCount: integer("row_count").notNull().default(0),
+  addedCount: integer("added_count").notNull().default(0),
+  changedCount: integer("changed_count").notNull().default(0),
+  unchangedCount: integer("unchanged_count").notNull().default(0),
+  blockedCount: integer("blocked_count").notNull().default(0),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("objective_source_package_status", sql`${t.status} IN ('staged','applied','rejected')`),
+  uniqueIndex("objective_source_package_hash_uq").on(t.programId, t.externalSystem, t.contentHash),
+  index("objective_source_package_received_ix").on(t.programId, t.receivedAt),
+]);
+
+export const objectiveSourceRows = sqliteTable("objective_source_row", {
+  id: text("id").primaryKey(),
+  sourcePackageId: text("source_package_id").notNull().references(() => objectiveSourcePackages.id),
+  rowNumber: integer("row_number").notNull(),
+  externalSystem: text("external_system").notNull(),
+  externalIdentifier: text("external_identifier").notNull(),
+  rawPayload: text("raw_payload").notNull(),
+  disposition: text("disposition").notNull(),
+  objectiveId: text("objective_id").references(() => incumbentObjectives.id),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("objective_source_row_disposition", sql`${t.disposition} IN ('add','change','unchanged','blocked')`),
+  uniqueIndex("objective_source_row_number_uq").on(t.sourcePackageId, t.rowNumber),
+  index("objective_source_row_key_ix").on(t.externalSystem, t.externalIdentifier),
 ]);
 
 // Estimates are append-only assessments with explicit provenance. This keeps
@@ -554,20 +643,49 @@ export const initiativeMilestones = sqliteTable("initiative_milestone", {
 // ordering, so it can be used in reports and external correspondence.
 export const workPackages = sqliteTable("work_package", {
   id: text("id").primaryKey(),
-  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  initiativeId: text("initiative_id").references(() => initiatives.id),
+  changeRequestId: text("change_request_id").references(() => changeRequests.id),
+  objectiveId: text("objective_id").references(() => incumbentObjectives.id),
   parentId: text("parent_id"),
   wbsCode: text("wbs_code").notNull(),
   title: text("title").notNull(),
   owner: text("owner"),
+  plannedStart: text("planned_start"),
   dueDate: text("due_date"),
+  actualStart: text("actual_start"),
+  actualFinish: text("actual_finish"),
   status: text("status").notNull().default("planned"),
+  definitionOfDone: text("definition_of_done"),
+  progressBasis: text("progress_basis"),
   notes: text("notes"),
   sortOrder: integer("sort_order").notNull().default(0),
   ...timestamps,
 }, (t) => [
   check("work_package_status", sql`${t.status} IN ('planned','in_progress','on_hold','complete')`),
-  uniqueIndex("work_package_initiative_code_uq").on(t.initiativeId, t.wbsCode),
+  check("work_package_context", sql`${t.objectiveId} IS NOT NULL OR ${t.initiativeId} IS NOT NULL`),
+  uniqueIndex("work_package_objective_code_uq").on(t.objectiveId, t.wbsCode),
   index("work_package_initiative_status_ix").on(t.initiativeId, t.status, t.dueDate),
+  index("work_package_objective_status_ix").on(t.objectiveId, t.status, t.dueDate),
+  index("work_package_request_ix").on(t.changeRequestId, t.status),
+]);
+
+export const workPackageDependencies = sqliteTable("work_package_dependency", {
+  id: text("id").primaryKey(),
+  predecessorWorkPackageId: text("predecessor_work_package_id").notNull().references(() => workPackages.id),
+  successorWorkPackageId: text("successor_work_package_id").notNull().references(() => workPackages.id),
+  relationship: text("relationship").notNull().default("FS"),
+  lagDays: integer("lag_days").notNull().default(0),
+  status: text("status").notNull().default("proposed"),
+  rationale: text("rationale").notNull(),
+  sourceReference: text("source_reference"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("work_package_dependency_relationship", sql`${t.relationship} IN ('FS','SS','FF','SF')`),
+  check("work_package_dependency_status", sql`${t.status} IN ('proposed','accepted','rejected','retired')`),
+  check("work_package_dependency_not_self", sql`${t.predecessorWorkPackageId} <> ${t.successorWorkPackageId}`),
+  uniqueIndex("work_package_dependency_uq").on(t.predecessorWorkPackageId, t.successorWorkPackageId, t.relationship),
+  index("work_package_dependency_successor_ix").on(t.successorWorkPackageId, t.status),
 ]);
 
 export const governanceRecords = sqliteTable("governance_record", {
@@ -691,6 +809,10 @@ export const schema = {
   initiatives,
   initiativeChangeRequests,
   incumbentObjectives,
+  changeRequestObjectiveDependencies,
+  objectiveEffectAttributions,
+  objectiveSourcePackages,
+  objectiveSourceRows,
   objectiveEstimates,
   requirementTraces,
   acceptanceCriteria,
@@ -698,6 +820,7 @@ export const schema = {
   initiativeMilestones,
   initiativeScopes,
   workPackages,
+  workPackageDependencies,
   governanceRecords,
   governanceRecordLinks,
   evidenceDocuments,

@@ -136,10 +136,16 @@ export async function POST(request: Request) {
     // Demo-only governed extensions must never leak into a subsequently loaded
     // stakeholder workbook. A fresh demo import recreates them immediately in
     // /api/demo after source materialization.
+    statements.push(db.prepare("DELETE FROM work_package_dependency WHERE predecessor_work_package_id IN (SELECT id FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%') OR successor_work_package_id IN (SELECT id FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%')"));
+    statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id LIKE 'demo-initiative-%' OR objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM objective_effect_attribution WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id LIKE 'demo-objective-%' OR dependent_change_request_id LIKE 'demo-change-%'"));
     statements.push(db.prepare("DELETE FROM acceptance_signoff WHERE criterion_id IN (SELECT id FROM acceptance_criterion WHERE objective_id LIKE 'demo-objective-%')"));
     statements.push(db.prepare("DELETE FROM acceptance_criterion WHERE objective_id LIKE 'demo-objective-%'"));
     statements.push(db.prepare("DELETE FROM requirement_trace WHERE objective_id LIKE 'demo-objective-%'"));
     statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM objective_source_row WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM objective_source_package WHERE external_system='Synthetic incumbent objective register' AND NOT EXISTS (SELECT 1 FROM objective_source_row WHERE objective_source_row.source_package_id=objective_source_package.id)"));
     statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id LIKE 'demo-initiative-%'"));
     statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id LIKE 'demo-objective-%'"));
     statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id LIKE 'demo-initiative-%'"));

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ensureActor } from "../../../lib/governance-server";
-import { addObjectiveEstimate, initiativeDecisionWorkspace, linkChangeRequest, recordAcceptanceSignoff, saveAcceptanceCriterion, saveDecisionProfile, saveInitiativeMilestone, saveObjective, saveRequirementTrace } from "../../../lib/initiative-decision-server";
+import { addObjectiveEstimate, initiativeDecisionWorkspace, linkChangeRequest, recordAcceptanceSignoff, saveAcceptanceCriterion, saveDecisionProfile, saveInitiativeMilestone, saveObjective, saveObjectiveDependency, saveObjectiveEffectAttribution, saveRequirementTrace } from "../../../lib/initiative-decision-server";
 import { enrichDemonstrationWorkspace } from "../../../lib/demo-workspace-server";
 
 export async function GET(request: Request) {
@@ -28,6 +28,8 @@ export async function POST(request: Request) {
     const id = action === "save_profile" ? await saveDecisionProfile(env.DB, actor, body)
       : action === "link_change_request" ? await linkChangeRequest(env.DB, actor, body)
       : action === "save_objective" ? await saveObjective(env.DB, actor, body)
+      : action === "save_objective_dependency" ? await saveObjectiveDependency(env.DB, actor, body)
+      : action === "save_objective_effect_attribution" ? await saveObjectiveEffectAttribution(env.DB, actor, body)
       : action === "add_estimate" ? await addObjectiveEstimate(env.DB, actor, body)
       : action === "save_requirement" ? await saveRequirementTrace(env.DB, actor, body)
       : action === "save_criterion" ? await saveAcceptanceCriterion(env.DB, actor, body)
