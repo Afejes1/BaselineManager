@@ -35,7 +35,7 @@ export default function ProductsPage() {
   return (
     <DomainPageShell
       title="Products"
-      subtitle="Products reported in the active baseline"
+      subtitle="Products reported in the working baseline"
       releaseScope={releaseLens || "All releases"}
       contextMode="filter"
       actions={(

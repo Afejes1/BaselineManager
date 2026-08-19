@@ -622,7 +622,7 @@ export function BaselineManager() {
       </nav>
       <div className="rail-context">
         <span className="context-dot"/>
-        <div><strong>Baseline scope</strong><small>{activeRelease} · Active baseline</small></div>
+        <div><strong>Release scope</strong><small>{activeRelease} · {activeRelease === "All releases" ? "Cross-release view" : "Release filter"}</small></div>
       </div>
       <button
         className="profile"
@@ -653,7 +653,7 @@ export function BaselineManager() {
             <div className="summary-lead">
               <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
               <h2>{activeRelease === "All releases" ? "Working technical baseline across releases" : "Working technical baseline"}</h2>
-              <span>Active baseline · ReleaseName retained on every record</span>
+              <span>Working baseline · ReleaseName retained on every record</span>
             </div>
             <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · exact A2O XLSX export available</small></div>
             <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>

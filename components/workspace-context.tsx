@@ -66,12 +66,12 @@ export function WorkspaceContextControl({ mode = "filter", recordRelease }: { mo
   if (mode === "record") return <div className="workspace-context-control workspace-context-readout"><span>Record context</span><strong>{recordRelease || "All linked releases"}</strong><small>Evidence history is not filtered</small></div>;
 
   return <label className="workspace-context-control">
-    <span>Release lens</span>
-    <select value={releaseLens || ""} onChange={(event) => setReleaseLens(event.target.value || null)} aria-label="Release lens" disabled={loading && !releases.length}>
+    <span>Release scope</span>
+    <select value={releaseLens || ""} onChange={(event) => setReleaseLens(event.target.value || null)} aria-label="Release scope" disabled={loading && !releases.length}>
       <option value="">All releases</option>
       {releases.map((release) => <option key={release} value={release}>{release}</option>)}
     </select>
-    {releaseLens ? <button type="button" onClick={clearReleaseLens}>Clear</button> : <small>{mode === "browse" ? "Highlights the selected release" : "Active baseline"}</small>}
+    {releaseLens ? <button type="button" onClick={clearReleaseLens}>Clear release filter</button> : <small>{mode === "browse" ? "Highlights the selected release" : "All release records in view"}</small>}
   </label>;
 }
 
