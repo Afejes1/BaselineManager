@@ -113,7 +113,7 @@ function fieldPairs<T extends Array<TechnicalBaselineColumn | string>>(cols: T, 
 }
 
 export function BaselineManager() {
-  const { rows, setRows, workspace, loading, error: workspaceError, reload } = useBaselineWorkspace({ includeVoided: true });
+  const { rows, setRows, loading, error: workspaceError, reload } = useBaselineWorkspace({ includeVoided: true });
   const { portfolio: changePortfolio, reload: reloadChanges } = useChangePortfolio();
   const [query, setQuery] = useState("");
   const [activeRelease, setActiveRelease] = useState("All releases");
@@ -127,6 +127,7 @@ export function BaselineManager() {
   const [importError, setImportError] = useState("");
   const [notice, setNotice] = useState("");
   const [showFilters, setShowFilters] = useState(false);
+  const [showGridSummary, setShowGridSummary] = useState(false);
   const [showQualityHelp, setShowQualityHelp] = useState(false);
   const [showAddRow, setShowAddRow] = useState(false);
   const [reviews, setReviews] = useState<Record<string, ManualReview>>({});
@@ -358,6 +359,7 @@ export function BaselineManager() {
       return;
     }
     const review = reviews[record.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
+    setShowGridSummary(false);
     setSelectedIndex(index);
     setActiveDetailTab("record");
     setReviewDraftStatus(review.status);
@@ -614,18 +616,25 @@ export function BaselineManager() {
         </div>
       </header>
 
-      <section className="summary">
-        <div className="summary-lead">
-          <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
-          <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
-          <span>{workspace?.label || "Active technical baseline"} · ReleaseName is retained on every record</span>
-        </div>
-        <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · 24-column format</small></div>
-        <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
-        <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
-      </section>
-
-      <ProvenanceKey includeDemonstration={demoEnabled} compact />
+      {selectedIndex === null ? <>
+        <section className="baseline-context" aria-label="Grid scope">
+          <div><strong>{activeRelease}</strong><span>{scopeRows.length} records · {productCount} products · {issueCount ? `${issueCount} data-quality ${issueCount === 1 ? "finding" : "findings"}` : "No data-quality findings"}</span></div>
+          <button className={showGridSummary ? "tool-button tool-active baseline-summary-toggle" : "tool-button baseline-summary-toggle"} type="button" onClick={() => setShowGridSummary((value) => !value)} aria-expanded={showGridSummary} aria-controls="baseline-summary">{showGridSummary ? "Hide summary" : "Show summary"}</button>
+        </section>
+        {showGridSummary ? <>
+          <section className="summary baseline-expanded-summary" id="baseline-summary">
+            <div className="summary-lead">
+              <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
+              <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
+              <span>Active baseline · ReleaseName retained on every record</span>
+            </div>
+            <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · 24-column format</small></div>
+            <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
+            <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
+          </section>
+          <ProvenanceKey includeDemonstration={demoEnabled} compact />
+        </> : null}
+      </> : null}
 
       <div className="content-grid">
         <aside className="tree-panel">
@@ -770,7 +779,7 @@ export function BaselineManager() {
               <div className="detail-head">
                 <button className="ghost-button record-back-button" type="button" onClick={() => setSelectedIndex(null)}>← Back to grid</button>
                 <div><span className="eyebrow">BASELINE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the required source fields."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the active baseline"}</span></div>
-                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore record</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void record</button>}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
+                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore record</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void record</button>}<button className="detail-close-button" type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
               </div>
 
               <div className="detail-tabs" role="tablist">
