@@ -10,7 +10,7 @@ import {
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useChangePortfolio } from "../../../lib/change-client";
 import { usePlatformPortfolio } from "../../../lib/platform-client";
 
@@ -35,7 +35,7 @@ function summarizeRows(rows: Record24[]) {
 export default function ProductDetailPage() {
   const params = useParams<{ id?: string }>();
   const productId = decodeId(params.id ?? "");
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const { portfolio: changes } = useChangePortfolio();
   const { portfolio: platformPortfolio } = usePlatformPortfolio();
   const [query, setQuery] = useState("");
@@ -72,6 +72,7 @@ export default function ProductDetailPage() {
       title={`Product: ${canonical}`}
       subtitle="Product baseline, release history, and related decisions"
       releaseScope={`${productRows.length || 0} reported rows`}
+      contextMode="record"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

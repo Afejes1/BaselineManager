@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 import { dataQualityFor } from "../../lib/baseline-quality";
 import type { IntakePackage } from "../../lib/governance-model";
 
@@ -13,7 +13,7 @@ function dateLabel(value: string) {
 }
 
 export default function IntakePage() {
-  const { rows, loading, error } = useBaselineWorkspace();
+  const { rows, loading, error } = useWorkspaceContext();
   const [packages, setPackages] = useState<IntakePackage[]>([]);
   const [packageError, setPackageError] = useState("");
   const [restoring, setRestoring] = useState("");
@@ -37,7 +37,7 @@ export default function IntakePage() {
     } catch (reason) { setPackageError(reason instanceof Error ? reason.message : "The retained package could not be restored."); }
     finally { setRestoring(""); }
   }
-  return <DomainPageShell title="Import & Data Quality" subtitle="Imported workbook history, automated checks, and analyst review." releaseScope={active ? `Active workbook: ${active.fileName}` : "No active workbook"} actions={<Link className="primary-button" href="/">Open baseline records</Link>}>
+  return <DomainPageShell title="Import & Data Quality" subtitle="Imported workbook history, automated checks, and analyst review." releaseScope={active ? `Active workbook: ${active.fileName}` : "No active workbook"} contextMode="portfolio" actions={<Link className="primary-button" href="/">Open baseline records</Link>}>
     <section className="kpi-grid" aria-label="Import summary"><div className="kpi-card"><span>Active records</span><strong>{rows.length}</strong><small>Active baseline</small></div><div className="kpi-card"><span>Releases</span><strong>{releases.size}</strong><small>ReleaseName retained per record</small></div><div className="kpi-card"><span>Data-quality issues</span><strong>{quality.issues}</strong><small>Automated checks requiring correction</small></div><div className="kpi-card"><span>Review queue</span><strong>{quality.warnings}</strong><small>Records needing analyst review</small></div></section>
     {(loading || packageError || error) && <section className="domain-section">{loading && <p className="empty">Loading workbook history…</p>}{(error || packageError) && <p className="error-copy">{error || packageError}</p>}</section>}
     <section className="split-layout"><article className="domain-card"><span className="eyebrow">REQUIRED FILE FORMAT</span><h3>A2O Tech Stack workbook</h3><p>This is the retained ALIS-to-ODIN technical baseline source. The application links releases, products, configuration nodes, suppliers, capabilities, and release records without changing the required Excel export format.</p><p className="entity-actions"><Link href="/">Import workbook or edit records</Link><Link href="/pbs">Open product structure</Link></p></article><article className="domain-card"><span className="eyebrow">QUALITY AND REVIEW</span><h3>Two separate indicators</h3><p><strong>Automated checks</strong> identify missing or inconsistent source values. <strong>Analyst review</strong> records that a person assessed a baseline record. It does not alter the original A2O Tech Stack values.</p><p className="entity-actions"><Link href="/">Open quality and review controls</Link></p></article></section>

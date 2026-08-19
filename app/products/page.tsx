@@ -7,14 +7,14 @@ import {
   type ProductSummary,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 
 export default function ProductsPage() {
-  const { rows } = useBaselineWorkspace();
+  const { scopedRows, releaseLens } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
-  const productSummaries = useMemo<ProductSummary[]>(() => getProductSummaries(rows), [rows]);
+  const productSummaries = useMemo<ProductSummary[]>(() => getProductSummaries(scopedRows), [scopedRows]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return productSummaries;
@@ -36,7 +36,8 @@ export default function ProductsPage() {
     <DomainPageShell
       title="Products"
       subtitle="Products reported in the active baseline"
-      releaseScope={`${canonicalCount} products in active baseline`}
+      releaseScope={releaseLens || "All releases"}
+      contextMode="filter"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

@@ -7,10 +7,10 @@ import {
   getReleaseSummary,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 
 export default function ReleasesPage() {
-  const { rows } = useBaselineWorkspace();
+  const { rows, releaseLens } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
@@ -40,7 +40,8 @@ export default function ReleasesPage() {
     <DomainPageShell
       title="Releases"
       subtitle="Select a release for its operational home page"
-      releaseScope={`${releases.length} releases in working dataset`}
+      releaseScope={releaseLens || `${releases.length} releases in working dataset`}
+      contextMode="browse"
       actions={(
         <>
           <label className="search" style={{ width: "280px" }}>
@@ -63,7 +64,7 @@ export default function ReleasesPage() {
           filtered.map((release) => {
             const detail = getReleaseSummary(rows, release.release);
             return (
-              <article key={release.release} className="domain-card">
+              <article key={release.release} className={releaseLens === release.release ? "domain-card domain-card-selected" : "domain-card"}>
                 <h3><Link href={`/releases/${encodeURIComponent(release.release)}`}>{release.release}</Link></h3>
                 <p className="entity-metric">{release.rows} rows · {release.products} products · {release.tiers} tiers</p>
                 <p className="entity-meta">{release.issues} blocking issues · {release.warnings} warnings · {release.hosts} hosts</p>

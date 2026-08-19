@@ -7,14 +7,14 @@ import {
   type OrganizationSummary,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 
 export default function OrganizationsPage() {
-  const { rows } = useBaselineWorkspace();
+  const { scopedRows, releaseLens } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
-  const summaries = useMemo<OrganizationSummary[]>(() => getOrganizationSummaries(rows), [rows]);
+  const summaries = useMemo<OrganizationSummary[]>(() => getOrganizationSummaries(scopedRows), [scopedRows]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return summaries;
@@ -28,7 +28,8 @@ export default function OrganizationsPage() {
     <DomainPageShell
       title="Suppliers"
       subtitle="Organization / OEM perspective"
-      releaseScope={`${summaries.length} supplier identities`}
+      releaseScope={releaseLens || "All releases"}
+      contextMode="filter"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

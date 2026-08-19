@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "../../../components/app-link";
 import { ProvenanceKey } from "../../../components/provenance-key";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
 import { displayStatus, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
@@ -23,7 +23,7 @@ const findingClass = (severity: string) => severity === "blocker" ? "decision-fi
 export default function InitiativeDetailPage() {
   const params = useParams<{ initiative?: string }>();
   const initiativeId = decodeURIComponent(params.initiative || "");
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const governance = useGovernancePortfolio();
   const decision = useInitiativeDecisions();
   const [tab, setTab] = useState<Tab>("decision");
@@ -80,10 +80,10 @@ export default function InitiativeDetailPage() {
     finally { setSaving(false); }
   }
 
-  if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
-  if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
+  if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading" contextMode="portfolio"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
+  if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative" contextMode="portfolio"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
 
-  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} actions={<><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link href="/initiatives">← Initiatives</Link></>}>
+  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} contextMode="portfolio" actions={<><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link href="/initiatives">← Initiatives</Link></>}>
     <ProvenanceKey compact />
     <section className="kpi-grid" aria-label="Initiative decision summary">
       <div className="kpi-card"><span>Decision readiness</span><strong>{assessment?.score ?? 0}%</strong><small>{readable(assessment?.stage || "not_ready")}</small></div>

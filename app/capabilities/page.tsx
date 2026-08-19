@@ -7,14 +7,14 @@ import {
   type CapabilitySummary,
 } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 
 export default function CapabilitiesPage() {
-  const { rows } = useBaselineWorkspace();
+  const { scopedRows, releaseLens } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
-  const summaries = useMemo<CapabilitySummary[]>(() => getCapabilitySummaries(rows), [rows]);
+  const summaries = useMemo<CapabilitySummary[]>(() => getCapabilitySummaries(scopedRows), [scopedRows]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return summaries;
@@ -25,7 +25,8 @@ export default function CapabilitiesPage() {
     <DomainPageShell
       title="Capabilities"
       subtitle="Capabilities mapped from reported source notes"
-      releaseScope={`${summaries.length} capability values`}
+      releaseScope={releaseLens || "All releases"}
+      contextMode="filter"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

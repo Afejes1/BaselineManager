@@ -10,7 +10,7 @@ import {
   productDisplayName,
 } from "../../../lib/baseline-data";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 
 function decodeId(value: string) {
   try {
@@ -23,7 +23,7 @@ function decodeId(value: string) {
 export default function CapabilityDetailPage() {
   const params = useParams<{ id?: string }>();
   const capability = decodeId(params.id ?? "");
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
@@ -45,7 +45,7 @@ export default function CapabilityDetailPage() {
 
   if (!capabilityRows.length) {
     return (
-      <DomainPageShell title="Capability not found" subtitle={`No records for ${capability}`} releaseScope="Unassigned">
+      <DomainPageShell title="Capability not found" subtitle={`No records for ${capability}`} releaseScope="Unassigned" contextMode="record">
         <section className="domain-list">
           <article className="domain-card">
             <h3>Unknown capability</h3>
@@ -62,6 +62,7 @@ export default function CapabilityDetailPage() {
       title={`Capability: ${capability}`}
       subtitle="Product capability mapping"
       releaseScope={`${stats.products} products`}
+      contextMode="record"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

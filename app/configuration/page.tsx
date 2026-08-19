@@ -4,14 +4,14 @@ import Link from "../../components/app-link";
 import { useMemo, useState } from "react";
 import { getConfigurationNodeSummaries, type ConfigNodeSummary } from "../../lib/baseline-data";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 
 export default function ConfigurationPage() {
-  const { rows } = useBaselineWorkspace();
+  const { scopedRows, releaseLens } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
-  const nodes = useMemo<ConfigNodeSummary[]>(() => getConfigurationNodeSummaries(rows), [rows]);
+  const nodes = useMemo<ConfigNodeSummary[]>(() => getConfigurationNodeSummaries(scopedRows), [scopedRows]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     if (!normalized) return nodes;
@@ -31,7 +31,8 @@ export default function ConfigurationPage() {
     <DomainPageShell
       title="Configuration Nodes"
       subtitle="Tier, resource, and host combinations reported in the baseline"
-      releaseScope={`${nodes.length} configuration nodes`}
+      releaseScope={releaseLens || "All releases"}
+      contextMode="filter"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

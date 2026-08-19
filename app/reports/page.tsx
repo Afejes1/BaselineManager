@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 import { productDisplayName, text } from "../../lib/baseline-data";
 import { useChangePortfolio } from "../../lib/change-client";
 import { usePlatformPortfolio } from "../../lib/platform-client";
@@ -13,7 +13,7 @@ import { compareReleases, releaseNames } from "../../lib/release-analysis";
 type ReportTab = "inventory" | "release" | "funding";
 
 export default function ReportsPage() {
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const { portfolio: platforms } = usePlatformPortfolio();
   const { portfolio: changes } = useChangePortfolio();
   const [tab, setTab] = useState<ReportTab>("inventory");
@@ -33,7 +33,7 @@ export default function ReportsPage() {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(funding), "Funding Portfolio");
     XLSX.writeFile(workbook, `JSF_Decision_Reports_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
-  return <DomainPageShell title="Leadership Reports" subtitle="What is where, what changed, and which Change Requests need a decision." releaseScope={`${releases.length} releases`} actions={<><Link className="ghost-button" href="/briefs">Report archive</Link><button className="ghost-button" type="button" onClick={() => window.print()}>Print report</button><button className="primary-button" type="button" onClick={exportReport}>Export workbook</button></>}>
+  return <DomainPageShell title="Leadership Reports" subtitle="What is where, what changed, and which Change Requests need a decision." releaseScope={`${releases.length} releases`} contextMode="comparison" actions={<><Link className="ghost-button" href="/briefs">Report archive</Link><button className="ghost-button" type="button" onClick={() => window.print()}>Print report</button><button className="primary-button" type="button" onClick={exportReport}>Export workbook</button></>}>
     <section className="decision-principle"><strong>Report basis</strong><span>Counts come from baseline records and recorded Platform and Change Request links. Each page shows the current active baseline.</span></section>
     <nav className="detail-tabs report-tabs" aria-label="Report views"><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}>WHAT · WHERE · WHEN</button><button className={tab === "release" ? "active" : ""} onClick={() => setTab("release")}>Release change book</button><button className={tab === "funding" ? "active" : ""} onClick={() => setTab("funding")}>Funding portfolio</button></nav>
     {tab === "inventory" ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">CONFIGURATION INVENTORY</span><h3>What is installed, where, and in which release</h3></div><span>{inventory.length} baseline records</span></div><div className="domain-table-wrap"><table><thead><tr><th>When</th><th>What</th><th>Where · Platform</th><th>Placement</th><th>Supplier</th><th>Source key</th></tr></thead><tbody>{inventory.map((item, index) => <tr key={`${item.Release}:${item.SourceKey}:${index}`}><td><Link href={`/releases/${encodeURIComponent(item.Release)}`}>{item.Release}</Link></td><td>{item.Product}</td><td>{item.Platform}</td><td>{item.Tier} / {item.Resource} / <span className="mono">{item.Host}</span></td><td>{item.Supplier}</td><td className="mono">{item.SourceKey}</td></tr>)}</tbody></table></div></section> : null}

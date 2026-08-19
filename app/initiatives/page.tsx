@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 import { useGovernancePortfolio } from "../../lib/governance-client";
 import { displayStatus, initiativePriorities, initiativeStatuses, type InitiativePriority, type InitiativeStatus } from "../../lib/governance-model";
 import { useInitiativeDecisions } from "../../lib/initiative-decision-client";
@@ -18,7 +18,7 @@ function dateLabel(value: string | null) {
 }
 
 export default function InitiativesPage() {
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const { portfolio, loading, error, mutate } = useGovernancePortfolio();
   const decisionWorkspace = useInitiativeDecisions();
   const [query, setQuery] = useState("");
@@ -80,7 +80,7 @@ export default function InitiativesPage() {
     } finally { setSaving(false); }
   }
 
-  return <DomainPageShell title="Initiatives" subtitle="Government outcomes, Change Requests, technical work, requirements, and evidence." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
+  return <DomainPageShell title="Initiatives" subtitle="Government outcomes, Change Requests, technical work, requirements, and evidence." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} contextMode="portfolio" actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
     <section className="kpi-grid" aria-label="Initiative summary">
       <div className="kpi-card"><span>Initiatives</span><strong>{initiatives.length}</strong><small>Government decision records</small></div>
       <div className="kpi-card"><span>Active</span><strong>{initiatives.filter((item) => item.status === "active").length}</strong><small>Under active review</small></div>

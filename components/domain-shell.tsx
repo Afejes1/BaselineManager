@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import Link from "./app-link";
 import { usePathname } from "next/navigation";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
+import { WorkspaceContextControl, useWorkspaceContext, type ContextMode } from "./workspace-context";
 
 type DomainPageShellProps = {
   title: string;
@@ -13,6 +14,8 @@ type DomainPageShellProps = {
   children: ReactNode;
   releaseScope?: string;
   breadcrumb?: Array<{ label: string; href?: string }>;
+  contextMode?: ContextMode;
+  recordRelease?: string;
 };
 
 function isActiveItem(pathname: string, itemHref: string) {
@@ -20,8 +23,9 @@ function isActiveItem(pathname: string, itemHref: string) {
   return pathname.startsWith(`${itemHref}/`) && itemHref !== "/";
 }
 
-export function DomainPageShell({ title, subtitle, actions, children, releaseScope, breadcrumb }: DomainPageShellProps) {
+export function DomainPageShell({ title, subtitle, actions, children, releaseScope, breadcrumb, contextMode = "portfolio", recordRelease }: DomainPageShellProps) {
   const pathname = usePathname();
+  const { releaseLens } = useWorkspaceContext();
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
   const navigationSections = ["Baseline", "Views", "Decisions"] as const;
 
@@ -61,8 +65,8 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
         <div className="rail-context">
           <span className="context-dot" />
           <div>
-            <strong>Page scope</strong>
-            <small>{releaseScope || "All records"}</small>
+            <strong>Workspace context</strong>
+            <small>{releaseScope || (contextMode === "record" ? recordRelease || "All linked releases" : contextMode === "comparison" ? "Release comparison" : contextMode === "portfolio" ? "Cross-release portfolio" : releaseLens || "All releases")}</small>
           </div>
         </div>
         <Link className="profile" href="/" title="Open workspace controls">
@@ -79,7 +83,7 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
             <h1>{title}</h1>
             {subtitle ? <div className="top-subtitle">{subtitle}</div> : null}
           </div>
-          {actions ? <div className="top-actions">{actions}</div> : null}
+          <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} />{actions}</div>
         </header>
         {breadcrumb?.length ? <nav className="breadcrumb" aria-label="Breadcrumb">
           {breadcrumb.map((item, index) => <span key={`${item.label}:${index}`}>

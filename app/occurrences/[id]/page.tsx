@@ -4,7 +4,7 @@ import Link from "../../../components/app-link";
 import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 import { TECHNICAL_BASELINE_COLUMNS } from "../../../lib/technical-baseline-contract";
 import { dataQualityForOccurrence } from "../../../lib/baseline-quality";
 import { text } from "../../../lib/baseline-data";
@@ -18,12 +18,12 @@ function decodeId(value: string) {
 export default function SourceOccurrencePage() {
   const params = useParams<{ id?: string }>();
   const occurrenceId = decodeId(params.id ?? "");
-  const { rows, loading, error } = useBaselineWorkspace();
+  const { rows, loading, error } = useWorkspaceContext();
   const [tab, setTab] = useState<DetailTab>("source");
   const row = useMemo(() => rows.find((item) => item.__meta.occurrenceId === occurrenceId) ?? null, [rows, occurrenceId]);
 
-  if (loading) return <DomainPageShell title="Loading baseline record" subtitle="Loading the active baseline"><div className="empty">Loading baseline record…</div></DomainPageShell>;
-  if (error || !row) return <DomainPageShell title="Baseline record not found" subtitle="The record is not in the active baseline"><section className="domain-list"><article className="domain-card"><h3>{error || "No baseline record matches this address."}</h3><p className="entity-actions"><Link href="/">Return to Baseline Records</Link></p></article></section></DomainPageShell>;
+  if (loading) return <DomainPageShell title="Loading baseline record" subtitle="Loading the active baseline" contextMode="record"><div className="empty">Loading baseline record…</div></DomainPageShell>;
+  if (error || !row) return <DomainPageShell title="Baseline record not found" subtitle="The record is not in the active baseline" contextMode="record"><section className="domain-list"><article className="domain-card"><h3>{error || "No baseline record matches this address."}</h3><p className="entity-actions"><Link href="/">Return to Baseline Records</Link></p></article></section></DomainPageShell>;
 
   const quality = dataQualityForOccurrence(row, row.__meta.materializationStatus);
   const product = text(row.LongName) || text(row.ShortName) || "Host record";
@@ -33,6 +33,8 @@ export default function SourceOccurrencePage() {
       title={`Record reference: ${product}`}
       subtitle={`Read-only A2O Tech Stack source record · ${row.__meta.baseline.name || "Reported baseline"}`}
       releaseScope={`${release} · ${row.__meta.baseline.maturity || "reported"} · as of ${row.__meta.baseline.asOf || "unknown"}`}
+      contextMode="record"
+      recordRelease={release}
       breadcrumb={[{ label: "Baseline Records", href: "/" }, { label: release, href: `/releases/${encodeURIComponent(release)}` }, { label: text(row.ShortName) || product }]}
       actions={<Link className="primary-button" href="/">Return to Baseline Records</Link>}
     >

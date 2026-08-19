@@ -11,7 +11,7 @@ import {
   type Record24,
 } from "../../../lib/baseline-data";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 
 function decodeId(value: string) {
   try {
@@ -24,7 +24,7 @@ function decodeId(value: string) {
 export default function ConfigurationDetailPage() {
   const params = useParams<{ id?: string }>();
   const nodeId = decodeId(params.id ?? "");
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const [query, setQuery] = useState("");
 
 
@@ -68,6 +68,7 @@ export default function ConfigurationDetailPage() {
         title="Configuration node not found"
         subtitle="No rows currently map to this placement"
         releaseScope="Unassigned"
+        contextMode="record"
       >
         <section className="domain-list">
           <article className="domain-card">
@@ -85,6 +86,7 @@ export default function ConfigurationDetailPage() {
       title={`Configuration: ${summary.tier} / ${summary.resource} / ${summary.host}`}
       subtitle={`Derived node in ${summary.releaseName}`}
       releaseScope={`${summary.productCount} products in node`}
+      contextMode="record"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

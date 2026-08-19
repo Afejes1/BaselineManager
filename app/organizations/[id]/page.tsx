@@ -12,7 +12,7 @@ import {
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { useBaselineWorkspace } from "../../../lib/baseline-client";
+import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useChangePortfolio } from "../../../lib/change-client";
 import { usePlatformPortfolio } from "../../../lib/platform-client";
 
@@ -27,7 +27,7 @@ function decodeId(value: string) {
 export default function OrganizationDetailPage() {
   const params = useParams<{ id?: string }>();
   const orgId = decodeId(params.id ?? "");
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const { portfolio: changes } = useChangePortfolio();
   const { portfolio: platforms } = usePlatformPortfolio();
   const [query, setQuery] = useState("");
@@ -66,7 +66,7 @@ export default function OrganizationDetailPage() {
 
   if (!orgRows.length) {
     return (
-      <DomainPageShell title="Supplier has no rows" subtitle={`No rows found for ${orgId}`} releaseScope="Unassigned">
+      <DomainPageShell title="Supplier has no rows" subtitle={`No rows found for ${orgId}`} releaseScope="Unassigned" contextMode="record">
         <section className="domain-list">
           <article className="domain-card">
             <h3>No rows found</h3>
@@ -83,6 +83,7 @@ export default function OrganizationDetailPage() {
       title={`Supplier: ${supplierName}`}
       subtitle="OEM and supplier relationship view"
       releaseScope={`${metrics.products} products · ${metrics.releases} releases`}
+      contextMode="record"
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

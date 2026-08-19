@@ -13,6 +13,7 @@ import { configNodeIdentity, productIdentityKey } from "../lib/baseline-data";
 import { projectionOf, useBaselineWorkspace, type ManagedRecord24 } from "../lib/baseline-client";
 import { reconcileIntake } from "../lib/import-reconciliation";
 import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
+import { WorkspaceContextControl, useWorkspaceContext } from "../components/workspace-context";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -113,9 +114,9 @@ function fieldPairs<T extends Array<TechnicalBaselineColumn | string>>(cols: T, 
 
 export function BaselineManager() {
   const { rows, setRows, loading, error: workspaceError, reload } = useBaselineWorkspace({ includeVoided: true });
+  const { releaseLens, setReleaseLens, reload: reloadWorkspaceContext } = useWorkspaceContext();
   const { portfolio: changePortfolio, reload: reloadChanges } = useChangePortfolio();
   const [query, setQuery] = useState("");
-  const [activeRelease, setActiveRelease] = useState("All releases");
   const [activeTier, setActiveTier] = useState("All records");
   const [activeQuality, setActiveQuality] = useState("All checks");
   const [activeReview, setActiveReview] = useState("All review statuses");
@@ -156,6 +157,12 @@ export function BaselineManager() {
   const [failedSaveOccurrences, setFailedSaveOccurrences] = useState<Set<string>>(new Set());
   const saveSequences = useRef<Map<string, number>>(new Map());
   const pathname = usePathname();
+  const activeRelease = releaseLens || "All releases";
+
+  function selectReleaseScope(release: string) {
+    setReleaseLens(release === "All releases" ? null : release);
+    setActiveTier("All records");
+  }
 
   useEffect(() => {
     rows.forEach((row) => saveRevisions.current.set(row.__meta.occurrenceId, row.__meta.revision));
@@ -277,7 +284,7 @@ export function BaselineManager() {
         });
         const payload = await response.json() as { error?: string; revision?: number; materializationStatus?: string; baseline?: ManagedRecord24["__meta"]["baseline"] };
         if (!response.ok || payload.revision === undefined) {
-          await reload();
+          await Promise.all([reload(), reloadWorkspaceContext()]);
           throw new Error(payload.error || "The automatic save could not be completed.");
         }
         saveRevisions.current.set(occurrenceId, payload.revision);
@@ -290,7 +297,7 @@ export function BaselineManager() {
             baseline: payload.baseline ?? item.__meta.baseline,
           },
         } : item));
-        if (saveSequences.current.get(occurrenceId) === sequence) await reload();
+        if (saveSequences.current.get(occurrenceId) === sequence) await Promise.all([reload(), reloadWorkspaceContext()]);
       })
       .catch((reason) => {
         if (saveSequences.current.get(occurrenceId) === sequence) {
@@ -354,8 +361,8 @@ export function BaselineManager() {
       setSelectedIndex(null);
       setShowLifecycleModal(false);
       setLifecycleReason("");
-      await reload();
-    setNotice(action === "void" ? "Baseline record voided. Its history is retained and it is excluded from normal views and XLSX export." : "Baseline record restored to the active baseline.");
+      await Promise.all([reload(), reloadWorkspaceContext()]);
+      setNotice(action === "void" ? "Baseline record voided. Its history is retained and it is excluded from normal views and XLSX export." : "Baseline record restored to the active baseline.");
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Lifecycle update failed."); }
     finally { setLifecycleSaving(false); }
   }
@@ -458,9 +465,8 @@ export function BaselineManager() {
       setNotice(payload.error || "The baseline record could not be created.");
       return;
     }
-    await reload();
-    setActiveRelease(chosenRelease);
-    setActiveTier("All records");
+    await Promise.all([reload(), reloadWorkspaceContext()]);
+    selectReleaseScope(chosenRelease);
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setShowAddRow(false);
@@ -510,10 +516,9 @@ export function BaselineManager() {
       setImportError(payload.error || "The workbook could not be accepted into the active baseline.");
       return;
     }
-    await reload();
+    await Promise.all([reload(), reloadWorkspaceContext()]);
     setSelectedIndex(null);
-    setActiveRelease("All releases");
-    setActiveTier("All records");
+    selectReleaseScope("All releases");
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setDraft(null);
@@ -542,10 +547,9 @@ export function BaselineManager() {
       });
       const enrichmentPayload = await enrichment.json() as { error?: string };
       if (!enrichment.ok) throw new Error(enrichmentPayload.error || "The source demonstration data loaded, but its topology details could not be prepared.");
-      await reload();
+      await Promise.all([reload(), reloadWorkspaceContext()]);
       setSelectedIndex(null);
-      setActiveRelease("All releases");
-      setActiveTier("All records");
+      selectReleaseScope("All releases");
       setActiveQuality("All checks");
       setActiveReview("All review statuses");
       setShowStewardMenu(false);
@@ -635,7 +639,7 @@ export function BaselineManager() {
       <header className="topbar">
         <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Records</h1></div>
         <div className="top-actions">
-          <label className="release-selector"><span>Release scope</span><select value={activeRelease} onChange={(event) => { setActiveRelease(event.target.value); setActiveTier("All records"); }}><option value="All releases">All releases</option>{releases.map((release) => <option key={release}>{release}</option>)}</select></label>
+          <WorkspaceContextControl mode="filter" />
           <button className="primary-button" onClick={() => fileRef.current?.click()}>Import workbook</button>
         </div>
       </header>
@@ -663,20 +667,20 @@ export function BaselineManager() {
       <div className={selectedIndex === null ? "content-grid" : "content-grid content-grid-detail"}>
         {selectedIndex === null ? <aside className="tree-panel">
           <div className="panel-heading">
-            <div><span className="eyebrow">STRUCTURE</span><h3>Release configuration</h3></div>
+            <div><span className="eyebrow">BROWSE A2O TECH STACK</span><h3>Release and tier</h3></div>
             <button>•••</button>
           </div>
           <div className="tree-list">
-            <button className={activeRelease === "All releases" && activeTier === "All records" ? "tree-row selected" : "tree-row"} onClick={() => { setActiveRelease("All releases"); setActiveTier("All records"); }}>
+            <button className={activeRelease === "All releases" && activeTier === "All records" ? "tree-row selected" : "tree-row"} onClick={() => selectReleaseScope("All releases")}>
               <span>▦</span><b>All releases</b><em>{activeRows.length}</em>
             </button>
             {releaseGroups.map((group) => (
               <div className="release-tree" key={group.release}>
-                <button className={activeRelease === group.release && activeTier === "All records" ? "tree-row release-row selected" : "tree-row release-row"} onClick={() => { setActiveRelease(group.release); setActiveTier("All records"); }}>
+                <button className={activeRelease === group.release && activeTier === "All records" ? "tree-row release-row selected" : "tree-row release-row"} onClick={() => selectReleaseScope(group.release)}>
                   <span>◆</span><b>{group.release}</b><em>{group.rows.length}</em>
                 </button>
                 {group.tiers.map((tier) => (
-                  <button key={`${group.release}:${tier}`} className={activeRelease === group.release && activeTier === tier ? "tree-row tree-child selected" : "tree-row tree-child"} onClick={() => { setActiveRelease(group.release); setActiveTier(tier); }}>
+                  <button key={`${group.release}:${tier}`} className={activeRelease === group.release && activeTier === tier ? "tree-row tree-child selected" : "tree-row tree-child"} onClick={() => { selectReleaseScope(group.release); setActiveTier(tier); }}>
                     <span>└</span><b>{tier}</b><em>{group.rows.filter((row) => tierOf(row) === tier).length}</em>
                   </button>
                 ))}
@@ -702,14 +706,12 @@ export function BaselineManager() {
               </div>
 
               {showFilters && <section className="filter-panel" aria-label="Source record filters">
-                <div><span>ReleaseName</span><select value={activeRelease} onChange={(event) => { setActiveRelease(event.target.value); setActiveTier("All records"); }}><option>All releases</option>{releases.map((release) => <option key={release}>{release}</option>)}</select></div>
                 <div><span>Tier</span><select value={activeTier} onChange={(event) => setActiveTier(event.target.value)}><option>All records</option>{availableTiers.map((tier) => <option key={tier}>{tier}</option>)}</select></div>
                 <div><span>Automated checks</span><select value={activeQuality} onChange={(event) => setActiveQuality(event.target.value)}><option>All checks</option><option>Pass</option><option>Warning</option><option>Blocking</option></select></div>
                 <div><span>Manual review</span><select value={activeReview} onChange={(event) => setActiveReview(event.target.value)}><option>All review statuses</option><option>Not reviewed</option><option>Reviewed</option><option>Follow-up</option></select></div>
                 <div><span>Lifecycle</span><select value={activeLifecycle} onChange={(event) => setActiveLifecycle(event.target.value)}><option>Active records</option><option>Voided records</option><option>All lifecycle states</option></select></div>
                 <button onClick={() => {
-                  setActiveRelease("All releases");
-                  setActiveTier("All records");
+                  selectReleaseScope("All releases");
                   setActiveQuality("All checks");
                   setActiveReview("All review statuses");
                   setActiveLifecycle("Active records");

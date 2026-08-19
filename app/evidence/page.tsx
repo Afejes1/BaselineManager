@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { DomainPageShell } from "../../components/domain-shell";
 import { useGovernancePortfolio } from "../../lib/governance-client";
-import { useBaselineWorkspace } from "../../lib/baseline-client";
+import { useWorkspaceContext } from "../../components/workspace-context";
 import { displayStatus, governanceRecordStatuses, governanceRecordTypes, type GovernanceRecordStatus, type GovernanceRecordType } from "../../lib/governance-model";
 
 export default function EvidencePage() {
   const searchParams = useSearchParams();
   const { portfolio, loading, error, mutate } = useGovernancePortfolio();
-  const { rows } = useBaselineWorkspace();
+  const { rows } = useWorkspaceContext();
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -71,7 +71,7 @@ export default function EvidencePage() {
     catch (reason) { setNotice(reason instanceof Error ? reason.message : "The record could not be updated."); }
   }
 
-  return <DomainPageShell title="Evidence & Traceability" subtitle="MCPs, technical calls, decisions, risks, questions, and supporting files linked to the baseline." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} actions={<button className="primary-button" type="button" onClick={openCreate}>＋ New record</button>}>
+  return <DomainPageShell title="Evidence & Traceability" subtitle="MCPs, technical calls, decisions, risks, questions, and supporting files linked to the baseline." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} contextMode="portfolio" actions={<button className="primary-button" type="button" onClick={openCreate}>＋ New record</button>}>
     <section className="kpi-grid" aria-label="Evidence summary"><div className="kpi-card"><span>Government records</span><strong>{records.length}</strong><small>MCPs, calls, decisions, risks</small></div><div className="kpi-card"><span>Open</span><strong>{records.filter((record) => record.status === "open").length}</strong><small>Needs action</small></div><div className="kpi-card"><span>Technical calls</span><strong>{records.filter((record) => record.recordType === "technical_call").length}</strong><small>Recorded technical discussions</small></div><div className="kpi-card"><span>Evidence files</span><strong>{records.reduce((total, record) => total + record.documents.length, 0)}</strong><small>Attached files</small></div></section>
     {loading && <section className="domain-section"><p className="empty">Loading change and evidence records…</p></section>}
     {error && <section className="domain-section"><p className="error-copy">{error}</p></section>}
