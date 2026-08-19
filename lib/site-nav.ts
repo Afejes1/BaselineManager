@@ -3,23 +3,18 @@ export type NavItem = {
   label: string;
   icon: string;
   enabled: boolean;
+  section: "Baseline" | "Views" | "Decisions";
   tag?: string;
 };
 
 export const APP_NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Baseline Manager", icon: "▦", enabled: true },
-  { href: "/intake", label: "Intake & quality", icon: "⇣", enabled: true },
-  { href: "/releases", label: "Releases", icon: "🗂", enabled: true },
-  { href: "/platforms", label: "Platforms", icon: "⌂", enabled: true },
-  { href: "/topology", label: "Topology", icon: "▤", enabled: true },
-  { href: "/pbs", label: "PBS Explorer", icon: "⌘", enabled: true },
-  { href: "/products", label: "Products", icon: "◦", enabled: true },
-  { href: "/configuration", label: "Configuration", icon: "⚙", enabled: true },
-  { href: "/organizations", label: "Suppliers", icon: "🏭", enabled: true },
-  { href: "/capabilities", label: "Capabilities", icon: "★", enabled: true },
-  { href: "/changes", label: "Change Requests", icon: "◫", enabled: true },
-  { href: "/reports", label: "Decision Reports", icon: "✦", enabled: true },
-  { href: "/initiatives", label: "Initiatives & Decisions", icon: "🗂", enabled: true },
-  { href: "/evidence", label: "Evidence Library", icon: "▣", enabled: true },
-  { href: "/briefs", label: "Saved Briefs", icon: "◇", enabled: true },
+  { href: "/", label: "Baseline Records", icon: "▦", enabled: true, section: "Baseline" },
+  { href: "/intake", label: "Import & Data Quality", icon: "⇣", enabled: true, section: "Baseline" },
+  { href: "/releases", label: "Releases", icon: "▤", enabled: true, section: "Baseline" },
+  { href: "/products", label: "Products", icon: "◦", enabled: true, section: "Views" },
+  { href: "/platforms", label: "Platforms", icon: "⌂", enabled: true, section: "Views" },
+  { href: "/topology", label: "Deployment Topology", icon: "⌘", enabled: true, section: "Views" },
+  { href: "/changes", label: "Change Requests", icon: "◫", enabled: true, section: "Decisions" },
+  { href: "/initiatives", label: "Initiatives", icon: "◆", enabled: true, section: "Decisions" },
+  { href: "/reports", label: "Leadership Reports", icon: "✦", enabled: true, section: "Decisions" },
 ];

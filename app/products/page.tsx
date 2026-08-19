@@ -35,8 +35,8 @@ export default function ProductsPage() {
   return (
     <DomainPageShell
       title="Products"
-      subtitle="Canonical product nodes derived from retained source rows"
-      releaseScope={`${canonicalCount} products in working dataset`}
+      subtitle="Products reported in the active baseline"
+      releaseScope={`${canonicalCount} products in active baseline`}
       actions={(
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>

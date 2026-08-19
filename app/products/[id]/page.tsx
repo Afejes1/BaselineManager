@@ -70,7 +70,7 @@ export default function ProductDetailPage() {
   return (
     <DomainPageShell
       title={`Product: ${canonical}`}
-      subtitle="Canonical product landing page"
+      subtitle="Product baseline, release history, and related decisions"
       releaseScope={`${productRows.length || 0} reported rows`}
       actions={(
         <label className="search" style={{ width: "280px" }}>
@@ -102,7 +102,7 @@ export default function ProductDetailPage() {
       </section>
 
       <section className="domain-section">
-        <h3>Reported source occurrences</h3>
+        <h3>Reported baseline records</h3>
         <section className="domain-table-wrap">
           <table>
             <thead>

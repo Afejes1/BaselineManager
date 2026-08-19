@@ -29,8 +29,8 @@ export default function ConfigurationPage() {
 
   return (
     <DomainPageShell
-      title="Configuration"
-      subtitle="Baseline placement nodes derived from source columns"
+      title="Configuration Nodes"
+      subtitle="Tier, resource, and host combinations reported in the baseline"
       releaseScope={`${nodes.length} configuration nodes`}
       actions={(
         <label className="search" style={{ width: "280px" }}>

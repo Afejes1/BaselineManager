@@ -14,17 +14,17 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "V3 Technical Baseline Manager",
-  description: "Govern the F-35 technical baseline from an exact 24-column workbook contract.",
+  description: "Manage the F-35 technical baseline from the required 24-column workbook.",
   openGraph: {
     title: "V3 Technical Baseline Manager",
-    description: "Turn the retained 24-column workbook into a governed, normalized technical baseline.",
+    description: "Manage the required 24-column workbook as a technical baseline.",
     type: "website",
     images: [{ url: "/og.png", width: 1739, height: 907, alt: "V3 Technical Baseline data transformation" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "V3 Technical Baseline Manager",
-    description: "A spreadsheet-familiar interface backed by a normalized technical baseline.",
+    description: "A spreadsheet-familiar technical baseline application.",
     images: ["/og.png"],
   },
   icons: {

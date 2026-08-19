@@ -22,6 +22,7 @@ function isActiveItem(pathname: string, itemHref: string) {
 export function DomainPageShell({ title, subtitle, actions, children, releaseScope }: DomainPageShellProps) {
   const pathname = usePathname();
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
+  const navigationSections = ["Baseline", "Views", "Decisions"] as const;
 
   function toggleRail() {
     setRailCollapsed((current) => {
@@ -40,31 +41,32 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
           <button className="rail-toggle" type="button" onClick={toggleRail} aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"} title={railCollapsed ? "Expand navigation" : "Collapse navigation"}>{railCollapsed ? "›" : "‹"}</button>
         </div>
         <nav aria-label="Primary navigation">
-          <p className="rail-label">Workspace</p>
-          {APP_NAV_ITEMS.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`nav-item ${isActiveItem(pathname, item.href) ? "active" : ""}`}
-              title={item.label}
-              aria-disabled={!item.enabled}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-              {item.tag ? <em>{item.tag}</em> : null}
-            </Link>
-          ))}
+          {navigationSections.map((section) => <div className="nav-section" key={section}>
+            <p className="rail-label">{section}</p>
+            {APP_NAV_ITEMS.filter((item) => item.section === section && item.enabled).map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`nav-item ${isActiveItem(pathname, item.href) ? "active" : ""}`}
+                title={item.label}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+                {item.tag ? <em>{item.tag}</em> : null}
+              </Link>
+            ))}
+          </div>)}
         </nav>
         <div className="rail-context">
           <span className="context-dot" />
           <div>
-            <strong>Release context</strong>
-            <small>{releaseScope ? `${releaseScope} · View` : "Use release filters on demand"}</small>
+            <strong>Page scope</strong>
+            <small>{releaseScope || "All records"}</small>
           </div>
         </div>
-        <Link className="profile" href="/" title="Open baseline steward controls">
-          <span>AC</span>
-          <div><strong>Baseline steward</strong><small>Source intake &amp; demo workspace</small></div>
+        <Link className="profile" href="/" title="Open workspace controls">
+          <span>WS</span>
+          <div><strong>Workspace</strong><small>Baseline data and demo controls</small></div>
           <b>→</b>
         </Link>
       </aside>

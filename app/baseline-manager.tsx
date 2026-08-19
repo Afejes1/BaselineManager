@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../components/app-link";
+import { ProvenanceKey } from "../components/provenance-key";
 import { usePathname } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
@@ -27,8 +28,8 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "record", label: "Record" },
   { id: "quality", label: "Quality" },
   { id: "review", label: "Review" },
-  { id: "occurrences", label: "Occurrences" },
-  { id: "normalized", label: "Normalized" },
+  { id: "occurrences", label: "Release records" },
+  { id: "normalized", label: "Linked data" },
 ];
 
 const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
@@ -37,7 +38,7 @@ const blankRecord = (): Record24 => Object.fromEntries(TECHNICAL_BASELINE_COLUMN
  * A deliberately synthetic, but realistic, working baseline. The repeated
  * product identities make the Release workspace useful immediately: it shows
  * additions, removals, moves, configuration changes, an intentional quality
- * warning, and a valid host-only source occurrence.
+ * warning, and a valid host-only baseline record.
  */
 function demoRecord(values: DemoValues): Record24 {
   return Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, values[column] ?? ""])) as Record24;
@@ -45,29 +46,29 @@ function demoRecord(values: DemoValues): Record24 {
 
 const DEMONSTRATION_ROWS: Record24[] = [
   // Release 5 — reported baseline
-  demoRecord({ "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-003", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 500, HW_CPU_CORES: 8, "HW_RAM (GB)": 48, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-004", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 900, HW_CPU_CORES: 8, "HW_RAM (GB)": 64, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-005", ReleaseName: "Release 5", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 100, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-006", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Adapter", ShortName: "LMPA", HW_Host: "VM-LMPA-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 80, HW_CPU_CORES: 2, "HW_RAM (GB)": 8, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "No", LongName: "Legacy Mission Planning Adapter", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R5-007", ReleaseName: "Release 5", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-003", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 500, HW_CPU_CORES: 8, "HW_RAM (GB)": 48, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-004", ReleaseName: "Release 5", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 900, HW_CPU_CORES: 8, "HW_RAM (GB)": 64, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-005", ReleaseName: "Release 5", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 100, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-006", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Adapter", ShortName: "LMPA", HW_Host: "VM-LMPA-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 80, HW_CPU_CORES: 2, "HW_RAM (GB)": 8, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "No", LongName: "Legacy Mission Planning Adapter", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R5-007", ReleaseName: "Release 5", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Demonstration host record; no product is reported.", "Notes.1": "Demonstration data" }),
   // Release 6 — a proposed move, capacity changes, and one new service
-  demoRecord({ "#": "DEMO-R6-001", ReleaseName: "Release 6", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 240, HW_CPU_CORES: 12, "HW_RAM (GB)": 48, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record; relocated to the Release 6 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-002", ReleaseName: "Release 6", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 160, HW_CPU_CORES: 8, "HW_RAM (GB)": 24, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-003", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 750, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Synthetic demonstration baseline record; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-004", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1200, HW_CPU_CORES: 12, "HW_RAM (GB)": 96, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-005", ReleaseName: "Release 6", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Synthetic demonstration baseline record.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-006", ReleaseName: "Release 6", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Synthetic demonstration baseline record; new Release 6 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R6-007", ReleaseName: "Release 6", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R6-001", ReleaseName: "Release 6", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 240, HW_CPU_CORES: 12, "HW_RAM (GB)": 48, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration data — not program data; relocated to the Release 6 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-002", ReleaseName: "Release 6", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 160, HW_CPU_CORES: 8, "HW_RAM (GB)": 24, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration data — not program data; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-003", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "DG", HW_Host: "VM-DG-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 750, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "C#", "Software Type": "COTS", OEM: "Boeing", Containerized: "No", LongName: "Data Gateway", Notes: "Demonstration data — not program data; expanded capacity.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-004", ReleaseName: "Release 6", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1200, HW_CPU_CORES: 12, "HW_RAM (GB)": 96, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Demonstration data — not program data; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-005", ReleaseName: "Release 6", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-006", ReleaseName: "Release 6", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Demonstration data — not program data; new Release 6 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R6-007", ReleaseName: "Release 6", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Demonstration host record; no product is reported.", "Notes.1": "Demonstration data" }),
   // Release 7 — a second move, removals, additions, and one deliberate warning
-  demoRecord({ "#": "DEMO-R7-001", ReleaseName: "Release 7", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 300, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Synthetic demonstration baseline record; memory uplift.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-002", ReleaseName: "Release 7", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 220, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Synthetic demonstration baseline record; relocated to the Release 7 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-003", ReleaseName: "Release 7", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1600, HW_CPU_CORES: 16, "HW_RAM (GB)": 128, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Synthetic demonstration baseline record; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-004", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Intentional synthetic data-quality warning: container technology is blank.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-005", ReleaseName: "Release 7", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Synthetic demonstration baseline record; scaled throughput.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-006", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Analytics service", ShortName: "EIS", HW_Host: "VM-EIS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Execution Insights Service", Notes: "Synthetic demonstration baseline record; new Release 7 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Synthetic demo" }),
-  demoRecord({ "#": "DEMO-R7-007", ReleaseName: "Release 7", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Valid host-only synthetic occurrence; no software product is reported.", "Notes.1": "Synthetic demo" }),
+  demoRecord({ "#": "DEMO-R7-001", ReleaseName: "Release 7", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 300, HW_CPU_CORES: 12, "HW_RAM (GB)": 64, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration data — not program data; memory uplift.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-002", ReleaseName: "Release 7", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 220, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration data — not program data; relocated to the Release 7 compute host.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-003", ReleaseName: "Release 7", Tier: "Enterprise", Resource: "Shared data", TechStackType: "Data service", ShortName: "SDS", HW_Host: "VM-SDS-05", HW_Storage_Type: "SAN", "HW_Storage (GB)": 1600, HW_CPU_CORES: 16, "HW_RAM (GB)": 128, "SW Language": "SQL", "Software Type": "COTS", OEM: "Oracle", Containerized: "No", LongName: "Secure Data Store", Notes: "Demonstration data — not program data; capacity planning update.", "Technical Capability Satisfied by this SW/Tech - Notes": "Protected data persistence", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-004", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Application service", ShortName: "OC", HW_Host: "VM-OC-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 140, HW_CPU_CORES: 6, "HW_RAM (GB)": 24, "SW Language": "TypeScript", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Type": "Deployment", LongName: "Operations Console", Notes: "Demonstration data-quality warning: container technology is blank.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-005", ReleaseName: "Release 7", Tier: "Integration", Resource: "Data exchange", TechStackType: "Integration service", ShortName: "IOS", HW_Host: "VM-IOS-06", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Go", "Software Type": "Custom", OEM: "Northrop Grumman", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Integration Orchestrator Service", Notes: "Demonstration data — not program data; scaled throughput.", "Technical Capability Satisfied by this SW/Tech - Notes": "Data interchange", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-006", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Analytics service", ShortName: "EIS", HW_Host: "VM-EIS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Execution Insights Service", Notes: "Demonstration data — not program data; new Release 7 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Demonstration data" }),
+  demoRecord({ "#": "DEMO-R7-007", ReleaseName: "Release 7", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Demonstration host record; no product is reported.", "Notes.1": "Demonstration data" }),
 ];
 
 const text = (value: Cell) => value == null ? "" : String(value);
@@ -193,6 +194,7 @@ export function BaselineManager() {
   }), [rows, reviews, query, activeRelease, activeTier, activeQuality, activeReview, activeLifecycle]);
 
   const activeRows = useMemo(() => rows.filter((row) => row.__meta.lifecycleStatus === "active"), [rows]);
+  const navigationSections = ["Baseline", "Views", "Decisions"] as const;
   const releases = useMemo(() => Array.from(new Set(activeRows.map(releaseOf))), [activeRows]);
   const releaseGroups = useMemo(() => releases.map((release) => {
     const releaseRows = activeRows.filter((row) => releaseOf(row) === release);
@@ -224,7 +226,7 @@ export function BaselineManager() {
     const release = text(selected.ReleaseName).trim() || "Unassigned";
     return {
       productNode: {
-        id: selectedProductId ?? "Not materialized as a product",
+        id: selectedProductId ?? "Not linked to a product",
         canonicalName,
         alias: text(selected.ShortName).trim() || "—",
         classification: text(selected["Software Type"]).trim() || "—",
@@ -302,7 +304,7 @@ export function BaselineManager() {
     const current = rows[selectedIndex];
     if (!current) return;
     if (current.__meta.lifecycleStatus !== "active") {
-      setNotice("Restore this voided source occurrence before editing it.");
+      setNotice("Restore this voided baseline record before editing it.");
       return;
     }
     const nextRow = { ...current, [column]: value } as ManagedRecord24;
@@ -323,12 +325,12 @@ export function BaselineManager() {
         body: JSON.stringify(action === "void" ? { occurrenceId: selectedMeta.occurrenceId, reason: lifecycleReason } : { action: "restore_occurrence", occurrenceId: selectedMeta.occurrenceId }),
       });
       const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error || `Source occurrence could not be ${action === "void" ? "voided" : "restored"}.`);
+      if (!response.ok) throw new Error(payload.error || `Baseline record could not be ${action === "void" ? "voided" : "restored"}.`);
       setSelectedIndex(null);
       setShowLifecycleModal(false);
       setLifecycleReason("");
       await reload();
-      setNotice(action === "void" ? "Source occurrence voided. Its history remains auditable and it is excluded from normal views and XLSX export." : "Source occurrence restored to the working baseline.");
+    setNotice(action === "void" ? "Baseline record voided. Its history is retained and it is excluded from normal views and XLSX export." : "Baseline record restored to the active baseline.");
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Lifecycle update failed."); }
     finally { setLifecycleSaving(false); }
   }
@@ -343,8 +345,8 @@ export function BaselineManager() {
       setChecked(new Set());
       setShowChangeAssignment(false);
       setChangeAssignment({ changeRequestId: "", effectAction: "modify", aspect: "configuration", consequence: "" });
-      setNotice(`${occurrenceIds.length} source occurrence${occurrenceIds.length === 1 ? "" : "s"} assigned to the Change Request impact chain.`);
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Source occurrences could not be assigned."); }
+      setNotice(`${occurrenceIds.length} baseline record${occurrenceIds.length === 1 ? "" : "s"} linked to the Change Request.`);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Baseline records could not be linked."); }
     finally { setChangeAssignmentSaving(false); }
   }
 
@@ -373,7 +375,7 @@ export function BaselineManager() {
   async function setManualReview(status: ReviewStatus, note?: string) {
     const sourceRowId = selectedMeta?.sourceRowId;
     if (!sourceRowId) {
-      setNotice("Choose a saved source occurrence before recording a manual review.");
+      setNotice("Choose a baseline record before recording a manual review.");
       return;
     }
 
@@ -393,7 +395,7 @@ export function BaselineManager() {
       if (!response.ok) throw new Error("Unable to save review.");
       const payload = await response.json() as { review: ManualReview };
       setReviews((current) => ({ ...current, [key]: payload.review }));
-      setNotice(status === "not_reviewed" ? "Cleared the manual review for this source occurrence." : `Recorded ${manualReviewLabel(status).toLowerCase()} on this source occurrence.`);
+      setNotice(status === "not_reviewed" ? "Cleared the manual review for this baseline record." : `Recorded ${manualReviewLabel(status).toLowerCase()} for this baseline record.`);
     } catch {
       setReviews((current) => {
         const next = { ...current };
@@ -427,7 +429,7 @@ export function BaselineManager() {
     });
     const payload = await response.json() as { error?: string };
     if (!response.ok) {
-      setNotice(payload.error || "The source occurrence could not be created.");
+      setNotice(payload.error || "The baseline record could not be created.");
       return;
     }
     await reload();
@@ -436,7 +438,7 @@ export function BaselineManager() {
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setShowAddRow(false);
-    setNotice(`Created a new source occurrence in release ${chosenRelease}.`);
+    setNotice(`Created a new baseline record in ${chosenRelease}.`);
   }
 
   function toggleChecked(index: number) {
@@ -479,7 +481,7 @@ export function BaselineManager() {
     });
     const payload = await response.json() as { error?: string };
     if (!response.ok) {
-      setImportError(payload.error || "The workbook could not be accepted into the authoritative baseline workspace.");
+      setImportError(payload.error || "The workbook could not be accepted into the active baseline.");
       return;
     }
     await reload();
@@ -489,7 +491,7 @@ export function BaselineManager() {
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setDraft(null);
-    setNotice(`Imported ${draft.rows.length} rows across ${new Set(draft.rows.map(releaseOf)).size} releases into the authoritative workspace.`);
+    setNotice(`Imported ${draft.rows.length} records across ${new Set(draft.rows.map(releaseOf)).size} releases into the active baseline.`);
   }
 
   async function loadDemonstrationWorkspace() {
@@ -521,7 +523,7 @@ export function BaselineManager() {
       setActiveQuality("All checks");
       setActiveReview("All review statuses");
       setShowStewardMenu(false);
-      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} synthetic source occurrences across three releases, including topology details and linked rationale.`);
+      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration records across three releases, including topology details and Change Request links.`);
     } catch (reason) {
       setDemoError(reason instanceof Error ? reason.message : "The demonstration dataset could not be loaded.");
     } finally {
@@ -532,13 +534,13 @@ export function BaselineManager() {
   async function exportWorkbook() {
     const exportRows = activeRelease === "All releases" ? activeRows : scopeRows;
     if (!exportRows.length) {
-      setNotice("There are no source occurrences in the requested export scope.");
+      setNotice("There are no baseline records in the requested export scope.");
       return;
     }
     const localBlockers = exportRows.filter((row) => qualityForRecord(row).level === "issue");
     if (localBlockers.length) {
       setActiveQuality("Blocking");
-      setNotice(`Export is blocked by ${localBlockers.length} source occurrence${localBlockers.length === 1 ? "" : "s"}. The grid is filtered to show them.`);
+      setNotice(`Export is blocked by ${localBlockers.length} baseline record${localBlockers.length === 1 ? "" : "s"}. The grid is filtered to show them.`);
       return;
     }
     const readiness = await fetch("/api/baseline/export", {
@@ -575,21 +577,23 @@ export function BaselineManager() {
         <button className="rail-toggle" type="button" onClick={toggleRail} aria-label={railCollapsed ? "Expand navigation" : "Collapse navigation"} title={railCollapsed ? "Expand navigation" : "Collapse navigation"}>{railCollapsed ? "›" : "‹"}</button>
       </div>
       <nav aria-label="Primary navigation">
-        <p className="rail-label">Workspace</p>
-        {APP_NAV_ITEMS.filter((item) => item.enabled).map((item) => (
-          <Link
-            href={item.href}
-            key={item.href}
-            className={`nav-item ${isActivePath(pathname, item.href) ? "active" : ""}`}
-            title={railCollapsed ? item.label : undefined}
-          >
-            <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.tag ? <em>{item.tag}</em> : null}
-          </Link>
-        ))}
+        {navigationSections.map((section) => <div className="nav-section" key={section}>
+          <p className="rail-label">{section}</p>
+          {APP_NAV_ITEMS.filter((item) => item.section === section && item.enabled).map((item) => (
+            <Link
+              href={item.href}
+              key={item.href}
+              className={`nav-item ${isActivePath(pathname, item.href) ? "active" : ""}`}
+              title={railCollapsed ? item.label : undefined}
+            >
+              <span className="nav-icon">{item.icon}</span><span className="nav-label">{item.label}</span>{item.tag ? <em>{item.tag}</em> : null}
+            </Link>
+          ))}
+        </div>)}
       </nav>
       <div className="rail-context">
         <span className="context-dot"/>
-        <div><strong>Release scope</strong><small>{activeRelease} · Working workspace</small></div>
+        <div><strong>Baseline scope</strong><small>{activeRelease} · Active baseline</small></div>
       </div>
       <button
         className="profile"
@@ -598,12 +602,12 @@ export function BaselineManager() {
         aria-haspopup="dialog"
         aria-expanded={showStewardMenu}
         aria-controls="steward-menu"
-      ><span>AC</span><div><strong>Baseline steward</strong><small>Government team</small></div><b>···</b></button>
+      ><span>WS</span><div><strong>Workspace</strong><small>Demo data and workspace actions</small></div><b>···</b></button>
     </aside>
 
     <section className="workspace">
       <header className="topbar">
-        <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Manager</h1></div>
+        <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Records</h1></div>
         <div className="top-actions">
           <label className="release-selector"><span>Release scope</span><select value={activeRelease} onChange={(event) => { setActiveRelease(event.target.value); setActiveTier("All records"); }}><option value="All releases">All releases</option>{releases.map((release) => <option key={release}>{release}</option>)}</select></label>
           <button className="primary-button" onClick={() => fileRef.current?.click()}>Import workbook</button>
@@ -614,12 +618,14 @@ export function BaselineManager() {
         <div className="summary-lead">
           <p>{activeRelease === "All releases" ? `${releases.length} RELEASES IN SCOPE` : `RELEASE ${activeRelease}`}</p>
           <h2>{activeRelease === "All releases" ? "Reported baselines across releases" : "Reported technical baseline"}</h2>
-          <span>{workspace?.label || "Current Government working baseline"} · ReleaseName retained on every source occurrence</span>
+          <span>{workspace?.label || "Active technical baseline"} · ReleaseName is retained on every record</span>
         </div>
-        <div className="metric"><span>Source records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · exact projection</small></div>
-        <div className="metric"><span>Canonical products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
-        <div className="metric metric-alert"><span>Automated attention</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
+        <div className="metric"><span>Baseline records</span><strong>{scopeRows.length}</strong><small>{activeRelease} · 24-column format</small></div>
+        <div className="metric"><span>Products</span><strong>{productCount}</strong><small>Across {scopeTiers.size} tiers in scope</small></div>
+        <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
       </section>
+
+      <ProvenanceKey includeDemonstration={demoEnabled} compact />
 
       <div className="content-grid">
         <aside className="tree-panel">
@@ -678,8 +684,8 @@ export function BaselineManager() {
                 }}>Clear filters</button>
               </section>}
 
-              {workspaceError ? <div className="empty">{workspaceError} Use Import workbook to establish a new authoritative workspace.</div> : null}
-              {loading ? <div className="empty">Loading the authoritative baseline workspace…</div> : null}
+              {workspaceError ? <div className="empty">{workspaceError} Use Import workbook to establish the active baseline.</div> : null}
+              {loading ? <div className="empty">Loading active baseline…</div> : null}
 
               {!workspaceError && !loading && <div className="table-wrap">
                 <table>
@@ -725,7 +731,7 @@ export function BaselineManager() {
                             className="row-nav-link"
                             onClick={(event) => event.stopPropagation()}
                           >
-                            <strong>{text(row.ShortName) || "Unnamed"}</strong><small>{text(row.LongName) || "Canonical name missing"}</small>
+                            <strong>{text(row.ShortName) || "Unnamed"}</strong><small>{text(row.LongName) || "Product name missing"}</small>
                           </Link>
                         </td>
                         <td>
@@ -755,7 +761,7 @@ export function BaselineManager() {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && <div className="empty">{rows.length ? "No source records match the selected scope and health filters." : "No source package is in the current workspace. Import the retained 24-column workbook to begin."}</div>}
+                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No workbook is active. Import the required 24-column workbook to begin."}</div>}
               </div>}
               {!workspaceError && !loading && <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><b>All loaded</b></div></footer>}
             </>
@@ -763,8 +769,8 @@ export function BaselineManager() {
             <>
               <div className="detail-head">
                 <button className="ghost-button record-back-button" type="button" onClick={() => setSelectedIndex(null)}>← Back to grid</button>
-                <div><span className="eyebrow">SOURCE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the retained source columns."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the working baseline"}</span></div>
-                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore source occurrence</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void source occurrence</button>}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
+                <div><span className="eyebrow">BASELINE RECORD #{text(selected["#"]) || "UNASSIGNED"}</span><h3>{text(selected.ShortName) || "New product"}</h3><p>{text(selected.LongName) || "Complete the required source fields."}</p><span className="autosave-label">{selectedMeta && savingOccurrences.has(selectedMeta.occurrenceId) ? "Saving changes…" : "✓ Changes saved to the active baseline"}</span></div>
+                <div className="detail-head-actions">{selectedMeta ? <Link className="ghost-button" href={`/occurrences/${encodeURIComponent(selectedMeta.occurrenceId)}`}>Open record page</Link> : null}{selectedMeta?.lifecycleStatus === "voided" ? <button className="ghost-button" type="button" disabled={lifecycleSaving} onClick={() => void changeLifecycle("restore")}>Restore record</button> : <button className="danger-button" type="button" onClick={() => setShowLifecycleModal(true)}>Void record</button>}<button type="button" aria-label="Close record details" title="Close" onClick={() => setSelectedIndex(null)}>×</button></div>
               </div>
 
               <div className="detail-tabs" role="tablist">
@@ -783,7 +789,7 @@ export function BaselineManager() {
               </div>
 
               <div className="detail-body">
-                {selectedMeta?.lifecycleStatus === "voided" ? <div className="lifecycle-banner"><strong>Voided source occurrence</strong><span>{selectedMeta.lifecycleReason || "No reason recorded"} · {selectedMeta.voidedAt?.slice(0, 10) || "date unavailable"}. Restore it before editing.</span></div> : null}
+                {selectedMeta?.lifecycleStatus === "voided" ? <div className="lifecycle-banner"><strong>Voided baseline record</strong><span>{selectedMeta.lifecycleReason || "No reason recorded"} · {selectedMeta.voidedAt?.slice(0, 10) || "date unavailable"}. Restore it before editing.</span></div> : null}
                 <div className="detail-status quality-summary">
                   <Mark quality={selectedQuality} />
                   <div><strong>Automated health checks</strong><span>Calculated from source values · not included in XLSX export</span></div>
@@ -836,7 +842,7 @@ export function BaselineManager() {
                           .map((issue, index) => <li key={`${issue.field}:${index}`} className={`quality-${issue.severity}`}><strong>{issue.field}</strong><span>{issue.message}</span></li>)}
                       </ul>
                     )}
-                    <p className="quality-guidance">Edit the flagged source fields on the Record tab; this panel updates automatically as you type. A pass/fail status is advisory and not a replacement for steward review.</p>
+                    <p className="quality-guidance">Edit the flagged fields on the Record tab. Automated checks do not replace analyst review.</p>
                   </section>
                 )}
 
@@ -851,7 +857,7 @@ export function BaselineManager() {
                       </select>
                     </label>
                     <label>Review note
-                      <textarea className="review-note" value={reviewDraftNote} onChange={(event) => setReviewDraftNote(event.target.value)} placeholder="Optional steward note: evidence, rationale, and action required." rows={6} />
+                      <textarea className="review-note" value={reviewDraftNote} onChange={(event) => setReviewDraftNote(event.target.value)} placeholder="Optional note: evidence, rationale, and required action." rows={6} />
                     </label>
                     <div className="review-actions">
                       <button className="primary-button" disabled={reviewSaving || !reviewDraftHasChanges} onClick={() => setManualReview(reviewDraftStatus, reviewDraftNote)}>
@@ -866,11 +872,11 @@ export function BaselineManager() {
                 {activeDetailTab === "occurrences" && (
                   <section className="occurrence-details">
                     <div className="section-heading">
-                      <h4>Release occurrences for this canonical product</h4>
-                      <span>{occurrenceRows.length} row{occurrenceRows.length === 1 ? "" : "s"} linked by the materialized product identity</span>
+                      <h4>Release records for this product</h4>
+                      <span>{occurrenceRows.length} record{occurrenceRows.length === 1 ? "" : "s"} linked to this product</span>
                     </div>
                     {!occurrenceRows.length ? (
-                      <p className="manual-review-note">This row has no matching `#` in scope. Keep track manually or normalize it after import.</p>
+                      <p className="manual-review-note">This row has no matching source key in the active baseline. Review it before using it for comparisons.</p>
                     ) : (
                       <div className="occurrence-list">
                         {occurrenceRows.map(({ row, index }) => {
@@ -898,12 +904,12 @@ export function BaselineManager() {
 
                 {activeDetailTab === "normalized" && normalizedProjection && (
                   <section className="normalized-view">
-                    <div className="section-heading"><h4>Normalized projection</h4><span>Derived from source row for canonical modeling</span></div>
+                    <div className="section-heading"><h4>Linked data</h4><span>Product and configuration data linked from this 24-column record</span></div>
                     <div className="normalized-grid">
                       <div className="normal-card">
                         <h5>Product node</h5>
                         <p><strong>Product ID</strong>{normalizedProjection.productNode.id}</p>
-                        <p><strong>Canonical name</strong>{normalizedProjection.productNode.canonicalName}</p>
+                        <p><strong>Product name</strong>{normalizedProjection.productNode.canonicalName}</p>
                         <p><strong>Alias</strong>{normalizedProjection.productNode.alias}</p>
                         <p><strong>Classification</strong>{normalizedProjection.productNode.classification}</p>
                         <p><strong>Category</strong>{normalizedProjection.productNode.category}</p>
@@ -944,7 +950,7 @@ export function BaselineManager() {
 
     {showAddRow && <div className="modal-backdrop" role="presentation">
       <section className="import-modal add-row-modal" role="dialog" aria-modal="true" aria-labelledby="add-row-title">
-        <span className="eyebrow">NEW SOURCE OCCURRENCE</span>
+        <span className="eyebrow">NEW BASELINE RECORD</span>
         <h2 id="add-row-title">Choose the release first</h2>
         <p>A source row cannot be created from <strong>All releases</strong> without an explicit ReleaseName. This prevents the application from silently assigning the row to the wrong reported baseline.</p>
         <div className="new-row-summary"><span>Source key</span><strong>Leave blank until the reported source key is known</strong></div>
@@ -959,20 +965,20 @@ export function BaselineManager() {
       <section className="import-modal quality-help-modal" role="dialog" aria-modal="true" aria-labelledby="quality-help-title">
         <span className="eyebrow">AUTOMATED HEALTH CHECKS</span>
         <h2 id="quality-help-title">Why does the system check each row?</h2>
-        <p>Automated checks catch missing or inconsistent source values before the row is normalized into canonical records. They are <strong>not one of the 24 spreadsheet columns</strong> and are not included in XLSX export.</p>
+        <p>Automated checks identify missing or inconsistent source values. They are <strong>not one of the 24 spreadsheet columns</strong> and are not included in XLSX export.</p>
         <div className="quality-key">
           <div><Mark quality={{ level: "ready", label: "Pass", issues: [] }} /><span>No configured source-value checks failed.</span></div>
           <div><Mark quality={{ level: "review", label: "Warning", issues: [] }} /><span>The row is usable, but a value is incomplete or inconsistent.</span></div>
-          <div><Mark quality={{ level: "issue", label: "Blocking", issues: [] }} /><span>The row cannot be reliably materialized until a required identity is corrected.</span></div>
+          <div><Mark quality={{ level: "issue", label: "Blocking", issues: [] }} /><span>The row cannot be used until a required identity is corrected.</span></div>
         </div>
-        <p className="modal-note">Automated health and manual review are separate. A row can pass its checks and still be waiting for a steward to review it.</p>
+        <p className="modal-note">Automated checks and manual review are separate. A row can pass checks and still need analyst review.</p>
         <footer><button className="primary-button" onClick={() => setShowQualityHelp(false)}>Got it</button></footer>
       </section>
     </div>}
 
-    {showLifecycleModal && selectedMeta ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !lifecycleSaving) setShowLifecycleModal(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="void-title"><span className="eyebrow">REVERSIBLE SOURCE LIFECYCLE</span><h2 id="void-title">Void this source occurrence?</h2><p>The row will be excluded from normal dashboards, comparisons, and XLSX export. Its original source payload, review history, revisions, and audit events remain retained.</p><label className="modal-field">Required reason<textarea rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Why this source occurrence is erroneous, duplicate, or no longer part of the working projection" /></label><footer><button className="ghost-button" disabled={lifecycleSaving} onClick={() => setShowLifecycleModal(false)}>Cancel</button><button className="danger-button" disabled={lifecycleSaving || !lifecycleReason.trim()} onClick={() => void changeLifecycle("void")}>{lifecycleSaving ? "Voiding…" : "Void occurrence"}</button></footer></section></div> : null}
+    {showLifecycleModal && selectedMeta ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !lifecycleSaving) setShowLifecycleModal(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="void-title"><span className="eyebrow">RECORD LIFECYCLE</span><h2 id="void-title">Void this baseline record?</h2><p>The record will be excluded from dashboards, comparisons, and XLSX export. Its imported values, review history, revisions, and audit events are retained.</p><label className="modal-field">Required reason<textarea rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Why this record is erroneous, duplicate, or no longer part of the active baseline" /></label><footer><button className="ghost-button" disabled={lifecycleSaving} onClick={() => setShowLifecycleModal(false)}>Cancel</button><button className="danger-button" disabled={lifecycleSaving || !lifecycleReason.trim()} onClick={() => void changeLifecycle("void")}>{lifecycleSaving ? "Voiding…" : "Void record"}</button></footer></section></div> : null}
 
-    {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">ATOMIC IMPACT LINK</span><h2 id="assign-change-title">Assign {checked.size} source occurrence{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>The source rows remain baseline evidence. This creates affected-occurrence links used by consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these source occurrences" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add to impact chain"}</button></footer></section></div> : null}
+    {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">CHANGE IMPACT</span><h2 id="assign-change-title">Link {checked.size} baseline record{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>Baseline records remain evidence. This link is used for consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these baseline records" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add impact link"}</button></footer></section></div> : null}
 
     {(draft || importError) && <div className="modal-backdrop" role="presentation">
       <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
@@ -992,7 +998,7 @@ export function BaselineManager() {
           </div>
           {reconciliation?.conflicts ? <p className="error-copy"><strong>{reconciliation.conflicts} duplicate identity conflict{reconciliation.conflicts === 1 ? "" : "s"}.</strong> Resolve repeated ReleaseName + # identities (or semantic fallback identities) before import.</p> : null}
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
-          <p className="modal-note">Each source occurrence retains ReleaseName. Rows absent from the incoming package leave the active working projection, while prior source packages and their evidence remain retained.</p>
+          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming workbook leave the active baseline; prior workbooks and their evidence remain available in history.</p>
           <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" disabled={Boolean(reconciliation?.conflicts)} onClick={acceptImport}>Import and reconcile</button></footer>
         </>}
       </section>
@@ -1002,16 +1008,16 @@ export function BaselineManager() {
       if (event.target === event.currentTarget && !demoLoading) setShowStewardMenu(false);
     }}>
       <section className="import-modal steward-menu" id="steward-menu" role="dialog" aria-modal="true" aria-labelledby="steward-title">
-        <button className="modal-close" type="button" aria-label="Close Baseline steward menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
-        <span className="eyebrow">BASELINE STEWARD</span>
+        <button className="modal-close" type="button" aria-label="Close workspace menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
+        <span className="eyebrow">WORKSPACE</span>
         <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
-        <p>{demoEnabled ? "Load a synthetic, valid 24-column dataset to explore release comparisons, topology, data quality, and traceability." : "Demonstration data is disabled in this environment. Use Import workbook to establish or replace the active working projection."}</p>
+        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, and traceability. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import workbook to establish or replace the active baseline."}</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Source records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
           <div><strong>8</strong><span>Products</span></div>
         </div>
-        <p className="modal-note">{demoEnabled ? <>This replaces the current <strong>working workspace</strong> with synthetic baseline occurrences. It also adds non-exported Platform, topology, Change Request, dependency, and decision detail for smoke testing. Prior source packages remain retained and can be restored from Intake &amp; Quality.</> : <>Demo mutation is blocked by configuration. Retained source-package restore, void/restore, auditing, and exact XLSX export remain available.</>}</p>
+        <p className="modal-note">{demoEnabled ? <>This replaces the active baseline with demonstration records. It also adds Platform, topology, Change Request, dependency, and decision detail for testing. Prior workbooks remain available and can be restored from Import &amp; Data Quality.</> : <>Demonstration data is disabled. Workbook restore, void/restore, audit history, and exact XLSX export remain available.</>}</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
         <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Close</button>{demoEnabled ? <button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button> : null}</footer>
       </section>

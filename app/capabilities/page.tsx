@@ -24,7 +24,7 @@ export default function CapabilitiesPage() {
   return (
     <DomainPageShell
       title="Capabilities"
-      subtitle="Governed capabilities mapped from source notes"
+      subtitle="Capabilities mapped from reported source notes"
       releaseScope={`${summaries.length} capability values`}
       actions={(
         <label className="search" style={{ width: "280px" }}>

@@ -31,7 +31,7 @@ function sourceRuntime(placement: Placement) {
 }
 
 function deploymentName(placement: Placement) {
-  return placement.productId ? <Link href={`/products/${encodeURIComponent(placement.productId)}`}>{placement.productName}</Link> : "Host-only source occurrence";
+  return placement.productId ? <Link href={`/products/${encodeURIComponent(placement.productId)}`}>{placement.productName}</Link> : "Host record only";
 }
 
 function DeploymentPyramid({ placement, onEditDeployment }: { placement: Placement; onEditDeployment?: (placement: Placement) => void }) {
@@ -40,7 +40,7 @@ function DeploymentPyramid({ placement, onEditDeployment }: { placement: Placeme
   const installation = profile?.installationLocation || "Not reported";
   const facility = profile?.facilityOrEnclave || "Not reported";
   const rack = [profile?.equipmentRack, profile?.hardwareBlade].filter(Boolean).join(" / ") || "Not reported";
-  const productDetail = placement.productId ? `24-column product · Managed version: ${version}` : "24-column host-only occurrence · No product was reported";
+  const productDetail = placement.productId ? `Reported product · Government detail: ${version}` : "Host record only · No product reported";
 
   return <article className="topology-pyramid" aria-label={`Layered deployment stack for ${placement.productName || placementLabel(placement)}`}>
     <StackBlock
@@ -64,7 +64,7 @@ function DeploymentPyramid({ placement, onEditDeployment }: { placement: Placeme
 
 export function TopologyStack({ releaseName, rows, hostProfiles, deploymentProfiles, onEditHost, onEditDeployment }: Props) {
   const hosts = topologyForRelease(rows, releaseName, hostProfiles, deploymentProfiles);
-  if (!hosts.length) return <article className="domain-card empty-state"><h3>No topology nodes in this release</h3><p>Import or add source occurrences with a ReleaseName to generate the baseline topology.</p></article>;
+  if (!hosts.length) return <article className="domain-card empty-state"><h3>No deployment records in this release</h3><p>Import or add baseline records with a ReleaseName.</p></article>;
 
   return <section className="topology-stack-list">
     <div className="topology-reading-guide"><strong>Read each stack from bottom to top</strong><span>Installation location → hardware → source host → VM → runtime → workload → application</span><i><b className="topology-key-managed" /> Government-managed extension <b className="topology-key-source" /> 24-column source</i></div>
