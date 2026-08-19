@@ -636,8 +636,8 @@ export function BaselineManager() {
         </> : null}
       </> : null}
 
-      <div className="content-grid">
-        <aside className="tree-panel">
+      <div className={selectedIndex === null ? "content-grid" : "content-grid content-grid-detail"}>
+        {selectedIndex === null ? <aside className="tree-panel">
           <div className="panel-heading">
             <div><span className="eyebrow">STRUCTURE</span><h3>Release configuration</h3></div>
             <button>•••</button>
@@ -663,7 +663,7 @@ export function BaselineManager() {
             <span className="quality-score">{scopeRows.length ? Math.round((scopeRows.length - issueCount) / scopeRows.length * 100) : 100}%</span>
             <div><strong>Automated health</strong><small>{scopeRows.length - issueCount} of {scopeRows.length} pass checks</small></div>
           </div>
-        </aside>
+        </aside> : null}
 
         <section className="records-panel">
           {selectedIndex === null ? (
