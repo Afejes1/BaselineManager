@@ -172,6 +172,7 @@ export function BaselineManager() {
   const selectedMeta = selectedIndex === null ? null : rows[selectedIndex]?.__meta ?? null;
   const selectedQuality = qualityForRecord(selected);
   const selectedReview = !selectedMeta ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[selectedMeta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
+  const reviewDraftHasChanges = reviewDraftStatus !== selectedReview.status || reviewDraftNote.trim() !== (selectedReview.note ?? "").trim();
 
   useEffect(() => {
     if (selectedIndex === null) return;
