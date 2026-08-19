@@ -668,7 +668,6 @@ export function BaselineManager() {
         {selectedIndex === null ? <aside className="tree-panel">
           <div className="panel-heading">
             <div><span className="eyebrow">BROWSE A2O TECH STACK</span><h3>Release and tier</h3></div>
-            <button>•••</button>
           </div>
           <div className="tree-list">
             <button className={activeRelease === "All releases" && activeTier === "All records" ? "tree-row selected" : "tree-row"} onClick={() => selectReleaseScope("All releases")}>
@@ -710,7 +709,7 @@ export function BaselineManager() {
                 <div><span>Automated checks</span><select value={activeQuality} onChange={(event) => setActiveQuality(event.target.value)}><option>All checks</option><option>Pass</option><option>Warning</option><option>Blocking</option></select></div>
                 <div><span>Manual review</span><select value={activeReview} onChange={(event) => setActiveReview(event.target.value)}><option>All review statuses</option><option>Not reviewed</option><option>Reviewed</option><option>Follow-up</option></select></div>
                 <div><span>Lifecycle</span><select value={activeLifecycle} onChange={(event) => setActiveLifecycle(event.target.value)}><option>Active records</option><option>Voided records</option><option>All lifecycle states</option></select></div>
-                <button onClick={() => {
+                <button className="filter-clear-button" type="button" onClick={() => {
                   selectReleaseScope("All releases");
                   setActiveQuality("All checks");
                   setActiveReview("All review statuses");
