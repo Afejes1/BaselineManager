@@ -16,6 +16,14 @@ test("architecture call records support multi-object traceability and accountabl
   assert.match(control, /Call follow-up/);
 });
 
+test("the architecture-call catalog does not depend on a compound SQLite query", () => {
+  const server = read("lib/governance-server.ts");
+  const catalog = server.slice(server.indexOf("export async function objectCatalog"), server.indexOf("function mapWorkPackage"));
+  assert.doesNotMatch(catalog, /UNION ALL/);
+  assert.match(catalog, /Promise\.all/);
+  assert.match(catalog, /baseline_occurrence/);
+});
+
 test("first-class product and work-package pages expose relationship views", () => {
   const product = read("app/products/[id]/page.tsx");
   const workPackage = read("app/delivery/[id]/page.tsx");

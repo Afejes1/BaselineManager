@@ -147,21 +147,22 @@ function catalogHref(item: CatalogRow) {
 }
 
 export async function objectCatalog(db: Database): Promise<ObjectCatalogItem[]> {
-  const result = await db.prepare(`
-    SELECT 'product' AS kind,id,canonical_name AS label,COALESCE(short_name,product_type,'Product') AS detail FROM product WHERE program_id=?
-    UNION ALL SELECT 'platform',id,code || ' · ' || name,UPPER(platform_type) || ' Platform' FROM platform WHERE program_id=?
-    UNION ALL SELECT 'organization',id,name,COALESCE(organization_type,'Organization') FROM organization WHERE program_id=?
-    UNION ALL SELECT 'release',id,name,'Release · ' || status FROM release WHERE program_id=?
-    UNION ALL SELECT 'configuration_node',id,name,REPLACE(node_type,'_',' ') FROM configuration_node WHERE program_id=?
-    UNION ALL SELECT 'capability',id,name,'Capability' FROM capability WHERE program_id=?
-    UNION ALL SELECT 'change_request',id,external_identifier || ' · ' || title,'Change Request · ' || decision_status FROM change_request WHERE program_id=?
-    UNION ALL SELECT 'objective',id,external_identifier || ' · ' || title,'LM Objective · ' || status FROM incumbent_objective WHERE program_id=?
-    UNION ALL SELECT 'initiative',id,title,'Initiative · ' || status FROM initiative WHERE program_id=?
-    UNION ALL SELECT 'work_package',w.id,w.wbs_code || ' · ' || w.title,'Government work package · ' || w.status FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=?
-    UNION ALL SELECT 'occurrence',bo.id,COALESCE(json_extract(bo.projection_payload,'$.LongName'),json_extract(bo.projection_payload,'$.ShortName'),json_extract(bo.projection_payload,'$."#"'),'Baseline record'),COALESCE(json_extract(bo.projection_payload,'$.ReleaseName'),'Release unassigned') || ' · Baseline record' FROM baseline_occurrence bo WHERE bo.program_id=? AND bo.lifecycle_status='active'
-    ORDER BY kind,label
-  `).bind(PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID, PROGRAM_ID).all<CatalogRow>();
-  return result.results.map((item) => ({ kind: item.kind, id: item.id, label: item.label, detail: item.detail || "", href: catalogHref(item) }));
+  // D1 limits the number of terms in a compound SELECT. Keep each catalog
+  // source independent, then combine the small result sets in application code.
+  const results = await Promise.all([
+    db.prepare("SELECT 'product' AS kind,id,canonical_name AS label,COALESCE(short_name,product_type,'Product') AS detail FROM product WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'platform' AS kind,id,code || ' · ' || name AS label,UPPER(platform_type) || ' Platform' AS detail FROM platform WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'organization' AS kind,id,name AS label,COALESCE(organization_type,'Organization') AS detail FROM organization WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'release' AS kind,id,name AS label,'Release · ' || status AS detail FROM release WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'configuration_node' AS kind,id,name AS label,REPLACE(node_type,'_',' ') AS detail FROM configuration_node WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'capability' AS kind,id,name AS label,'Capability' AS detail FROM capability WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'change_request' AS kind,id,external_identifier || ' · ' || title AS label,'Change Request · ' || decision_status AS detail FROM change_request WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'objective' AS kind,id,external_identifier || ' · ' || title AS label,'LM Objective · ' || status AS detail FROM incumbent_objective WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'initiative' AS kind,id,title AS label,'Initiative · ' || status AS detail FROM initiative WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'work_package' AS kind,w.id,w.wbs_code || ' · ' || w.title AS label,'Government work package · ' || w.status AS detail FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'occurrence' AS kind,bo.id,COALESCE(json_extract(bo.projection_payload,'$.LongName'),json_extract(bo.projection_payload,'$.ShortName'),json_extract(bo.projection_payload,'$.\"#\"'),'Baseline record') AS label,COALESCE(json_extract(bo.projection_payload,'$.ReleaseName'),'Release unassigned') || ' · Baseline record' AS detail FROM baseline_occurrence bo WHERE bo.program_id=? AND bo.lifecycle_status='active'").bind(PROGRAM_ID).all<CatalogRow>(),
+  ]);
+  return results.flatMap((result) => result.results).sort((left, right) => `${left.kind}:${left.label}`.localeCompare(`${right.kind}:${right.label}`)).map((item) => ({ kind: item.kind, id: item.id, label: item.label, detail: item.detail || "", href: catalogHref(item) }));
 }
 
 function mapWorkPackage(work: WorkPackageRow, objectiveLinks: WorkPackageObjectiveRow[]) {
