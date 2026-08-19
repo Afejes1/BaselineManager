@@ -19,7 +19,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/capabilities", label: "Capabilities", icon: "★", enabled: true },
   { href: "/changes", label: "Change Requests", icon: "◫", enabled: true },
   { href: "/reports", label: "Decision Reports", icon: "✦", enabled: true },
-  { href: "/initiatives", label: "Delivery Plans & WBS", icon: "🗂", enabled: true },
+  { href: "/initiatives", label: "Initiatives & Decisions", icon: "🗂", enabled: true },
   { href: "/evidence", label: "Evidence Library", icon: "▣", enabled: true },
   { href: "/briefs", label: "Saved Briefs", icon: "◇", enabled: true },
 ];

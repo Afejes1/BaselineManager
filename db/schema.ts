@@ -363,6 +363,11 @@ export const initiatives = sqliteTable("initiative", {
   consequence: text("consequence"),
   desiredOutcome: text("desired_outcome"),
   decisionAsk: text("decision_ask"),
+  asIsStatement: text("as_is_statement"),
+  toBeStatement: text("to_be_statement"),
+  successMeasures: text("success_measures"),
+  briefingAudience: text("briefing_audience"),
+  decisionNeededBy: text("decision_needed_by"),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
 }, (t) => [
@@ -384,6 +389,164 @@ export const initiativeScopes = sqliteTable("initiative_scope", {
   check("initiative_scope_kind", sql`${t.scopeKind} IN ('product','release','capability','occurrence','configuration_node')`),
   uniqueIndex("initiative_scope_uq").on(t.initiativeId, t.scopeKind, t.scopeId),
   index("initiative_scope_lookup_ix").on(t.scopeKind, t.scopeId),
+]);
+
+// An Initiative is the leadership decision frame. Change Requests remain the
+// Government funding/prioritization units and may contribute to more than one
+// Initiative without becoming owned by this application.
+export const initiativeChangeRequests = sqliteTable("initiative_change_request", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  relationship: text("relationship").notNull().default("delivers"),
+  contributionSummary: text("contribution_summary"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  ...timestamps,
+}, (t) => [
+  check("initiative_change_relationship", sql`${t.relationship} IN ('delivers','enables','constrains','supports')`),
+  uniqueIndex("initiative_change_request_uq").on(t.initiativeId, t.changeRequestId),
+  index("initiative_change_request_request_ix").on(t.changeRequestId, t.initiativeId),
+]);
+
+// Incumbent Objectives are externally governed technical work units beneath a
+// Change Request. Their dates and status support analysis here but never
+// replace the incumbent system of record.
+export const incumbentObjectives = sqliteTable("incumbent_objective", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  externalSystem: text("external_system").notNull(),
+  externalIdentifier: text("external_identifier").notNull(),
+  title: text("title").notNull(),
+  summary: text("summary"),
+  technicalOwner: text("technical_owner"),
+  status: text("status").notNull().default("proposed"),
+  plannedStart: text("planned_start"),
+  plannedFinish: text("planned_finish"),
+  actualStart: text("actual_start"),
+  actualFinish: text("actual_finish"),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("incumbent_objective_status", sql`${t.status} IN ('proposed','planned','in_progress','blocked','verification','complete','cancelled')`),
+  uniqueIndex("incumbent_objective_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
+  index("incumbent_objective_request_ix").on(t.changeRequestId, t.status, t.plannedFinish),
+]);
+
+// Estimates are append-only assessments with explicit provenance. This keeps
+// an incumbent claim separate from a Government or independent assessment.
+export const objectiveEstimates = sqliteTable("objective_estimate", {
+  id: text("id").primaryKey(),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  estimateSource: text("estimate_source").notNull(),
+  hoursLow: real("hours_low"),
+  hoursLikely: real("hours_likely"),
+  hoursHigh: real("hours_high"),
+  costLow: real("cost_low"),
+  costLikely: real("cost_likely"),
+  costHigh: real("cost_high"),
+  basis: text("basis").notNull(),
+  assumptions: text("assumptions"),
+  sourceReference: text("source_reference"),
+  asOf: text("as_of").notNull(),
+  confidence: text("confidence").notNull().default("unassessed"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("objective_estimate_source", sql`${t.estimateSource} IN ('incumbent','government','independent')`),
+  check("objective_estimate_confidence", sql`${t.confidence} IN ('unassessed','low','medium','high')`),
+  check("objective_estimate_nonnegative", sql`COALESCE(${t.hoursLow},0) >= 0 AND COALESCE(${t.hoursLikely},0) >= 0 AND COALESCE(${t.hoursHigh},0) >= 0 AND COALESCE(${t.costLow},0) >= 0 AND COALESCE(${t.costLikely},0) >= 0 AND COALESCE(${t.costHigh},0) >= 0`),
+  index("objective_estimate_objective_ix").on(t.objectiveId, t.estimateSource, t.asOf),
+]);
+
+// Requirement traces reference the authoritative requirements source. The app
+// records the proposed change and verification state; it does not silently
+// become the requirements system of record.
+export const requirementTraces = sqliteTable("requirement_trace", {
+  id: text("id").primaryKey(),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  externalIdentifier: text("external_identifier").notNull(),
+  title: text("title").notNull(),
+  sourceSystem: text("source_system").notNull(),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  changeAction: text("change_action").notNull().default("verify"),
+  beforeText: text("before_text"),
+  afterText: text("after_text"),
+  rationale: text("rationale"),
+  traceStatus: text("trace_status").notNull().default("identified"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("requirement_trace_action", sql`${t.changeAction} IN ('add','modify','retire','verify','none')`),
+  check("requirement_trace_status", sql`${t.traceStatus} IN ('identified','analysis_needed','traced','verified','not_applicable')`),
+  uniqueIndex("requirement_trace_objective_external_uq").on(t.objectiveId, t.externalIdentifier),
+  index("requirement_trace_status_ix").on(t.objectiveId, t.traceStatus),
+]);
+
+export const acceptanceCriteria = sqliteTable("acceptance_criterion", {
+  id: text("id").primaryKey(),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  requirementTraceId: text("requirement_trace_id").references(() => requirementTraces.id),
+  tier: text("tier").notNull(),
+  code: text("code").notNull(),
+  statement: text("statement").notNull(),
+  verificationMethod: text("verification_method").notNull(),
+  status: text("status").notNull().default("draft"),
+  plannedDate: text("planned_date"),
+  actualDate: text("actual_date"),
+  evidenceReference: text("evidence_reference"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("acceptance_criterion_tier", sql`${t.tier} IN ('tier_3','tier_4','other')`),
+  check("acceptance_criterion_method", sql`${t.verificationMethod} IN ('analysis','demonstration','inspection','test','review')`),
+  check("acceptance_criterion_status", sql`${t.status} IN ('draft','ready','in_verification','passed','failed','waived')`),
+  uniqueIndex("acceptance_criterion_objective_code_uq").on(t.objectiveId, t.code),
+  index("acceptance_criterion_status_ix").on(t.objectiveId, t.status, t.plannedDate),
+]);
+
+export const acceptanceSignoffs = sqliteTable("acceptance_signoff", {
+  id: text("id").primaryKey(),
+  criterionId: text("criterion_id").notNull().references(() => acceptanceCriteria.id),
+  signoffRole: text("signoff_role").notNull(),
+  signer: text("signer"),
+  decision: text("decision").notNull().default("pending"),
+  decidedAt: text("decided_at"),
+  rationale: text("rationale"),
+  // Kept as a durable identifier instead of a declaration-time FK because
+  // evidence_document is declared later in this schema module.
+  evidenceDocumentId: text("evidence_document_id"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("acceptance_signoff_decision", sql`${t.decision} IN ('pending','accepted','rejected','waived')`),
+  uniqueIndex("acceptance_signoff_role_uq").on(t.criterionId, t.signoffRole),
+  index("acceptance_signoff_decision_ix").on(t.criterionId, t.decision),
+]);
+
+export const initiativeMilestones = sqliteTable("initiative_milestone", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  changeRequestId: text("change_request_id").references(() => changeRequests.id),
+  objectiveId: text("objective_id").references(() => incumbentObjectives.id),
+  title: text("title").notNull(),
+  milestoneType: text("milestone_type").notNull(),
+  plannedDate: text("planned_date").notNull(),
+  actualDate: text("actual_date"),
+  status: text("status").notNull().default("planned"),
+  consequenceIfMissed: text("consequence_if_missed"),
+  owner: text("owner"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("initiative_milestone_type", sql`${t.milestoneType} IN ('decision','delivery','verification','fielding','dependency')`),
+  check("initiative_milestone_status", sql`${t.status} IN ('planned','at_risk','complete','missed')`),
+  index("initiative_milestone_timeline_ix").on(t.initiativeId, t.plannedDate, t.status),
+  index("initiative_milestone_request_ix").on(t.changeRequestId, t.plannedDate),
 ]);
 
 // WBS packages are an intentionally lightweight hierarchy beneath a single
@@ -526,6 +689,13 @@ export const schema = {
   changeEffects,
   changeDependencies,
   initiatives,
+  initiativeChangeRequests,
+  incumbentObjectives,
+  objectiveEstimates,
+  requirementTraces,
+  acceptanceCriteria,
+  acceptanceSignoffs,
+  initiativeMilestones,
   initiativeScopes,
   workPackages,
   governanceRecords,

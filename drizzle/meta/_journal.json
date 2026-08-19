@@ -43,6 +43,13 @@
       "when": 1787313600000,
       "tag": "0005_governed_change_platforms",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1787106337920,
+      "tag": "0006_initiative_decision_chain",
+      "breakpoints": true
     }
   ]
 }

@@ -136,6 +136,19 @@ export async function POST(request: Request) {
     // Demo-only governed extensions must never leak into a subsequently loaded
     // stakeholder workbook. A fresh demo import recreates them immediately in
     // /api/demo after source materialization.
+    statements.push(db.prepare("DELETE FROM acceptance_signoff WHERE criterion_id IN (SELECT id FROM acceptance_criterion WHERE objective_id LIKE 'demo-objective-%')"));
+    statements.push(db.prepare("DELETE FROM acceptance_criterion WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM requirement_trace WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id LIKE 'demo-objective-%'"));
+    statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM brief_publication WHERE brief_id IN (SELECT id FROM executive_brief WHERE initiative_id LIKE 'demo-initiative-%')"));
+    statements.push(db.prepare("DELETE FROM executive_brief WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM evidence_document WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id LIKE 'demo-initiative-%'"));
+    statements.push(db.prepare("DELETE FROM initiative WHERE id LIKE 'demo-initiative-%'"));
     statements.push(db.prepare("DELETE FROM change_dependency WHERE predecessor_request_id LIKE 'demo-change-%' OR successor_request_id LIKE 'demo-change-%'"));
     statements.push(db.prepare("DELETE FROM change_effect WHERE change_request_id LIKE 'demo-change-%'"));
     statements.push(db.prepare("DELETE FROM change_request WHERE id LIKE 'demo-change-%'"));
