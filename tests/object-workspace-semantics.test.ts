@@ -43,3 +43,13 @@ test("an Initiative call record uses the canonical Initiative identifier", () =>
   assert.match(workspace, /Current page · linked automatically/);
   assert.match(workspace, /new Set\(\[currentKey, \.\.\.selected\]\)/);
 });
+
+test("traceability links identify and navigate to their governed object", () => {
+  const evidence = read("app/evidence/page.tsx");
+  const server = read("lib/governance-server.ts");
+  assert.match(evidence, /aria-label="Hard links"/);
+  assert.match(evidence, /displayStatus\(link\.entityKind\)/);
+  assert.match(evidence, /href=\{link\.href\}/);
+  assert.match(server, /function governanceLinkHref/);
+  assert.match(server, /href: governanceLinkHref\(link\.entity_kind, link\.entity_id, link\.display_label\)/);
+});

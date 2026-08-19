@@ -81,6 +81,7 @@ export type GovernanceLink = {
   entityId: string;
   relationship: string;
   displayLabel: string | null;
+  href: string | null;
 };
 
 export type ObjectCatalogItem = {

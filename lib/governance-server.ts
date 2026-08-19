@@ -114,7 +114,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     workPackageDependencies: workDependencyResult.results.map((entry) => ({ id: entry.id, predecessorWorkPackageId: entry.predecessor_work_package_id, successorWorkPackageId: entry.successor_work_package_id, relationship: entry.relationship, lagDays: entry.lag_days, status: entry.status, rationale: entry.rationale, sourceReference: entry.source_reference, updatedAt: entry.updated_at })),
     records: recordResult.results.map((entry) => ({
       id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, participants: entry.participants, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, actionItems: entry.action_items, impact: entry.impact,
-      links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label })),
+      links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label, href: governanceLinkHref(link.entity_kind, link.entity_id, link.display_label) })),
       documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
       createdAt: entry.created_at, updatedAt: entry.updated_at,
     })),
@@ -143,6 +143,22 @@ function catalogHref(item: CatalogRow) {
   if (item.kind === "initiative") return `/initiatives/${encodeURIComponent(item.id)}`;
   if (item.kind === "work_package") return `/delivery/${encodeURIComponent(item.id)}`;
   if (item.kind === "occurrence") return `/occurrences/${encodeURIComponent(item.id)}`;
+  return null;
+}
+
+function governanceLinkHref(kind: GovernanceEntityKind, id: string, displayLabel: string | null) {
+  const label = displayLabel || id;
+  if (kind === "product") return `/products/${encodeURIComponent(routeSlug(label))}`;
+  if (kind === "organization") return `/organizations/${encodeURIComponent(routeSlug(label))}`;
+  if (kind === "capability") return `/capabilities/${encodeURIComponent(routeSlug(label))}`;
+  if (kind === "release") return `/releases/${encodeURIComponent(label)}`;
+  if (kind === "configuration_node") return `/configuration/${encodeURIComponent(id)}`;
+  if (kind === "platform") return `/platforms/${encodeURIComponent(id)}`;
+  if (kind === "change_request") return `/changes/${encodeURIComponent(id)}`;
+  if (kind === "objective") return `/objectives/${encodeURIComponent(id)}`;
+  if (kind === "initiative") return `/initiatives/${encodeURIComponent(id)}`;
+  if (kind === "work_package") return `/delivery/${encodeURIComponent(id)}`;
+  if (kind === "occurrence") return `/occurrences/${encodeURIComponent(id)}`;
   return null;
 }
 
