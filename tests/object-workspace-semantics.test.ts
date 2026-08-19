@@ -34,3 +34,12 @@ test("first-class product and work-package pages expose relationship views", () 
   assert.match(workPackage, /Schedule logic/);
   assert.match(workPackage, /ObjectRecordsPanel/);
 });
+
+test("an Initiative call record uses the canonical Initiative identifier", () => {
+  const initiative = read("app/initiatives/[initiative]/page.tsx");
+  const workspace = read("components/object-workspace.tsx");
+  assert.match(initiative, /objectContext=\{\{ kind: "initiative", id: bundle\.initiative\.id/);
+  assert.match(initiative, /ObjectRecordsPanel context=\{\{ kind: "initiative", id: bundle\.initiative\.id/);
+  assert.match(workspace, /Current page · linked automatically/);
+  assert.match(workspace, /new Set\(\[currentKey, \.\.\.selected\]\)/);
+});

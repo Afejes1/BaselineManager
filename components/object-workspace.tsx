@@ -17,10 +17,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 function CallNoteDialog({ context, onDismiss }: { context?: ObjectContext; onDismiss: () => void }) {
   const governance = useGovernancePortfolio();
+  const currentKey = context ? `${context.kind}|${context.id}` : "";
   const [catalog, setCatalog] = useState<ObjectCatalogItem[]>([]);
   const [catalogError, setCatalogError] = useState("");
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<string[]>(context ? [`${context.kind}|${context.id}`] : []);
+  const [selected, setSelected] = useState<string[]>(currentKey ? [currentKey] : []);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [draft, setDraft] = useState({ title: `Architecture call — ${today()}`, occurredAt: today(), externalReference: "", owner: "", participants: "", summary: "", decisionAsk: "", actionItems: "", dueDate: "", impact: "", status: "open" as GovernanceRecordStatus });
@@ -37,12 +38,14 @@ function CallNoteDialog({ context, onDismiss }: { context?: ObjectContext; onDis
 
   const visible = useMemo(() => {
     const normalized = search.trim().toLowerCase();
-    return catalog.filter((item) => !normalized || `${item.label} ${item.detail} ${item.kind}`.toLowerCase().includes(normalized)).slice(0, 80);
-  }, [catalog, search]);
+    return catalog
+      .filter((item) => `${item.kind}|${item.id}` !== currentKey)
+      .filter((item) => !normalized || `${item.label} ${item.detail} ${item.kind}`.toLowerCase().includes(normalized))
+      .slice(0, 80);
+  }, [catalog, currentKey, search]);
 
   function toggle(item: ObjectCatalogItem) {
     const key = `${item.kind}|${item.id}`;
-    if (context && key === `${context.kind}|${context.id}`) return;
     setSelected((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key]);
   }
 
@@ -50,7 +53,8 @@ function CallNoteDialog({ context, onDismiss }: { context?: ObjectContext; onDis
     if (!draft.title.trim() || !draft.summary.trim()) { setNotice("Title and discussion summary are required."); return; }
     setSaving(true); setNotice("");
     try {
-      const links = selected.map((key) => { const split = key.indexOf("|"); return { kind: key.slice(0, split), id: key.slice(split + 1), relationship: "discusses" }; });
+      const selectedKeys = currentKey ? [...new Set([currentKey, ...selected])] : selected;
+      const links = selectedKeys.map((key) => { const split = key.indexOf("|"); return { kind: key.slice(0, split), id: key.slice(split + 1), relationship: "discusses" }; });
       await governance.mutate("create_governance_record", { recordType: "technical_call", ...draft, links });
       onDismiss();
     } catch (reason) {
@@ -66,7 +70,7 @@ function CallNoteDialog({ context, onDismiss }: { context?: ObjectContext; onDis
     <label className="modal-field">Participants<input value={draft.participants} onChange={(event) => setDraft({ ...draft, participants: event.target.value })} placeholder="Names, offices, or organizations" /></label>
     <label className="modal-field">Discussion summary<textarea rows={4} value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="Facts reported, positions stated, and unresolved points" /></label>
     <div className="form-grid"><label className="modal-field">Decision or clarification required<textarea rows={3} value={draft.decisionAsk} onChange={(event) => setDraft({ ...draft, decisionAsk: event.target.value })} /></label><label className="modal-field">Action items<textarea rows={3} value={draft.actionItems} onChange={(event) => setDraft({ ...draft, actionItems: event.target.value })} /></label><label className="modal-field">Follow-up due<input type="date" value={draft.dueDate} onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} /></label><label className="modal-field">Baseline / delivery impact<input value={draft.impact} onChange={(event) => setDraft({ ...draft, impact: event.target.value })} /></label></div>
-    <section className="object-link-picker"><div className="section-toolbar"><div><span className="eyebrow">HARD LINKS</span><h3>Objects discussed</h3></div><span>{selected.length} linked</span></div>{context ? <div className="locked-object-link"><strong>Current page</strong><span>{context.label}</span></div> : null}<label className="search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find product, MCP, Objective, Platform, release, Initiative, or WBS package" /></label>{catalogError ? <p className="error-copy">{catalogError}</p> : null}<div className="object-link-results">{visible.map((item) => { const key = `${item.kind}|${item.id}`; const locked = context && key === `${context.kind}|${context.id}`; return <label key={key} className={selected.includes(key) ? "selected" : ""}><input type="checkbox" checked={selected.includes(key)} disabled={Boolean(locked)} onChange={() => toggle(item)} /><span><strong>{item.label}</strong><small>{displayStatus(item.kind)} · {item.detail}</small></span></label>; })}</div></section>
+    <section className="object-link-picker"><div className="section-toolbar"><div><span className="eyebrow">HARD LINKS</span><h3>Objects discussed</h3></div><span>{selected.length} linked</span></div>{context ? <div className="locked-object-link"><strong>Current page · linked automatically</strong><span>{context.label}</span></div> : null}<label className="search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find product, MCP, Objective, Platform, release, Initiative, or WBS package" /></label>{catalogError ? <p className="error-copy">{catalogError}</p> : null}<div className="object-link-results">{visible.map((item) => { const key = `${item.kind}|${item.id}`; return <label key={key} className={selected.includes(key) ? "selected" : ""}><input type="checkbox" checked={selected.includes(key)} onChange={() => toggle(item)} /><span><strong>{item.label}</strong><small>{displayStatus(item.kind)} · {item.detail}</small></span></label>; })}</div></section>
     {notice ? <p className="error-copy" role="alert">{notice}</p> : null}
     <footer><button className="ghost-button" type="button" disabled={saving} onClick={onDismiss}>Cancel</button><button className="primary-button" type="button" disabled={saving || governance.loading} onClick={() => void save()}>{saving ? "Saving…" : "Save call record"}</button></footer>
   </ViewportModal>;
