@@ -72,4 +72,7 @@ test("delivery model keeps Government work Initiative-owned and requirements reu
   assert.match(demo, /INSERT INTO requirement \(/);
   assert.match(demo, /INSERT INTO objective_requirement \(/);
   assert.match(demo, /objective_requirement_id/);
+  assert.match(demo, /Field resilient mission services/);
+  assert.match(demo, /Establish execution analytics and retire duplicate gateway/);
+  assert.match(demo, /initiatives: 3/);
 });

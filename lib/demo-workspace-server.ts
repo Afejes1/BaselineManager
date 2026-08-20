@@ -97,7 +97,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     JOIN configuration_node n ON n.id=bo.configuration_node_id
     LEFT JOIN product p ON p.id=bo.product_id
     LEFT JOIN baseline_deployment_state bds ON bds.baseline_id=bo.baseline_id AND bds.deployment_id=bo.deployment_id
-    WHERE bo.program_id=? AND bo.workspace_id=?
+    WHERE bo.program_id=? AND bo.workspace_id=? AND bo.lifecycle_status='active'
     ORDER BY sr.row_number ASC
   `).bind(PROGRAM_ID, WORKSPACE_ID).all<{
     occurrence_id: string; release_id: string; configuration_node_id: string; product_id: string | null;
@@ -169,7 +169,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     statements.push(db.prepare("INSERT INTO platform (id,program_id,parent_id,configuration_node_id,platform_type,code,normalized_code,name,normalized_name,status,description,installation_location,country_code,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id,configuration_node_id=excluded.configuration_node_id,platform_type=excluded.platform_type,code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,normalized_name=excluded.normalized_name,status=excluded.status,description=excluded.description,installation_location=excluded.installation_location,country_code=excluded.country_code,updated_at=excluded.updated_at")
       .bind(platform.id, PROGRAM_ID, platform.parentId, anchor?.configurationNodeId || null, platform.type, platform.code, platform.code.toLowerCase(), platform.name, platform.name.toLowerCase(), platform.sourceKey ? "planned" : "active", "Synthetic governed Platform used to exercise hierarchy, rollups, and decision effects.", platform.location, platform.country, actor.id, at, at));
     if (anchor) statements.push(db.prepare("INSERT INTO platform_baseline_assignment (id,program_id,platform_id,baseline_occurrence_id,release_id,assignment_role,confidence,review_status,source_reference,source_as_of,reviewed_by_user_id,reviewed_at,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id,assignment_role) DO UPDATE SET platform_id=excluded.platform_id,release_id=excluded.release_id,confidence=excluded.confidence,review_status=excluded.review_status,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,reviewed_by_user_id=excluded.reviewed_by_user_id,reviewed_at=excluded.reviewed_at,updated_at=excluded.updated_at")
-      .bind(`demo-platform-assignment-${platform.id}`, PROGRAM_ID, platform.id, anchor.occurrenceId, anchor.releaseId, "primary", "confirmed", "reviewed", "Synthetic demonstration assignment", "2026-08-18", actor.id, at, actor.id, at, at));
+      .bind(`demo-platform-assignment-${platform.id}-${anchor.occurrenceId}`, PROGRAM_ID, platform.id, anchor.occurrenceId, anchor.releaseId, "primary", "confirmed", "reviewed", "Synthetic demonstration assignment", "2026-08-18", actor.id, at, actor.id, at, at));
     if (anchor?.organizationId) statements.push(db.prepare("INSERT INTO platform_organization (id,platform_id,organization_id,relationship_type,source_reference,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(platform_id,organization_id,relationship_type) DO UPDATE SET source_reference=excluded.source_reference,updated_at=excluded.updated_at")
       .bind(`demo-platform-org-${platform.id}`, platform.id, anchor.organizationId, "support", "Synthetic demo relationship", at, at));
   }
@@ -260,13 +260,17 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("DELETE FROM acceptance_signoff WHERE criterion_id IN (SELECT id FROM acceptance_criterion WHERE objective_id IN (?,?,?))").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM acceptance_criterion WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_requirement WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
-  statements.push(db.prepare("DELETE FROM requirement WHERE id LIKE 'demo-requirement-%'"));
+  // 0013 may have migrated these earlier Java demonstration requirements with
+  // `migrated-requirement-*` IDs. Remove only those predecessors here; the
+  // other scenario requirements are cleaned in their own dependency order.
+  statements.push(db.prepare("DELETE FROM requirement WHERE id IN ('demo-requirement-sbom','demo-requirement-runtime','demo-requirement-mission','demo-requirement-interface') OR (program_id=? AND source_system='Synthetic authoritative requirements repository' AND external_identifier IN ('DEMO-REQ-CM-031','DEMO-REQ-CYB-104','DEMO-REQ-MIS-220','DEMO-REQ-INT-118'))").bind(PROGRAM_ID));
   // Remove pre-0013 demonstration traces left by an older demo load.
   statements.push(db.prepare("DELETE FROM requirement_trace WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_source_row WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_source_package WHERE external_system='Synthetic incumbent objective register' AND NOT EXISTS (SELECT 1 FROM objective_source_row WHERE objective_source_row.source_package_id=objective_source_package.id)"));
   statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id=?").bind(javaInitiativeId));
+  statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id=?").bind(javaInitiativeId));
@@ -365,7 +369,166 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     ["demo-wbs-dependency-authority-fielding", "demo-java-wbs-3", "demo-java-wbs-4", "SS", 0, "accepted", "Acceptance authority identification must begin before the decision package is finalized.", "DEMO://WBS-LOGIC/JAVA8"],
   ] as const) statements.push(db.prepare("INSERT INTO work_package_dependency (id,predecessor_work_package_id,successor_work_package_id,relationship,lag_days,status,rationale,source_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(...dependency, actor.id, at, at));
 
-  statements.push(audit(db, actor, "demonstration_workspace_enriched", "baseline_workspace", WORKSPACE_ID, { occurrences: rows.length, managedTopology: true, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length, initiatives: 1, objectives: objectivePlan.length, requirements: requirementPlan.length, acceptanceCriteria: criterionPlan.length }));
+  // Two additional decision scenarios give analysts a useful report set: one
+  // pending funding decision and one active initiative with a deliberate
+  // deferment. They use the same governed objects as the rest of the demo;
+  // no synthetic row is a special report-only fixture.
+  const resilienceInitiativeId = "demo-initiative-service-resilience";
+  const analyticsInitiativeId = "demo-initiative-operations-analytics";
+  const supplementalObjectiveIds = [
+    "demo-objective-platform-hardening",
+    "demo-objective-mps-relocation",
+    "demo-objective-tls-resilience",
+    "demo-objective-eis-delivery",
+    "demo-objective-gateway-retirement",
+  ] as const;
+  const supplementalInitiativeIds = [resilienceInitiativeId, analyticsInitiativeId] as const;
+
+  statements.push(db.prepare("DELETE FROM work_package_dependency WHERE predecessor_work_package_id LIKE 'demo-resilience-wbs-%' OR successor_work_package_id LIKE 'demo-resilience-wbs-%' OR predecessor_work_package_id LIKE 'demo-analytics-wbs-%' OR successor_work_package_id LIKE 'demo-analytics-wbs-%'"));
+  statements.push(db.prepare("DELETE FROM work_package_objective WHERE work_package_id IN (SELECT id FROM work_package WHERE initiative_id IN (?,?))").bind(...supplementalInitiativeIds));
+  statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
+  statements.push(db.prepare("DELETE FROM acceptance_signoff WHERE criterion_id IN (SELECT id FROM acceptance_criterion WHERE objective_id IN (?,?,?,?,?))").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM acceptance_criterion WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM objective_requirement WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM requirement WHERE id LIKE 'demo-requirement-resilience-%' OR id LIKE 'demo-requirement-analytics-%'"));
+  statements.push(db.prepare("DELETE FROM requirement_trace WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
+  statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
+  statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
+
+  const supplementalInitiatives = [
+    [
+      resilienceInitiativeId, r7, "Field resilient mission services", "field resilient mission services", "decision_required", "high", "Government Service Delivery Cell (synthetic)", "2027-03-15",
+      "If funding is delayed, Mission Planning Service and Threat Library Service retain constrained capacity and their planned Release 7 positions are not available for fielding.",
+      "Field two capacity-validated mission services on a hardened shared platform with verified recovery and deployment evidence.",
+      "Fund DEMO-MCP-061 and DEMO-DSOR-062 after confirming the shared hardening prerequisite remains funded and the residual capacity scope is bounded.",
+      "Release 5 reports both services on smaller nodes. Release 6 introduces capacity and host changes, but the Release 7 fielding sequence remains dependent on shared platform hardening.",
+      "Release 7 fields Mission Planning Service and Threat Library Service with approved shared controls, confirmed deployment positions, and recovery evidence.",
+      "Shared hardening accepted; both service deployments confirmed; required capacity values verified; recovery evidence accepted; no unapproved release-to-release move.",
+      "Colonel Scott · synthetic demonstration", "2026-10-10",
+    ],
+    [
+      analyticsInitiativeId, r7, "Establish execution analytics and retire duplicate gateway", "establish execution analytics and retire duplicate gateway", "active", "medium", "Government Operations Analysis Cell (synthetic)", "2027-04-30",
+      "If the gateway is retired before partner certification, interchange continuity is at risk. If execution analytics is delayed, leadership continues to rely on manual consolidation.",
+      "Field Execution Insights Service while retaining the Data Gateway until partner certification evidence supports a controlled retirement decision.",
+      "Continue funded DEMO-MCP-071. Maintain the DEMO-DSOR-072 deferment until partner certification and analytics validation are complete.",
+      "Release 7 introduces Execution Insights Service, while Data Gateway remains the existing interchange position pending partner certification.",
+      "Leadership receives an auditable execution view; Data Gateway is retired only after partner validation is recorded and accepted.",
+      "Execution Insights Service fielded; leadership report validated; partner certification recorded; Data Gateway retirement decision made against evidence.",
+      "Operations decision forum · synthetic demonstration", "2026-11-14",
+    ],
+  ] as const;
+  for (const initiative of supplementalInitiatives) statements.push(db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,as_is_statement,to_be_statement,success_measures,briefing_audience,decision_needed_by,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET primary_release_id=excluded.primary_release_id,title=excluded.title,normalized_title=excluded.normalized_title,status=excluded.status,priority=excluded.priority,owner=excluded.owner,target_date=excluded.target_date,consequence=excluded.consequence,desired_outcome=excluded.desired_outcome,decision_ask=excluded.decision_ask,as_is_statement=excluded.as_is_statement,to_be_statement=excluded.to_be_statement,success_measures=excluded.success_measures,briefing_audience=excluded.briefing_audience,decision_needed_by=excluded.decision_needed_by,updated_at=excluded.updated_at")
+    .bind(initiative[0], PROGRAM_ID, ...initiative.slice(1), actor.id, at, at));
+
+  const productFor = (sourceKey: string) => rows.find((row) => row.sourceKey === sourceKey)?.productId || null;
+  for (const [id, initiativeId, productId, label] of [
+    ["demo-resilience-scope-mps", resilienceInitiativeId, productFor("DEMO-R7-001"), "Mission Planning Service"],
+    ["demo-resilience-scope-tls", resilienceInitiativeId, productFor("DEMO-R7-002"), "Threat Library Service"],
+    ["demo-analytics-scope-eis", analyticsInitiativeId, productFor("DEMO-R7-006"), "Execution Insights Service"],
+    ["demo-analytics-scope-gateway", analyticsInitiativeId, productFor("DEMO-R6-003"), "Data Gateway"],
+  ] as const) if (productId) statements.push(db.prepare("INSERT INTO initiative_scope (id,initiative_id,scope_kind,scope_id,display_label,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id, initiativeId, "product", productId, label, at, at));
+
+  for (const [id, initiativeId, changeRequestId, relationship, contributionSummary, sortOrder] of [
+    ["demo-resilience-link-1", resilienceInitiativeId, "demo-change-hardening", "enables", "Provides the common hardened platform required before service fielding.", 0],
+    ["demo-resilience-link-2", resilienceInitiativeId, "demo-change-mps", "delivers", "Moves and increases Mission Planning Service capacity.", 1],
+    ["demo-resilience-link-3", resilienceInitiativeId, "demo-change-tls", "delivers", "Builds threat-data capacity and the Release 7 deployment position.", 2],
+    ["demo-analytics-link-1", analyticsInitiativeId, "demo-change-eis", "delivers", "Fields the analytics product used for auditable leadership reporting.", 0],
+    ["demo-analytics-link-2", analyticsInitiativeId, "demo-change-gateway", "constrains", "Retirement remains deferred until partner certification and analytics validation are complete.", 1],
+  ] as const) statements.push(db.prepare("INSERT INTO initiative_change_request (id,initiative_id,change_request_id,relationship,contribution_summary,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id, initiativeId, changeRequestId, relationship, contributionSummary, sortOrder, at, at));
+
+  const supplementalObjectives = [
+    ["demo-objective-platform-hardening", "demo-change-hardening", "DEMO-OBJ-PLT-01", "Harden shared platform controls", "Apply approved certificate, configuration, and shared runtime controls required by dependent service deployments.", "Incumbent platform infrastructure team (synthetic)", "complete", "2026-07-01", "2026-08-28", "2026-07-02", "2026-08-26", "DEMO://OBJECTIVES/PLT-01"],
+    ["demo-objective-mps-relocation", "demo-change-mps", "DEMO-OBJ-PLT-02", "Relocate Mission Planning Service and verify capacity", "Move Mission Planning Service to the planned position, apply the approved capacity baseline, and document rollback.", "Incumbent mission applications IPT (synthetic)", "planned", "2026-10-01", "2027-01-31", null, null, "DEMO://OBJECTIVES/PLT-02"],
+    ["demo-objective-tls-resilience", "demo-change-tls", "DEMO-OBJ-PLT-03", "Field resilient threat-data service", "Scale and relocate Threat Library Service, validate recovery, and demonstrate threat-data availability at the target position.", "Incumbent integration services IPT (synthetic)", "blocked", "2026-10-15", "2027-03-15", null, null, "DEMO://OBJECTIVES/PLT-03"],
+    ["demo-objective-eis-delivery", "demo-change-eis", "DEMO-OBJ-OPS-01", "Field Execution Insights Service", "Deploy the analytics service, establish its data inputs, and validate the leadership execution report.", "Incumbent operations applications team (synthetic)", "in_progress", "2026-09-01", "2027-02-13", "2026-09-03", null, "DEMO://OBJECTIVES/OPS-01"],
+    ["demo-objective-gateway-retirement", "demo-change-gateway", "DEMO-OBJ-OPS-02", "Validate partner readiness for Data Gateway retirement", "Collect partner certification evidence and recommend retain, retire, or rephase the legacy Data Gateway position.", "Incumbent interoperability team (synthetic)", "blocked", "2026-10-01", "2027-04-30", null, null, "DEMO://OBJECTIVES/OPS-02"],
+  ] as const;
+  for (const objective of supplementalObjectives) statements.push(db.prepare("INSERT INTO incumbent_objective (id,program_id,change_request_id,external_system,external_identifier,title,summary,technical_owner,status,planned_start,planned_finish,actual_start,actual_finish,source_locator,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(objective[0], PROGRAM_ID, objective[1], "Synthetic incumbent objective register", ...objective.slice(2), "2026-08-20", actor.id, at, at));
+
+  for (const [id, dependentChangeRequestId, prerequisiteObjectiveId, relationship, status, rationale] of [
+    ["demo-objective-dependency-hardening-mps", "demo-change-mps", "demo-objective-platform-hardening", "requires", "accepted", "Mission Planning Service relocation cannot field before shared controls are accepted."],
+    ["demo-objective-dependency-hardening-tls", "demo-change-tls", "demo-objective-platform-hardening", "requires", "accepted", "Threat-data fielding requires the hardened shared platform."],
+    ["demo-objective-dependency-eis-gateway", "demo-change-gateway", "demo-objective-eis-delivery", "requires", "proposed", "Gateway retirement requires the new analytics view to validate operational coverage."],
+  ] as const) statements.push(db.prepare("INSERT INTO change_request_objective_dependency (id,dependent_change_request_id,prerequisite_objective_id,relationship,status,rationale,source_reference,source_as_of,evidence_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(id, dependentChangeRequestId, prerequisiteObjectiveId, relationship, status, rationale, "DEMO://DEPENDENCY-REGISTER/PORTFOLIO", "2026-08-20", null, actor.id, at, at));
+
+  for (const [objectiveId, requestId, rationale] of [
+    ["demo-objective-platform-hardening", "demo-change-hardening", "This Objective delivers the common platform prerequisite."],
+    ["demo-objective-mps-relocation", "demo-change-mps", "This Objective is the supplier delivery path for the Mission Planning Service change."],
+    ["demo-objective-tls-resilience", "demo-change-tls", "This Objective is the supplier delivery path for the Threat Library Service change."],
+    ["demo-objective-eis-delivery", "demo-change-eis", "This Objective fields the leadership analytics capability."],
+    ["demo-objective-gateway-retirement", "demo-change-gateway", "This Objective supplies the partner-readiness evidence for the gateway decision."],
+  ] as const) for (const effectId of effectIdsByRequest.get(requestId) || []) statements.push(db.prepare("INSERT INTO objective_effect_attribution (id,objective_id,change_effect_id,attribution,rationale,source_reference,source_as_of,evidence_reference,confidence,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(`demo-attribution-${objectiveId}-${effectId}`, objectiveId, effectId, "primary", rationale, "DEMO://OBJECTIVE-EFFECT-MAP/PORTFOLIO", "2026-08-20", null, "high", actor.id, at, at));
+
+  const supplementalRequirements = [
+    ["demo-requirement-resilience-controls", "demo-objective-platform-hardening", "DEMO-REQ-PLT-041", "Apply approved shared controls", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/PLT-041", "2026-08-20", "verify", "Shared controls are configured by local practice.", "Shared platform services shall use the approved certificate and runtime control profile before dependent application fielding.", "Provides a verifiable prerequisite for dependent Change Requests.", "verified"],
+    ["demo-requirement-resilience-mps", "demo-objective-mps-relocation", "DEMO-REQ-PLT-072", "Provide Mission Planning Service capacity", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/PLT-072", "2026-08-20", "modify", "Mission Planning Service capacity is sized for the Release 5 position.", "Mission Planning Service shall meet the approved Release 7 storage, CPU, and memory capacity baseline and document rollback.", "Makes the capacity uplift testable at the fielded position.", "traced"],
+    ["demo-requirement-resilience-tls", "demo-objective-tls-resilience", "DEMO-REQ-OPS-115", "Recover threat-data service", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/OPS-115", "2026-08-20", "add", null, "Threat Library Service shall recover to the approved service level after a planned failover exercise at the Release 7 position.", "Defines the recovery evidence needed for resilient fielding.", "analysis_needed"],
+    ["demo-requirement-analytics-report", "demo-objective-eis-delivery", "DEMO-REQ-OPS-207", "Produce auditable execution reporting", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/OPS-207", "2026-08-20", "add", null, "Execution Insights Service shall produce a release-filterable report that identifies what is fielded, where it is fielded, and which Change Requests govern material changes.", "Defines the operational reporting outcome.", "traced"],
+    ["demo-requirement-analytics-gateway", "demo-objective-gateway-retirement", "DEMO-REQ-INT-205", "Preserve partner interchange before retirement", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/INT-205", "2026-08-20", "verify", "Partner interchange certification is not linked to the retirement decision.", "Data Gateway shall not be retired until partner interchange certification and analytics validation are recorded against the decision.", "Prevents retirement based solely on a schedule assumption.", "identified"],
+  ] as const;
+  for (const requirement of supplementalRequirements) {
+    const [requirementId, objectiveId, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, changeAction, beforeText, afterText, rationale, disposition] = requirement;
+    const objectiveRequirementId = requirementId.replace("demo-requirement-", "demo-objective-requirement-");
+    statements.push(
+      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, changeAction === "retire" ? "retired" : "active", actor.id, at, at),
+      db.prepare("INSERT INTO objective_requirement (id,objective_id,requirement_id,version_label,change_action,before_text,after_text,rationale,disposition,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(objectiveRequirementId, objectiveId, requirementId, "1", changeAction, beforeText, afterText, rationale, disposition, sourceLocator, sourceAsOf, actor.id, at, at),
+    );
+  }
+
+  const supplementalCriteria = [
+    ["demo-criterion-resilience-controls", "demo-objective-platform-hardening", "demo-objective-requirement-resilience-controls", "tier_4", "DEMO-T4-PLT-01", "Shared platform certificate and runtime controls are inspected against the approved profile before dependent service fielding.", "inspection", "passed", "2026-08-28", "2026-08-26", "DEMO://EVIDENCE/PLATFORM-CONTROLS-2026-08-26"],
+    ["demo-criterion-resilience-mps", "demo-objective-mps-relocation", "demo-objective-requirement-resilience-mps", "tier_3", "DEMO-T3-PLT-02", "Mission Planning Service demonstrates the approved Release 7 capacity baseline and documented rollback at the proposed position.", "demonstration", "ready", "2027-01-31", null, null],
+    ["demo-criterion-resilience-tls", "demo-objective-tls-resilience", "demo-objective-requirement-resilience-tls", "tier_4", "DEMO-T4-OPS-03", "Threat Library Service recovery exercise meets the approved service-level objective at the Release 7 position.", "test", "draft", "2027-03-15", null, null],
+    ["demo-criterion-analytics-report", "demo-objective-eis-delivery", "demo-objective-requirement-analytics-report", "tier_4", "DEMO-T4-OPS-04", "Execution Insights Service report reconciles fielded products, locations, releases, and governing Change Requests for the Release 7 demonstration set.", "demonstration", "ready", "2027-02-13", null, null],
+    ["demo-criterion-analytics-gateway", "demo-objective-gateway-retirement", "demo-objective-requirement-analytics-gateway", "tier_3", "DEMO-T3-INT-05", "Partner certification and analytics validation are accepted before Data Gateway retirement is recommended.", "review", "draft", "2027-04-30", null, null],
+  ] as const;
+  for (const criterion of supplementalCriteria) {
+    const [criterionId, objectiveId, objectiveRequirementId, tier, code, statement, verificationMethod, status, plannedDate, actualDate, evidenceReference] = criterion;
+    statements.push(db.prepare("INSERT INTO acceptance_criterion (id,objective_id,requirement_trace_id,objective_requirement_id,tier,code,statement,verification_method,status,planned_date,actual_date,evidence_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(criterionId, objectiveId, null, objectiveRequirementId, tier, code, statement, verificationMethod, status, plannedDate, actualDate, evidenceReference, actor.id, at, at));
+  }
+  for (const signoff of [
+    ["demo-signoff-resilience-controls", "demo-criterion-resilience-controls", "Government platform acceptance authority", "Synthetic platform authority", "accepted", "2026-08-26", "Accepted after inspection of the shared synthetic control profile.", null],
+    ["demo-signoff-analytics-report", "demo-criterion-analytics-report", "Government operations reporting authority", null, "pending", null, null, null],
+  ] as const) statements.push(db.prepare("INSERT INTO acceptance_signoff (id,criterion_id,signoff_role,signer,decision,decided_at,rationale,evidence_document_id,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(...signoff, actor.id, at, at));
+
+  for (const estimate of [
+    ["demo-estimate-mps-inc", "demo-objective-mps-relocation", "incumbent", 14000, 19000, 27000, 4100000, 5600000, 8000000, "Synthetic incumbent relocation and capacity estimate.", "Assumes shared hardening is complete and a single fielding window is available.", "DEMO://ESTIMATES/PLT-02/INC", "2026-08-18", "medium"],
+    ["demo-estimate-mps-gov", "demo-objective-mps-relocation", "government", 6200, 9800, 15000, 1800000, 3000000, 4700000, "Synthetic Government reference-class estimate based on one service move and documented capacity change.", "Excludes common hardening because it is funded separately under DEMO-MCP-060.", "DEMO://ESTIMATES/PLT-02/GOV", "2026-08-20", "medium"],
+    ["demo-estimate-eis-inc", "demo-objective-eis-delivery", "incumbent", 7800, 11200, 16800, 2300000, 3300000, 4900000, "Synthetic supplier estimate for analytics service delivery and data-load integration.", "Assumes existing Operations Squadron hosting remains available.", "DEMO://ESTIMATES/OPS-01/INC", "2026-08-18", "medium"],
+  ] as const) statements.push(db.prepare("INSERT INTO objective_estimate (id,objective_id,estimate_source,hours_low,hours_likely,hours_high,cost_low,cost_likely,cost_high,basis,assumptions,source_reference,as_of,confidence,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(...estimate, actor.id, at, at));
+
+  for (const [id, initiativeId, changeRequestId, objectiveId, title, type, plannedDate, actualDate, status, consequence, owner, sortOrder] of [
+    ["demo-milestone-resilience-decision", resilienceInitiativeId, "demo-change-mps", null, "Funding decision for service resilience", "decision", "2026-10-10", null, "planned", "Service fielding remains unsequenced and capacity changes retain no funded delivery path.", "Colonel Scott · synthetic demonstration", 0],
+    ["demo-milestone-resilience-capacity", resilienceInitiativeId, "demo-change-mps", "demo-objective-mps-relocation", "Mission Planning Service capacity demonstration", "verification", "2027-01-31", null, "planned", "Mission Planning Service cannot enter the Release 7 acceptance window.", "Government mission systems lead", 1],
+    ["demo-milestone-resilience-recovery", resilienceInitiativeId, "demo-change-tls", "demo-objective-tls-resilience", "Threat-data recovery exercise", "verification", "2027-03-15", null, "at_risk", "Threat-data resilience remains an unverified assertion and fielding recommendation is blocked.", "Government integration lead", 2],
+    ["demo-milestone-analytics-delivery", analyticsInitiativeId, "demo-change-eis", "demo-objective-eis-delivery", "Execution Insights Service report demonstration", "delivery", "2027-02-13", null, "planned", "Leadership reporting remains manual and cannot be reconciled to the governed baseline.", "Government operations analysis lead", 0],
+    ["demo-milestone-analytics-certification", analyticsInitiativeId, "demo-change-gateway", "demo-objective-gateway-retirement", "Partner certification and gateway decision", "decision", "2027-04-30", null, "at_risk", "Gateway retirement remains deferred and duplicate sustainment continues.", "Government interoperability authority", 1],
+  ] as const) statements.push(db.prepare("INSERT INTO initiative_milestone (id,initiative_id,change_request_id,objective_id,title,milestone_type,planned_date,actual_date,status,consequence_if_missed,owner,sort_order,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id, initiativeId, changeRequestId, objectiveId, title, type, plannedDate, actualDate, status, consequence, owner, sortOrder, actor.id, at, at));
+
+  for (const [id, initiativeId, wbsCode, title, owner, plannedStart, dueDate, status, workType, objectiveId, relationship, notes, definitionOfDone, sortOrder] of [
+    ["demo-resilience-wbs-1", resilienceInitiativeId, "RS-WP-01", "Validate independent capacity assessment", "Government cost / engineering analysis", "2026-08-25", "2026-10-03", "in_progress", "analysis", "demo-objective-mps-relocation", "assesses", "Compare incumbent and Government capacity estimates before funding.", "Independent capacity range and documented assumptions are available for the funding decision.", 0],
+    ["demo-resilience-wbs-2", resilienceInitiativeId, "RS-WP-02", "Confirm shared platform readiness", "Government platform lead", "2026-08-25", "2026-09-18", "complete", "verification", "demo-objective-platform-hardening", "verifies", "Verify the funded shared hardening prerequisite and evidence package.", "Approved control profile and acceptance evidence are linked to the prerequisite objective.", 1],
+    ["demo-resilience-wbs-3", resilienceInitiativeId, "RS-WP-03", "Reconcile threat-data recovery evidence", "Government integration lead", "2026-09-15", "2027-03-15", "on_hold", "coordination", "demo-objective-tls-resilience", "coordinates", "Define the recovery scenario, evidence set, and accountable acceptance authority.", "Recovery criterion, evidence method, and acceptance authority are recorded.", 2],
+    ["demo-analytics-wbs-1", analyticsInitiativeId, "AN-WP-01", "Validate leadership execution report", "Government operations analysis lead", "2026-09-10", "2027-02-13", "in_progress", "verification", "demo-objective-eis-delivery", "verifies", "Validate that the report reconciles what, where, when, and governing Change Requests.", "A leadership user confirms the report is traceable to governed baseline and decision records.", 0],
+    ["demo-analytics-wbs-2", analyticsInitiativeId, "AN-WP-02", "Maintain gateway deferment evidence", "Government interoperability authority", "2026-10-01", "2027-04-30", "planned", "decision_support", "demo-objective-gateway-retirement", "supports", "Track partner certification and analytics validation before recommending retirement.", "Retain, retire, or rephase recommendation cites partner certification evidence and the current decision record.", 1],
+  ] as const) {
+    statements.push(db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id, initiativeId, null, null, null, wbsCode, title, owner, plannedStart, dueDate, status, workType, definitionOfDone, "Status is supported by an objective, requirement, acceptance record, or decision artifact.", notes, sortOrder, at, at));
+    statements.push(db.prepare("INSERT INTO work_package_objective (id,work_package_id,objective_id,relationship,rationale,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(`${id}-objective`, id, objectiveId, relationship, "Synthetic Government work-to-incumbent Objective association.", actor.id, at, at));
+  }
+  for (const dependency of [
+    ["demo-wbs-dependency-resilience-controls-capacity", "demo-resilience-wbs-2", "demo-resilience-wbs-1", "FS", 0, "accepted", "The capacity funding assessment uses the accepted shared-control prerequisite.", "DEMO://WBS-LOGIC/RESILIENCE"],
+    ["demo-wbs-dependency-resilience-capacity-recovery", "demo-resilience-wbs-1", "demo-resilience-wbs-3", "FS", 0, "proposed", "Recovery evidence must reflect the funded service position and capacity baseline.", "DEMO://WBS-LOGIC/RESILIENCE"],
+    ["demo-wbs-dependency-analytics-report-retirement", "demo-analytics-wbs-1", "demo-analytics-wbs-2", "FS", 0, "accepted", "Gateway retirement recommendation requires the analytics report to validate the target operating picture.", "DEMO://WBS-LOGIC/ANALYTICS"],
+  ] as const) statements.push(db.prepare("INSERT INTO work_package_dependency (id,predecessor_work_package_id,successor_work_package_id,relationship,lag_days,status,rationale,source_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(...dependency, actor.id, at, at));
+
+  statements.push(audit(db, actor, "demonstration_workspace_enriched", "baseline_workspace", WORKSPACE_ID, { occurrences: rows.length, managedTopology: true, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length, initiatives: 3, objectives: objectivePlan.length + supplementalObjectives.length, requirements: requirementPlan.length + supplementalRequirements.length, acceptanceCriteria: criterionPlan.length + supplementalCriteria.length }));
   await db.batch(statements);
   return { occurrences: rows.length, hostProfiles: seenHosts.size, deploymentProfiles: rows.filter((row) => row.productId).length, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length };
 }

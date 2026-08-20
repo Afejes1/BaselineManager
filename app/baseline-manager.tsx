@@ -563,6 +563,7 @@ export function BaselineManager() {
           fileName: "JSF_V3_Demonstration_Baseline.xlsx",
           sheetName: "Technical Baseline",
           rows: DEMONSTRATION_ROWS,
+          replaceActiveBaseline: true,
         }),
       });
       const payload = await response.json() as { error?: string };
@@ -580,7 +581,7 @@ export function BaselineManager() {
       setActiveQuality("All checks");
       setActiveReview("All review statuses");
       setShowStewardMenu(false);
-      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration records across three releases, including topology details and Change Request links.`);
+      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration records across three releases, plus three Initiative decision scenarios for report testing.`);
     } catch (reason) {
       setDemoError(reason instanceof Error ? reason.message : "The demonstration dataset could not be loaded.");
     } finally {
@@ -1104,13 +1105,13 @@ export function BaselineManager() {
         <button className="modal-close" type="button" aria-label="Close workspace menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
         <span className="eyebrow">WORKSPACE</span>
         <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
-        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, and traceability. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import A2O XLSX to establish or replace the active baseline."}</p>
+        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, traceability, Initiative one-pagers, and leadership reports. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import A2O XLSX to establish or replace the active baseline."}</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Baseline records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
           <div><strong>8</strong><span>Products</span></div>
         </div>
-        <p className="modal-note">{demoEnabled ? <>This replaces the active baseline with demonstration records. It also adds Platform, topology, Change Request, dependency, and decision detail for testing. Prior A2O exchange packages remain available and can be restored from Import &amp; Data Quality.</> : <>Demonstration data is disabled. A2O exchange restore, void/restore, audit history, and exact XLSX export remain available.</>}</p>
+        <p className="modal-note">{demoEnabled ? <>This archives the active baseline for later restoration, then loads demonstration records. It also adds Platform and topology data, 8 Change Requests, 3 Initiative decision scenarios, 8 Objectives, requirements, acceptance criteria, estimates, milestones, and Government work plans. Prior A2O exchange packages remain available and can be restored from Import &amp; Data Quality.</> : <>Demonstration data is disabled. A2O exchange restore, void/restore, audit history, and exact XLSX export remain available.</>}</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
         <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Close</button>{demoEnabled ? <button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button> : null}</footer>
       </section>

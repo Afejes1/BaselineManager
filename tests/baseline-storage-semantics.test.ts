@@ -22,6 +22,19 @@ test("A2O import reconciles records and never deletes working links", () => {
   assert.match(readFileSync("app/api/baseline/route.ts", "utf8"), /baseline_record_source/);
 });
 
+test("a deliberate demonstration load archives the active baseline before seeding", () => {
+  const intake = readFileSync("app/api/baseline/import/route.ts", "utf8");
+  const manager = readFileSync("app/baseline-manager.tsx", "utf8");
+  const demo = readFileSync("lib/demo-workspace-server.ts", "utf8");
+
+  assert.match(intake, /replaceActiveBaseline/);
+  assert.match(intake, /Demonstration data is disabled in this operational environment/);
+  assert.match(intake, /Archived by confirmed demonstration dataset load/);
+  assert.doesNotMatch(intake, /DELETE FROM baseline_occurrence/i);
+  assert.match(manager, /replaceActiveBaseline: true/);
+  assert.match(demo, /bo\.lifecycle_status='active'/);
+});
+
 test("A2O export is assembled from governed tables, not the projection cache", () => {
   const helper = readFileSync("lib/a2o-baseline-server.ts", "utf8");
   const exportRoute = readFileSync("app/api/baseline/export/route.ts", "utf8");
