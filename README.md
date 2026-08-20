@@ -65,6 +65,15 @@ Backups are written to `backups` and contain the local D1 database, uploaded
 evidence state, and a readable SQL export. The directory is excluded from Git;
 copy the resulting ZIP file to an approved backup location.
 
+For a portable, application-managed transfer between deployments, open
+**Workspace Transfer** in the application and select **Export full workspace**.
+The resulting `.a2oworkspace` package contains the complete governed dataset,
+relationships, audit history, and attached evidence. It excludes credentials
+and access roles. In the destination, validate the package before authorizing
+workspace replacement. This is the supported path for moving analyst data to a
+fresh application version; the A2O XLSX file is only the retained stakeholder
+exchange format.
+
 To restore a backup, stop the application and run:
 
 ```powershell
@@ -97,6 +106,8 @@ native runtime files.
 - Keep the server bound to localhost. Do not expose the development port.
 - Do not commit `.env`, `.wrangler`, `backups`, exports, or source workbooks.
 - GitHub transfers code only. Back up operational data separately.
+- Export a Workspace Transfer Package before changing application versions or
+  moving to another Workspace.
 - Do not mix demonstration records with program records.
 - A shared or production deployment requires managed identity, authorization,
   database and object storage, backups, monitoring, TLS, and security approval.

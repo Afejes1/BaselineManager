@@ -26,6 +26,14 @@ export function assessInitiative(bundle: InitiativeDecisionBundle, asOf = new Da
     if (!bundle.objectives.some((objective) => objective.changeRequestId === request.id)) add({ severity: "blocker", category: "traceability", title: `${request.externalIdentifier} has no incumbent Objective`, detail: "Link at least one externally governed technical work objective before claiming how the request will be delivered.", subjectKind: "change_request", subjectId: request.id });
   }
 
+  const initiativeRequestIds = new Set(bundle.changeRequests.map((request) => request.id));
+  for (const dependency of bundle.changes.dependencies.filter((item) => initiativeRequestIds.has(item.predecessorRequestId) || initiativeRequestIds.has(item.successorRequestId))) {
+    const subjectId = initiativeRequestIds.has(dependency.successorRequestId) ? dependency.successorRequestId : dependency.predecessorRequestId;
+    if (!dependency.rationale || !dependency.consequenceIfUnmet) add({ severity: "blocker", category: "traceability", title: "Change Request dependency analysis is incomplete", detail: "Record both the technical basis and the consequence if the dependency is not met.", subjectKind: "change_request", subjectId });
+    if (!dependency.sourceReference || !dependency.sourceAsOf) add({ severity: "warning", category: "evidence", title: "Change Request dependency source is incomplete", detail: "Record the supporting call, document, or external-system locator and the date it was checked.", subjectKind: "change_request", subjectId });
+    if (dependency.confidence === "reported") add({ severity: "warning", category: "evidence", title: "Change Request dependency is only reported", detail: "Government assessment or confirmation is required before briefing the relationship as established fact.", subjectKind: "change_request", subjectId });
+  }
+
   for (const objective of bundle.objectives) {
     const objectiveRequirements = bundle.requirements.filter((item) => item.objectiveId === objective.id);
     const objectiveCriteria = bundle.criteria.filter((item) => item.objectiveId === objective.id);

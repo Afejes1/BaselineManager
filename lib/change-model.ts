@@ -53,7 +53,26 @@ export type ChangeEffect = {
   confidence: "reported" | "assessed" | "confirmed";
   sourceOccurrenceId: string | null;
 };
-export type ChangeDependency = { id: string; predecessorRequestId: string; successorRequestId: string; dependencyType: DependencyType; rationale: string | null };
+export type ChangeDependency = {
+  id: string;
+  predecessorRequestId: string;
+  successorRequestId: string;
+  dependencyType: DependencyType;
+  rationale: string | null;
+  consequenceIfUnmet: string | null;
+  owner: string | null;
+  confidence: "reported" | "assessed" | "confirmed";
+  sourceReference: string | null;
+  sourceAsOf: string | null;
+};
+
+export function dependencyStatement(dependency: Pick<ChangeDependency, "dependencyType">, predecessor: string, successor: string) {
+  if (dependency.dependencyType === "requires") return `${successor} requires ${predecessor}.`;
+  if (dependency.dependencyType === "enables") return `${predecessor} enables ${successor}.`;
+  if (dependency.dependencyType === "blocks") return `${predecessor} blocks ${successor}.`;
+  if (dependency.dependencyType === "conflicts") return `${predecessor} conflicts with ${successor}.`;
+  return `${predecessor} overlaps ${successor}.`;
+}
 export type ChangePortfolio = {
   types: ChangeRequestType[];
   requests: ChangeRequest[];

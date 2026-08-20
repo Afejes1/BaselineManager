@@ -495,10 +495,17 @@ export const changeDependencies = sqliteTable("change_dependency", {
   successorRequestId: text("successor_request_id").notNull().references(() => changeRequests.id),
   dependencyType: text("dependency_type").notNull(),
   rationale: text("rationale"),
+  consequenceIfUnmet: text("consequence_if_unmet"),
+  owner: text("owner"),
+  confidence: text("confidence").notNull().default("reported"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
 }, (t) => [
   check("change_dependency_not_self", sql`${t.predecessorRequestId} <> ${t.successorRequestId}`),
   check("change_dependency_type", sql`${t.dependencyType} IN ('requires','enables','blocks','conflicts','overlaps')`),
+  check("change_dependency_confidence", sql`${t.confidence} IN ('reported','assessed','confirmed')`),
   uniqueIndex("change_dependency_uq").on(t.predecessorRequestId, t.successorRequestId, t.dependencyType),
   index("change_dependency_successor_ix").on(t.successorRequestId, t.dependencyType),
 ]);

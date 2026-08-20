@@ -1,0 +1,42 @@
+import { env } from "cloudflare:workers";
+import packageMetadata from "../../../package.json";
+import { documentsBucket, ensureActor } from "../../../lib/governance-server";
+import type { OperatorDiagnostic, OperatorDiagnostics } from "../../../lib/operator-diagnostics";
+
+type CountRow = { count: number };
+
+export async function GET(request: Request) {
+  try {
+    await ensureActor(env.DB, request);
+    const checks: OperatorDiagnostic[] = [];
+    const [baseline, changes, objectives, initiatives, evidence, columns, foreignKeys, lastExport, evidenceRows] = await Promise.all([
+      env.DB.prepare("SELECT COUNT(*) AS count FROM baseline_occurrence WHERE workspace_id='workspace-jsf-current' AND lifecycle_status='active'").first<CountRow>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM change_request WHERE program_id='program-jsf'").first<CountRow>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM incumbent_objective WHERE program_id='program-jsf'").first<CountRow>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM initiative WHERE program_id='program-jsf'").first<CountRow>(),
+      env.DB.prepare("SELECT COUNT(*) AS count FROM evidence_document WHERE program_id='program-jsf'").first<CountRow>(),
+      env.DB.prepare("PRAGMA table_info('change_dependency')").all<{ name: string }>(),
+      env.DB.prepare("PRAGMA foreign_key_check").all<Record<string, unknown>>(),
+      env.DB.prepare("SELECT created_at FROM audit_event WHERE program_id='program-jsf' AND action IN ('workspace_package_exported','workspace_package_imported') ORDER BY created_at DESC LIMIT 1").first<{ created_at: string }>(),
+      env.DB.prepare("SELECT id,file_name,r2_key FROM evidence_document WHERE program_id='program-jsf'").all<{ id: string; file_name: string; r2_key: string }>(),
+    ]);
+    const requiredColumns = ["consequence_if_unmet", "confidence", "source_reference", "source_as_of"];
+    const columnNames = new Set(columns.results.map((item) => item.name));
+    const missingColumns = requiredColumns.filter((item) => !columnNames.has(item));
+    checks.push({ id: "database", label: "Application database", status: "pass", detail: "Database query completed." });
+    checks.push({ id: "schema", label: "Schema compatibility", status: missingColumns.length ? "fail" : "pass", detail: missingColumns.length ? `Missing columns: ${missingColumns.join(", ")}. Apply database migrations.` : "Required version 1 dependency and transfer fields are present." });
+    checks.push({ id: "foreign-keys", label: "Referential integrity", status: foreignKeys.results.length ? "fail" : "pass", detail: foreignKeys.results.length ? `${foreignKeys.results.length} foreign-key violations detected.` : "No foreign-key violations detected." });
+    const bucket = documentsBucket();
+    let missingEvidence = 0;
+    if (bucket) for (const row of evidenceRows.results) if (!await bucket.get(row.r2_key)) missingEvidence += 1;
+    checks.push({ id: "documents", label: "Evidence storage", status: !bucket && evidenceRows.results.length ? "fail" : !bucket ? "warning" : missingEvidence ? "fail" : "pass", detail: !bucket ? "Document storage binding is unavailable." : missingEvidence ? `${missingEvidence} evidence files are missing from storage.` : `${evidenceRows.results.length} evidence files verified.` });
+    checks.push({ id: "recovery", label: "Recovery package", status: lastExport?.created_at ? "pass" : "warning", detail: lastExport?.created_at ? `Last full workspace transfer: ${new Date(lastExport.created_at).toLocaleString("en-US")}.` : "No full Workspace Transfer Package export or import is recorded." });
+    let latestMigration: string | null = null;
+    try { latestMigration = (await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>())?.name || null; } catch { latestMigration = null; }
+    const overall = checks.some((item) => item.status === "fail") ? "blocked" : checks.some((item) => item.status === "warning") ? "attention" : "ready";
+    const result: OperatorDiagnostics = { generatedAt: new Date().toISOString(), overall, applicationVersion: packageMetadata.version, latestMigration, lastWorkspaceExportAt: lastExport?.created_at || null, counts: { baselineRecords: Number(baseline?.count || 0), changeRequests: Number(changes?.count || 0), objectives: Number(objectives?.count || 0), initiatives: Number(initiatives?.count || 0), evidenceDocuments: Number(evidence?.count || 0) }, checks };
+    return Response.json(result);
+  } catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Operator diagnostics are unavailable." }, { status: 500 });
+  }
+}

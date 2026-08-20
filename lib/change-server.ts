@@ -51,7 +51,7 @@ export async function changePortfolio(db: Database): Promise<ChangePortfolio> {
       LEFT JOIN baseline_record_extension ext ON ext.baseline_occurrence_id=bo.id
       LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN release fr ON fr.id=ce.from_release_id LEFT JOIN release tr ON tr.id=ce.to_release_id
       WHERE cr.program_id=? ORDER BY ce.created_at`).bind(PROGRAM_ID).all<EffectRow>(),
-    db.prepare("SELECT cd.id,cd.predecessor_request_id,cd.successor_request_id,cd.dependency_type,cd.rationale FROM change_dependency cd JOIN change_request cr ON cr.id=cd.predecessor_request_id WHERE cr.program_id=? ORDER BY cd.created_at").bind(PROGRAM_ID).all<{ id: string; predecessor_request_id: string; successor_request_id: string; dependency_type: DependencyType; rationale: string | null }>(),
+    db.prepare("SELECT cd.id,cd.predecessor_request_id,cd.successor_request_id,cd.dependency_type,cd.rationale,cd.consequence_if_unmet,cd.owner,cd.confidence,cd.source_reference,cd.source_as_of FROM change_dependency cd JOIN change_request cr ON cr.id=cd.predecessor_request_id WHERE cr.program_id=? ORDER BY cd.created_at").bind(PROGRAM_ID).all<{ id: string; predecessor_request_id: string; successor_request_id: string; dependency_type: DependencyType; rationale: string | null; consequence_if_unmet: string | null; owner: string | null; confidence: "reported" | "assessed" | "confirmed"; source_reference: string | null; source_as_of: string | null }>(),
     db.prepare("SELECT id,name FROM release WHERE program_id=? ORDER BY name").bind(PROGRAM_ID).all<{ id: string; name: string }>(),
     db.prepare("SELECT id,canonical_name AS label FROM product WHERE program_id=? ORDER BY canonical_name").bind(PROGRAM_ID).all<{ id: string; label: string }>(),
     db.prepare("SELECT id,code || ' · ' || name AS label FROM platform WHERE program_id=? ORDER BY code").bind(PROGRAM_ID).all<{ id: string; label: string }>(),
@@ -61,7 +61,7 @@ export async function changePortfolio(db: Database): Promise<ChangePortfolio> {
   ]);
   const requests: ChangeRequest[] = requestResult.results.map((row) => ({ id: row.id, typeId: row.type_id, typeCode: row.type_code, typeLabel: row.type_label, externalSystem: row.external_system, externalIdentifier: row.external_identifier, title: row.title, externalStatus: row.external_status, externalOwner: row.external_owner, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, requestedReleaseId: row.requested_release_id, requestedReleaseName: row.requested_release_name, governmentPriority: row.government_priority, decisionStatus: row.decision_status, decisionAuthority: row.decision_authority, decisionAt: row.decision_at, decisionRationale: row.decision_rationale, referenceStatus: row.reference_status, lifecycleRationale: row.lifecycle_rationale, summary: row.summary, consequenceIfFunded: row.consequence_if_funded, consequenceIfDeferred: row.consequence_if_deferred, impactSummary: row.impact_summary, knockOnEffects: row.knock_on_effects, updatedAt: row.updated_at }));
   const effects: ChangeEffect[] = effectResult.results.map((row) => ({ id: row.id, changeRequestId: row.change_request_id, subjectKind: row.subject_kind, subjectId: row.subject_id, subjectLabel: row.subject_label || row.subject_id, action: row.action, aspect: row.aspect, fromReleaseId: row.from_release_id, fromReleaseName: row.from_release_name, toReleaseId: row.to_release_id, toReleaseName: row.to_release_name, currentValue: row.current_value, targetValue: row.target_value, consequence: row.consequence, rationale: row.rationale, confidence: row.confidence, sourceOccurrenceId: row.source_occurrence_id }));
-  const dependencies: ChangeDependency[] = dependencyResult.results.map((row) => ({ id: row.id, predecessorRequestId: row.predecessor_request_id, successorRequestId: row.successor_request_id, dependencyType: row.dependency_type, rationale: row.rationale }));
+  const dependencies: ChangeDependency[] = dependencyResult.results.map((row) => ({ id: row.id, predecessorRequestId: row.predecessor_request_id, successorRequestId: row.successor_request_id, dependencyType: row.dependency_type, rationale: row.rationale, consequenceIfUnmet: row.consequence_if_unmet, owner: row.owner, confidence: row.confidence, sourceReference: row.source_reference, sourceAsOf: row.source_as_of }));
   return {
     types: typeResult.results.map((row) => ({ id: row.id, code: row.code, label: row.label, description: row.description, active: Boolean(row.active), sortOrder: row.sort_order })),
     requests, effects, dependencies, releases: releaseResult.results,
@@ -199,7 +199,11 @@ export async function addChangeDependency(db: Database, actor: Actor, body: Reco
   const predecessor = clean(body.predecessorRequestId);
   const successor = clean(body.successorRequestId);
   const dependencyType = clean(body.dependencyType) as DependencyType;
+  const rationale = clean(body.rationale);
+  const consequenceIfUnmet = clean(body.consequenceIfUnmet);
+  const confidence = new Set(["reported", "assessed", "confirmed"]).has(clean(body.confidence)) ? clean(body.confidence) : "reported";
   if (!predecessor || !successor || predecessor === successor || !dependencyTypes.has(dependencyType)) throw new Error("Choose two different Change Requests and a valid dependency type.");
+  if (!rationale || !consequenceIfUnmet) throw new Error("Dependency rationale and consequence if unmet are required.");
   const requestCount = await db.prepare("SELECT COUNT(*) AS count FROM change_request WHERE program_id=? AND id IN (?,?)").bind(PROGRAM_ID, predecessor, successor).first<{ count: number }>();
   if (Number(requestCount?.count) !== 2) throw new Error("Both Change Requests must belong to this program.");
   if (!new Set<DependencyType>(["conflicts", "overlaps"]).has(dependencyType)) {
@@ -213,9 +217,9 @@ export async function addChangeDependency(db: Database, actor: Actor, body: Reco
   const dependencyId = makeId("dependency");
   const at = atNow();
   await db.batch([
-    db.prepare("INSERT INTO change_dependency (id,predecessor_request_id,successor_request_id,dependency_type,rationale,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-      .bind(dependencyId, predecessor, successor, dependencyType, nullable(body.rationale), at, at),
-    audit(db, actor, "change_dependency_added", "change_request", successor, { predecessor, dependencyType, rationale: nullable(body.rationale) }),
+    db.prepare("INSERT INTO change_dependency (id,predecessor_request_id,successor_request_id,dependency_type,rationale,consequence_if_unmet,owner,confidence,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(dependencyId, predecessor, successor, dependencyType, rationale, consequenceIfUnmet, nullable(body.owner), confidence, nullable(body.sourceReference), nullable(body.sourceAsOf), actor.id, at, at),
+    audit(db, actor, "change_dependency_added", "change_request", successor, { predecessor, dependencyType, rationale, consequenceIfUnmet, confidence, sourceReference: nullable(body.sourceReference) }),
   ]);
   return dependencyId;
 }

@@ -71,9 +71,9 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
             <small>{releaseScope || (contextMode === "record" ? recordRelease || "All linked releases" : contextMode === "comparison" ? "Release comparison" : contextMode === "portfolio" ? "Cross-release portfolio" : releaseLens || "All releases")}</small>
           </div>
         </div>
-        <Link className="profile" href="/" title="Open workspace controls">
+        <Link className="profile" href="/workspace" title="Open workspace transfer controls">
           <span>WS</span>
-          <div><strong>Workspace</strong><small>Baseline data and demo controls</small></div>
+          <div><strong>Workspace</strong><small>Transfer and recovery controls</small></div>
           <b>→</b>
         </Link>
       </aside>

@@ -239,14 +239,14 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   }
 
   for (const dependency of [
-    ["demo-dependency-hardening-mps", "demo-change-hardening", "demo-change-mps", "enables", "Hardened shared platform enables the relocation."],
-    ["demo-dependency-hardening-tls", "demo-change-hardening", "demo-change-tls", "requires", "Threat-data relocation requires the hardened platform."],
-    ["demo-dependency-tls-eis", "demo-change-tls", "demo-change-eis", "enables", "Resilient threat data improves analytics completeness."],
-    ["demo-dependency-eis-gateway", "demo-change-eis", "demo-change-gateway", "requires", "Leadership analytics validates the target interchange state before retirement."],
-    ["demo-dependency-java-inventory-upgrade", "demo-change-java-inventory", "demo-change-java-upgrade", "enables", "Authoritative inventory and SBOM evidence bound the Java upgrade scope and estimate."],
-    ["demo-dependency-java-upgrade-acceptance", "demo-change-java-upgrade", "demo-change-java-acceptance", "enables", "The upgraded build must be available before mission and system acceptance can complete."],
-  ] as const) statements.push(db.prepare("INSERT INTO change_dependency (id,predecessor_request_id,successor_request_id,dependency_type,rationale,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-    .bind(dependency[0], dependency[1], dependency[2], dependency[3], dependency[4], at, at));
+    ["demo-dependency-hardening-mps", "demo-change-hardening", "demo-change-mps", "enables", "Hardened shared platform enables the relocation.", "Relocation proceeds with an unverified shared-platform security boundary."],
+    ["demo-dependency-hardening-tls", "demo-change-hardening", "demo-change-tls", "requires", "Threat-data relocation requires the hardened platform.", "Threat-data relocation slips or accepts an unresolved cyber risk."],
+    ["demo-dependency-tls-eis", "demo-change-tls", "demo-change-eis", "enables", "Resilient threat data improves analytics completeness.", "Execution analytics operate with incomplete or stale threat data."],
+    ["demo-dependency-eis-gateway", "demo-change-eis", "demo-change-gateway", "requires", "Leadership analytics validates the target interchange state before retirement.", "The legacy gateway may be retired before target interchange performance is demonstrated."],
+    ["demo-dependency-java-inventory-upgrade", "demo-change-java-inventory", "demo-change-java-upgrade", "enables", "Authoritative inventory and SBOM evidence bound the Java upgrade scope and estimate.", "Upgrade scope, estimate, and residual Java exposure remain unbounded."],
+    ["demo-dependency-java-upgrade-acceptance", "demo-change-java-upgrade", "demo-change-java-acceptance", "enables", "The upgraded build must be available before mission and system acceptance can complete.", "Acceptance cannot establish mission or system performance for the modernized build."],
+  ] as const) statements.push(db.prepare("INSERT INTO change_dependency (id,predecessor_request_id,successor_request_id,dependency_type,rationale,consequence_if_unmet,owner,confidence,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(dependency[0], dependency[1], dependency[2], dependency[3], dependency[4], dependency[5], "Government Mission Systems Architecture (synthetic)", "assessed", `DEMO://DEPENDENCY/${dependency[0]}`, "2026-08-20", actor.id, at, at));
 
   // A single deep Initiative scenario exercises the entire decision chain:
   // leadership outcome → Government funding units → incumbent technical work

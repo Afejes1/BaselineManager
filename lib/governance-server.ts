@@ -54,6 +54,10 @@ export function requireWriter(actor: Actor) {
   if (actor.role === "viewer") throw new Error("This account is a viewer. A steward or editor must make this change.");
 }
 
+export function requireSteward(actor: Actor) {
+  if (actor.role !== "steward") throw new Error("Only a Baseline steward may replace the application workspace.");
+}
+
 export function audit(db: Database, actor: Actor, action: string, entityKind: string, entityId: string, after: unknown, before?: unknown) {
   return db.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,before_payload,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
     .bind(id("audit"), PROGRAM_ID, actor.id, action, entityKind, entityId, before === undefined ? null : JSON.stringify(before), JSON.stringify(after), now());

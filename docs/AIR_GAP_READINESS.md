@@ -11,6 +11,7 @@ This application is being matured for an eventual JSF air-gapped deployment. The
 - Release roles (`historical`, `as_is`, `to_be`, `reported`) are analytical perspectives. They are not approval states.
 - Change Requests are references to the external incumbent system. This application owns Government priority, impact links, dependencies, consequences, and the `fund` / `defer` / `decline` decision record.
 - Reports are deterministic and traceable to working baseline records, intake snapshots, and governed evidence links.
+- A versioned Workspace Transfer Package carries the complete application-owned dataset, relationships, audit history, and attached evidence between compatible deployments. It never carries credentials or destination access roles.
 
 ## Runtime boundary still requiring an environment decision
 
@@ -48,7 +49,7 @@ Required deployment contents:
 5. ALOU → OCK → OBK → PMA hierarchy rejects cycles and shows product/release/organization rollups.
 6. As-Is → To-Be comparison is deterministic across at least three plausible releases.
 7. Change Request effects and dependency chains are complete enough to support a fund/defer/decline decision.
-8. Backup/restore is tested against a copy of the relational database and evidence store.
+8. Backup/restore and Workspace Transfer are tested against a copy of the relational database and evidence store, including checksum validation and a fresh-destination import.
 9. `DEMO_ENABLED=false`, approved identity mapping, least-privilege roles, TLS, audit retention, session timeout, and log handling are verified.
 10. A representative sanitized workbook passes smoke testing before controlled real-data ingestion.
 

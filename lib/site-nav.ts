@@ -14,6 +14,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/stewardship", label: "Identity Stewardship", icon: "≡", enabled: true, section: "Baseline" },
   { href: "/evidence", label: "Calls & Evidence", icon: "◇", enabled: true, section: "Baseline" },
   { href: "/releases", label: "Releases", icon: "▤", enabled: true, section: "Baseline" },
+  { href: "/workspace", label: "Workspace Transfer", icon: "⇄", enabled: true, section: "Baseline" },
   { href: "/products", label: "Products", icon: "◦", enabled: true, section: "Views" },
   { href: "/platforms", label: "Platforms", icon: "⌂", enabled: true, section: "Views" },
   { href: "/topology", label: "Deployment Topology", icon: "⌘", enabled: true, section: "Views" },

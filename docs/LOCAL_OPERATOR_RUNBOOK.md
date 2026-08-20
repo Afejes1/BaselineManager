@@ -15,6 +15,7 @@ The application code is stored in Git. Operational data is not.
 | Database and uploaded evidence | `.wrangler/state` | Back up after each working session |
 | Environment settings | `.env` | Keep local; do not commit |
 | Backup packages | `backups/*.zip` | Copy to an approved backup location |
+| Portable workspace packages | Operator-selected `.a2oworkspace` file | Retain as controlled application data |
 | Source and exported workbooks | Operator-selected location | Store only in an approved data location |
 
 Do not load classified, CUI, or other controlled program data unless the AWS
@@ -35,6 +36,31 @@ Workspace and storage location are approved for that data.
 
 Do not proceed to leadership analysis until the round trip is credible.
 
+## Workspace transfer between application versions
+
+Use **Workspace Transfer** for a clean deployment move or version change. This
+package is distinct from both the local emergency backup and the A2O XLSX
+exchange.
+
+1. In the current application, open **Workspace Transfer** and export the full
+   workspace.
+2. Retain the `.a2oworkspace` file with its application version and transfer
+   date.
+3. Install and initialize the destination application.
+4. Open **Workspace Transfer**, select the package, and run validation.
+5. Review the classification, application version, row count, and evidence-file
+   count.
+6. Export the destination workspace if it contains data that must be retained.
+7. Authorize replacement using the displayed confirmation phrase.
+8. Confirm Operator Diagnostics reports Ready.
+9. Open one Baseline Record, one Change Request, one Objective, one Initiative,
+   and the Initiative one-page report.
+
+The transfer retains application data, relationships, source history, audit
+history, and attached evidence. It does not transfer login credentials or
+destination access roles. A package must pass version, structure, row-count,
+CRC, and SHA-256 checks before replacement is enabled.
+
 ## First decision vertical slice
 
 Build one Initiative completely before expanding the portfolio.
@@ -42,8 +68,10 @@ Build one Initiative completely before expanding the portfolio.
 1. Select a current leadership decision, such as elimination of Java 8.
 2. Define the Initiative's As-Is condition, To-Be outcome, decision requested,
    and measurable success criteria.
-3. Enter the governing MCP, DSOR, or other Change Request references. Record
-   external identifier, source location, owner, status, and source-as-of date.
+3. Import or enter the governing MCP, DSOR, or other external Change Request
+   references. Record external identifier, source location, owner, status, and
+   source-as-of date. The external system remains the authority for creating
+   and managing the request.
 4. Record the target release, funded consequence, deferred consequence, and
    technical effects for each Change Request.
 5. Add or import the LM Objectives. Each Objective must have one owning Change
@@ -92,13 +120,15 @@ Build one Initiative completely before expanding the portfolio.
 ## Update procedure
 
 1. Stop the application.
-2. Run `npm run local:backup`.
+2. Run `npm run local:backup` and export a full Workspace Transfer Package.
 3. Pull the approved Git branch.
 4. Run `npm ci`.
 5. Run `npm run local:init`.
 6. Run `npm run local:verify`.
-7. Start the application and smoke-check import history, a baseline record, one
-   release comparison, and one Initiative scorecard.
+7. Start the application. If this is a fresh destination, validate and import
+   the Workspace Transfer Package.
+8. Smoke-check import history, a baseline record, one release comparison, one
+   Change Request dependency chain, and one Initiative scorecard.
 
 ## Recovery procedure
 

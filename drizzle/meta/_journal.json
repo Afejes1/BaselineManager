@@ -99,6 +99,13 @@
       "when": 1787187600000,
       "tag": "0013_delivery_model",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787274000000,
+      "tag": "0014_dependency_governance",
+      "breakpoints": true
     }
   ]
 }

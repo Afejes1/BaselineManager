@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "../../../../components/app-link";
 import { useInitiativeDecisions } from "../../../../lib/initiative-decision-client";
 import { readable, selectInitiativeBundle, tierLabel } from "../../../../lib/initiative-decision-model";
 import { estimateVariance } from "../../../../lib/initiative-readiness";
+import { dependencyStatement } from "../../../../lib/change-model";
 
 const dateLabel = (value: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "Not set";
 const compact = (value: number, prefix = "") => value ? `${prefix}${new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value)}` : "—";
@@ -14,6 +15,7 @@ export default function InitiativeOnePager() {
   const params = useParams<{ initiative?: string }>();
   const initiativeId = decodeURIComponent(params.initiative || "");
   const { workspace, loading, error } = useInitiativeDecisions();
+  const [includeAnnex, setIncludeAnnex] = useState(false);
   const bundle = useMemo(() => workspace ? selectInitiativeBundle(workspace, initiativeId) : null, [workspace, initiativeId]);
   const assessment = workspace?.assessments[initiativeId];
   if (loading) return <main className="one-pager-loading">Preparing report…</main>;
@@ -23,8 +25,12 @@ export default function InitiativeOnePager() {
   const effectCount = bundle.changes.effects.filter((effect) => bundle.changeRequests.some((request) => request.id === effect.changeRequestId)).length;
   const pendingCriteria = bundle.criteria.filter((criterion) => !["passed", "waived"].includes(criterion.status));
   const keyFindings = assessment?.findings.filter((item) => item.severity !== "information").slice(0, 6) || [];
-  return <main className="initiative-one-pager">
-    <div className="one-pager-actions"><Link href={`/initiatives/${encodeURIComponent(initiativeId)}`}>← Return to analysis</Link><button type="button" onClick={() => window.print()}>Print / Save PDF</button></div>
+  const requestIds = new Set(bundle.changeRequests.map((request) => request.id));
+  const relevantDependencies = bundle.changes.dependencies.filter((item) => requestIds.has(item.predecessorRequestId) || requestIds.has(item.successorRequestId));
+  const requestById = new Map(bundle.changes.requests.map((request) => [request.id, request]));
+  const relevantEffects = bundle.changes.effects.filter((effect) => requestIds.has(effect.changeRequestId));
+  return <main className={`initiative-one-pager ${includeAnnex ? "one-pager-with-annex" : ""}`}>
+    <div className="one-pager-actions"><Link href={`/initiatives/${encodeURIComponent(initiativeId)}`}>← Return to analysis</Link><label><input type="checkbox" checked={includeAnnex} onChange={(event) => setIncludeAnnex(event.target.checked)} /> Include traceability annex</label><button type="button" onClick={() => window.print()}>Print / Save PDF</button></div>
     <article className="wall-sheet">
       <header className="wall-header"><div><span>JSF TECHNICAL BASELINE · GOVERNMENT DECISION PAPER</span><h1>{initiative.title}</h1><p>{initiative.briefingAudience || "Leadership audience not recorded"} · As of {dateLabel(initiative.updatedAt)} · Demonstration records are marked as not program data</p></div><div className={`readiness-seal readiness-${assessment?.stage || "not_ready"}`}><strong>{assessment?.score || 0}%</strong><span>{readable(assessment?.stage || "not_ready")}</span></div></header>
       <section className="wall-state-row"><article><span>LEFT · WHERE WE ARE</span><h2>As-Is</h2><p>{initiative.asIsStatement || "Current state is not yet substantiated."}</p></article><div className="wall-change-path"><strong>{bundle.changeRequests.length}</strong><span>Change Requests</span><b>→</b><small>{bundle.objectives.length} Objectives · {effectCount} effects</small></div><article><span>RIGHT · WHERE WE NEED TO BE</span><h2>To-Be</h2><p>{initiative.toBeStatement || "Target state is not yet defined."}</p></article></section>
@@ -36,5 +42,13 @@ export default function InitiativeOnePager() {
       <section className="wall-bottom-grid"><article className="wall-panel"><header><span>REQUIREMENTS & ACCEPTANCE</span><strong>{pendingCriteria.length} open criteria</strong></header><div className="wall-criteria">{bundle.criteria.slice(0, 6).map((criterion) => <div key={criterion.id}><strong>{tierLabel(criterion.tier)} · {criterion.code}</strong><p>{criterion.statement}</p><small>{readable(criterion.status)} · {criterion.evidenceReference || "Evidence pending"}</small></div>)}</div></article><article className="wall-panel wall-risks"><header><span>GAPS / KNOCK-ON EFFECTS</span><strong>{assessment?.blockers || 0} blockers · {assessment?.warnings || 0} warnings</strong></header>{keyFindings.map((finding) => <div key={finding.id}><b>{finding.severity === "blocker" ? "!" : "△"}</b><p><strong>{finding.title}</strong><span>{finding.detail}</span></p></div>)}{!keyFindings.length && <p>No automated evidence-chain gaps detected.</p>}</article></section>
       <footer className="wall-footer"><span>Owner: {initiative.owner || "Unassigned"}</span><span>Success: {initiative.successMeasures || "Measures not recorded"}</span><span>Sources: baseline records, Government assessments, and referenced external systems</span></footer>
     </article>
+    {includeAnnex ? <article className="decision-annex">
+      <header><div><span>JSF TECHNICAL BASELINE · TRACEABILITY ANNEX</span><h1>{initiative.title}</h1><p>Supporting detail for the Government decision paper · As of {dateLabel(initiative.updatedAt)}</p></div><div><strong>{assessment?.score || 0}%</strong><span>{readable(assessment?.stage || "not_ready")}</span></div></header>
+      <section><h2>External Change Request references</h2><table><thead><tr><th>Reference</th><th>External system / status</th><th>Source checked</th><th>Government decision</th></tr></thead><tbody>{bundle.changeRequests.map((request) => <tr key={request.id}><td>{request.externalIdentifier}<small>{request.title}</small></td><td>{request.externalSystem || "Not recorded"}<small>{request.externalStatus || "External status not recorded"}</small></td><td>{request.sourceAsOf || "Not recorded"}<small>{request.sourceLocator || "Locator not recorded"}</small></td><td>{readable(request.decisionStatus)}<small>{request.decisionAuthority || "Authority not recorded"}</small></td></tr>)}</tbody></table></section>
+      <section><h2>Governed dependency narrative</h2><table><thead><tr><th>Dependency statement</th><th>Basis</th><th>Consequence if unmet</th><th>Confidence / source</th></tr></thead><tbody>{relevantDependencies.map((dependency) => { const predecessor = requestById.get(dependency.predecessorRequestId)?.externalIdentifier || dependency.predecessorRequestId; const successor = requestById.get(dependency.successorRequestId)?.externalIdentifier || dependency.successorRequestId; return <tr key={dependency.id}><td>{dependencyStatement(dependency, predecessor, successor)}</td><td>{dependency.rationale || "Not recorded"}</td><td>{dependency.consequenceIfUnmet || "Not assessed"}</td><td>{readable(dependency.confidence)}<small>{dependency.sourceReference || "Source not recorded"}{dependency.sourceAsOf ? ` · ${dependency.sourceAsOf}` : ""}</small></td></tr>; })}{!relevantDependencies.length ? <tr><td colSpan={4}>No Change Request dependencies are recorded for this Initiative.</td></tr> : null}</tbody></table></section>
+      <section><h2>Affected technical objects</h2><table><thead><tr><th>Change Request</th><th>Action / object</th><th>State transition</th><th>Release effect</th></tr></thead><tbody>{relevantEffects.map((effect) => <tr key={effect.id}><td>{requestById.get(effect.changeRequestId)?.externalIdentifier || effect.changeRequestId}</td><td>{readable(effect.action)} {readable(effect.subjectKind)}<small>{effect.subjectLabel} · {effect.aspect}</small></td><td>{effect.currentValue || "Not reported"} → {effect.targetValue || "Not reported"}<small>{effect.consequence || "Consequence not assessed"}</small></td><td>{effect.fromReleaseName || "Current / unspecified"} → {effect.toReleaseName || "Target / unspecified"}</td></tr>)}</tbody></table></section>
+      <section className="annex-split"><div><h2>Requirement trace</h2>{bundle.requirements.map((requirement) => <p key={requirement.id}><strong>{requirement.externalIdentifier}</strong> · {readable(requirement.traceStatus)}<small>{requirement.sourceLocator || "Source not recorded"}</small></p>)}</div><div><h2>Acceptance</h2>{bundle.criteria.map((criterion) => <p key={criterion.id}><strong>{tierLabel(criterion.tier)} · {criterion.code}</strong> · {readable(criterion.status)}<small>{criterion.evidenceReference || "Evidence pending"}</small></p>)}</div></section>
+      <footer>Generated from the governed application dataset. External Change Requests remain controlled in their originating system.</footer>
+    </article> : null}
   </main>;
 }
