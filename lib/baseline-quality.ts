@@ -17,7 +17,7 @@ export function dataQualityFor(row: TechnicalBaselineRow): DataQuality {
   const hasProduct = present(row.LongName) || present(row.ShortName);
   const hasHost = present(row.HW_Host);
 
-  if (!present(row["#"])) add("review", "#", "The source-record key is blank. Retain the reported value when it becomes known; it is not assumed to be a Product identifier.");
+  if (!present(row["#"])) add("review", "#", "The external record key (#) is blank. Record it when known; it is not assumed to be a Product identifier.");
   if (!present(row.ReleaseName)) add("blocking", "ReleaseName", "Choose the release for this baseline record.");
   if (!hasProduct && !hasHost) add("blocking", "LongName", "Provide a product name or HW_Host so the row can be materialized.");
 

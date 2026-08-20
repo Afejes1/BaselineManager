@@ -34,7 +34,7 @@ export default function CapabilitiesPage() {
   return (
     <DomainPageShell
       title="Capabilities"
-      subtitle="Capabilities mapped from reported source notes"
+      subtitle="Capabilities mapped from reported baseline notes"
       releaseScope={releaseLens || "All releases"}
       contextMode="filter"
       actions={(<>
@@ -45,7 +45,7 @@ export default function CapabilitiesPage() {
     >
       <section className="summary">
         <div className="metric"><span>Capabilities</span><strong>{combined.length}</strong><small>Governed capability identities</small></div>
-        <div className="metric"><span>Rows linked</span><strong>{summaries.reduce((sum, cap) => sum + cap.rowCount, 0)}</strong><small>Source rows with capability text</small></div>
+        <div className="metric"><span>Records linked</span><strong>{summaries.reduce((sum, cap) => sum + cap.rowCount, 0)}</strong><small>Baseline records with capability text</small></div>
       </section>
 
       <section className="domain-list">

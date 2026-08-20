@@ -317,7 +317,7 @@ export function briefMarkdown(brief: Brief, initiative: Initiative | null, rows:
     `## Brief status\\n- Publication status: ${brief.status}\\n- Updated: ${new Date(brief.updatedAt).toLocaleString()}\\n- Generated source scope: ${brief.releaseScope}\\n\\n` +
     `## Consequence / outcome\\n${initiative?.consequence || "Not provided"}\\n\\n` +
     `**Desired outcome**\\n${initiative?.outcome || "Not provided"}\\n\\n` +
-    `## Scope\\n- Source rows: ${brief.sourceRows}\\n- Products: ${brief.products}\\n- Releases: ${brief.releases}\\n- Quality alerts: ${issueCount} blocking, ${warningCount} warnings\\n` +
+    `## Scope\\n- Baseline records: ${brief.sourceRows}\\n- Products: ${brief.products}\\n- Releases: ${brief.releases}\\n- Quality alerts: ${issueCount} blocking, ${warningCount} warnings\\n` +
     `${topProducts.length ? `\\n## Representative products\\n${topProducts.map((name) => `- ${name}`).join("\\n")}\\n` : ""}` +
     `\\n## Evidence\\n${initiative?.evidence?.length ? initiative.evidence
       .slice(0, 12)

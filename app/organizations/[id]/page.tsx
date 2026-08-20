@@ -102,7 +102,7 @@ export default function OrganizationDetailPage() {
         </label>{masterOrganization ? <button className="ghost-button" type="button" onClick={() => setEditing(true)}>Edit Organization</button> : null}</>)}
     >
       <section className="summary">
-        <div className="metric"><span>Source rows</span><strong>{orgRows.length}</strong><small>For this supplier</small></div>
+        <div className="metric"><span>Baseline records</span><strong>{orgRows.length}</strong><small>For this supplier</small></div>
         <div className="metric"><span>Products</span><strong>{metrics.products}</strong><small>Across {metrics.releases} releases</small></div>
         <div className="metric"><span>Platforms</span><strong>{platformRelationships.length}</strong><small>Accountability relationships</small></div>
         <div className="metric metric-alert"><span>Change Requests</span><strong>{changeRequests.length}</strong><small>{changeRequests.filter((item) => item.decisionStatus === "pending").length} pending funding decisions</small></div>
@@ -115,7 +115,7 @@ export default function OrganizationDetailPage() {
       {tab === "change" ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">ACCOUNTABILITY & CHANGE</span><h3>Where this organization participates</h3></div><Link href="/changes">Funding portfolio</Link></div><div className="chip-list">{platformRelationships.map((relation) => <Link className="domain-chip" key={relation.id} href={`/platforms/${encodeURIComponent(relation.platformId)}`}><strong>{relation.relationshipType}</strong><span>{platforms.platforms.find((item) => item.id === relation.platformId)?.code || relation.platformId}</span></Link>)}</div><div className="domain-list" style={{ marginTop: 14 }}>{changeRequests.map((request) => <article className="domain-card" key={request.id}><span className={`decision-badge decision-${request.decisionStatus}`}>{request.decisionStatus}</span><h3><Link href={`/changes/${encodeURIComponent(request.id)}`}>{request.externalIdentifier} · {request.title}</Link></h3><p>{request.knockOnEffects || request.impactSummary || request.summary || "Impact not yet assessed."}</p></article>)}{!changeRequests.length ? <article className="domain-card empty-state"><h3>No attributed Change Request impact</h3><p>No request is directly linked to this organization or its reported products.</p></article> : null}</div></section> : null}
 
       {tab === "products" ? <section className="domain-section">
-        <h3>Supplier rows</h3>
+        <h3>Supplier baseline records</h3>
         <div className="domain-table-wrap">
           <table>
             <thead>

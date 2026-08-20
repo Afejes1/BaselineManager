@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../components/app-link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
 import { dataQualityForOccurrence, type DataQuality } from "../lib/baseline-quality";
@@ -13,6 +13,7 @@ import { projectionOf, useBaselineWorkspace, type ManagedRecord24 } from "../lib
 import { reconcileIntake } from "../lib/import-reconciliation";
 import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
 import { WorkspaceContextControl, useWorkspaceContext } from "../components/workspace-context";
+import { useMasterData } from "../lib/master-data-client";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -115,6 +116,8 @@ export function BaselineManager() {
   const { rows, setRows, loading, error: workspaceError, reload } = useBaselineWorkspace({ includeVoided: true });
   const { releaseLens, setReleaseLens, reload: reloadWorkspaceContext } = useWorkspaceContext();
   const { portfolio: changePortfolio, reload: reloadChanges } = useChangePortfolio();
+  const master = useMasterData();
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState("");
   const [activeTier, setActiveTier] = useState("All records");
   const [activeQuality, setActiveQuality] = useState("All checks");
@@ -134,6 +137,7 @@ export function BaselineManager() {
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
   const [newRowRelease, setNewRowRelease] = useState("");
   const [newReleaseName, setNewReleaseName] = useState("");
+  const [newRowProductId, setNewRowProductId] = useState("");
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTab>("record");
   const [reviewDraftStatus, setReviewDraftStatus] = useState<ReviewStatus>("not_reviewed");
   const [reviewDraftNote, setReviewDraftNote] = useState("");
@@ -143,6 +147,7 @@ export function BaselineManager() {
   const [demoEnabled, setDemoEnabled] = useState(true);
   const [showLifecycleModal, setShowLifecycleModal] = useState(false);
   const [lifecycleReason, setLifecycleReason] = useState("");
+  const fieldProductLaunchRef = useRef("");
   const [lifecycleSaving, setLifecycleSaving] = useState(false);
   const [showChangeAssignment, setShowChangeAssignment] = useState(false);
   const [changeAssignment, setChangeAssignment] = useState({ changeRequestId: "", effectAction: "modify", aspect: "configuration", consequence: "" });
@@ -220,8 +225,21 @@ export function BaselineManager() {
   const productCount = useMemo(() => new Set(scopeRows.map((row) => text(row.LongName) || text(row.ShortName)).filter(Boolean)).size, [scopeRows]);
   const issueBlocks = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "issue").length, [scopeRows]);
   const warningCount = useMemo(() => scopeRows.filter(r => qualityForRecord(r).level === "review").length, [scopeRows]);
+  const fieldedProductIds = useMemo(() => new Set(activeRows.map((row) => row.__meta.productId).filter((id): id is string => Boolean(id))), [activeRows]);
+  const unfieldedProducts = useMemo(() => master.portfolio.products.filter((product) => product.lifecycleStatus === "active" && !fieldedProductIds.has(product.id)), [fieldedProductIds, master.portfolio.products]);
+  const requestedFieldProductId = searchParams.get("fieldProduct") || "";
+  const requestedFieldProduct = master.portfolio.products.find((product) => product.id === requestedFieldProductId) || null;
   const resolvedNewRowRelease = newRowRelease === "__new__" ? newReleaseName.trim() : newRowRelease;
   const reconciliation = useMemo(() => draft ? reconcileIntake(activeRows, draft.rows) : null, [activeRows, draft]);
+
+  useEffect(() => {
+    if (!requestedFieldProduct || fieldProductLaunchRef.current === requestedFieldProduct.id) return;
+    fieldProductLaunchRef.current = requestedFieldProduct.id;
+    setNewRowProductId(requestedFieldProduct.id);
+    setNewRowRelease(activeRelease === "All releases" || activeRelease === "Unassigned" ? "" : activeRelease);
+    setNewReleaseName("");
+    setShowAddRow(true);
+  }, [activeRelease, requestedFieldProduct]);
 
   const selectedProductId = selectedMeta?.productId ?? null;
   const occurrenceRows = useMemo<IndexedRow[]>(() => {
@@ -445,6 +463,7 @@ export function BaselineManager() {
   function openAddRow() {
     setNewRowRelease(activeRelease === "All releases" || activeRelease === "Unassigned" ? "" : activeRelease);
     setNewReleaseName("");
+    setNewRowProductId(requestedFieldProduct?.id || "");
     setShowAddRow(true);
   }
 
@@ -454,22 +473,31 @@ export function BaselineManager() {
       setNotice("Select an existing release or enter a new ReleaseName.");
       return;
     }
+    const selectedProduct = master.portfolio.products.find((product) => product.id === newRowProductId) || null;
+    const row = blankRecord();
+    row.ReleaseName = chosenRelease;
+    if (selectedProduct) {
+      row.LongName = selectedProduct.canonicalName;
+      row.ShortName = selectedProduct.shortName || "";
+      row.TechStackType = selectedProduct.productType || "";
+      row["Software Type"] = selectedProduct.softwareClassification || "";
+    }
     const response = await fetch("/api/baseline", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ row: { ...blankRecord(), ReleaseName: chosenRelease } }),
+      body: JSON.stringify({ row }),
     });
     const payload = await response.json() as { error?: string };
     if (!response.ok) {
       setNotice(payload.error || "The baseline record could not be created.");
       return;
     }
-    await Promise.all([reload(), reloadWorkspaceContext()]);
+    await Promise.all([reload(), reloadWorkspaceContext(), master.reload()]);
     selectReleaseScope(chosenRelease);
     setActiveQuality("All checks");
     setActiveReview("All review statuses");
     setShowAddRow(false);
-    setNotice(`Created a new baseline record in ${chosenRelease}.`);
+    setNotice(`Created ${selectedProduct ? `${selectedProduct.canonicalName} in ` : "a new baseline record in "}${chosenRelease}.`);
   }
 
   function toggleChecked(index: number) {
@@ -497,7 +525,7 @@ export function BaselineManager() {
       });
       setDraft({ fileName: file.name, sheetName, rows: imported });
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : "The workbook could not be read.");
+      setImportError(error instanceof Error ? error.message : "The A2O Tech Stack file could not be read.");
     } finally {
       if (fileRef.current) fileRef.current.value = "";
     }
@@ -512,7 +540,7 @@ export function BaselineManager() {
     });
     const payload = await response.json() as { error?: string };
     if (!response.ok) {
-      setImportError(payload.error || "The workbook could not be accepted into the active baseline.");
+      setImportError(payload.error || "The A2O Tech Stack file could not be accepted into the active baseline.");
       return;
     }
     await Promise.all([reload(), reloadWorkspaceContext()]);
@@ -639,7 +667,7 @@ export function BaselineManager() {
         <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Records</h1></div>
         <div className="top-actions">
           <WorkspaceContextControl mode="filter" />
-          <button className="primary-button" onClick={() => fileRef.current?.click()}>Import workbook</button>
+          <button className="primary-button" onClick={() => fileRef.current?.click()}>Import A2O XLSX</button>
         </div>
       </header>
 
@@ -660,6 +688,10 @@ export function BaselineManager() {
             <div className="metric metric-alert"><span>Data-quality findings</span><strong>{issueCount}</strong><small>{issueBlocks} blocking · {warningCount} warnings</small></div>
           </section>
         </> : null}
+        {!master.loading && unfieldedProducts.length ? <section className="unfielded-products-notice" aria-label="Products not fielded in a Release">
+          <div><span className="eyebrow">PRODUCT CATALOG</span><strong>{unfieldedProducts.length} active Product{unfieldedProducts.length === 1 ? " is" : "s are"} not fielded in a Release</strong><p>Catalog Products can be governed before a deployment is planned. They do not appear in this Release baseline grid and do not receive baseline quality checks until a Release record is created.</p></div>
+          <div className="unfielded-products-actions">{unfieldedProducts.slice(0, 3).map((product) => <Link key={product.id} className="domain-chip" href={`/products/${encodeURIComponent(product.id)}`}><strong>{product.shortName || product.canonicalName}</strong><span>Open Product</span></Link>)}<Link className="ghost-button" href="/products">Open Product catalog</Link></div>
+        </section> : null}
       </> : null}
 
       <div className={selectedIndex === null ? "content-grid" : "content-grid content-grid-detail"}>
@@ -698,8 +730,8 @@ export function BaselineManager() {
                 <button className={showFilters ? "tool-button tool-active" : "tool-button"} onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters}>≡ Filter <span>{(activeRelease === "All releases" ? 0 : 1) + (activeTier === "All records" ? 0 : 1) + (activeQuality === "All checks" ? 0 : 1) + (activeReview === "All review statuses" ? 0 : 1) + (activeLifecycle === "Active records" ? 0 : 1)}</span></button>
                 <div className="spacer" />
                 {checked.size ? <button className="tool-button tool-active" onClick={() => setShowChangeAssignment(true)}>Assign {checked.size} to Change Request</button> : null}
-                <button className="tool-button" onClick={exportWorkbook}>Export {activeRelease === "All releases" ? "all" : activeRelease} .xlsx</button>
-                <button className="add-button" onClick={openAddRow}>＋ Add row</button>
+                <button className="tool-button" onClick={exportWorkbook}>Export A2O XLSX</button>
+                <button className="add-button" onClick={openAddRow}>＋ Add Release record</button>
               </div>
 
               {showFilters && <section className="filter-panel" aria-label="Baseline record filters">
@@ -716,7 +748,7 @@ export function BaselineManager() {
                 }}>Clear filters</button>
               </section>}
 
-              {workspaceError ? <div className="empty">{workspaceError} Use Import workbook to establish the active baseline.</div> : null}
+              {workspaceError ? <div className="empty">{workspaceError} Use Import A2O XLSX to establish the active baseline.</div> : null}
               {loading ? <div className="empty">Loading active baseline…</div> : null}
 
               {!workspaceError && !loading && <div className="table-wrap">
@@ -793,7 +825,7 @@ export function BaselineManager() {
                     })}
                   </tbody>
                 </table>
-                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No working baseline records are available. Import an A2O XLSX file or add a record to begin."}</div>}
+                {!filtered.length && <div className="empty">{rows.length ? "No baseline records match the selected filters." : "No working baseline records are available. Import an A2O Tech Stack XLSX file or add a Release record to begin."}</div>}
               </div>}
               {!workspaceError && !loading && <footer className="table-footer"><span>Showing {filtered.length} records · {scopeRows.length} in {activeRelease}</span><div><b>All loaded</b></div></footer>}
             </>
@@ -1011,9 +1043,10 @@ export function BaselineManager() {
     {showAddRow && <div className="modal-backdrop" role="presentation">
       <section className="import-modal add-row-modal" role="dialog" aria-modal="true" aria-labelledby="add-row-title">
         <span className="eyebrow">NEW BASELINE RECORD</span>
-        <h2 id="add-row-title">Choose the release first</h2>
-        <p>A baseline record cannot be created from <strong>All releases</strong> without an explicit ReleaseName. This prevents the application from assigning the record to the wrong release.</p>
-        <div className="new-row-summary"><span>A2O # value</span><strong>Optional until the exchange identifier is known</strong></div>
+        <h2 id="add-row-title">Create a Release record</h2>
+        <p>A baseline record is always release-specific. Choose the Product and Release before entering placement, infrastructure, and runtime values.</p>
+        <div className="new-row-summary"><span>External record key (#)</span><strong>Optional until the identifier is known</strong></div>
+        <label className="modal-field">Product<select value={newRowProductId} onChange={(event) => setNewRowProductId(event.target.value)}><option value="">Host or infrastructure record — no Product</option>{master.portfolio.products.filter((product) => product.lifecycleStatus === "active").map((product) => <option key={product.id} value={product.id}>{product.shortName ? `${product.shortName} · ` : ""}{product.canonicalName}</option>)}</select><small>A selected catalog Product pre-fills its name and classification. You can complete release-specific values after creating the record.</small></label>
         <label className="modal-field">ReleaseName<select value={newRowRelease} onChange={(event) => setNewRowRelease(event.target.value)}><option value="">Select a release…</option>{releases.filter((release) => release !== "Unassigned").map((release) => <option key={release}>{release}</option>)}<option value="__new__">＋ Create a new release…</option></select></label>
         {newRowRelease === "__new__" && <label className="modal-field">New ReleaseName<input value={newReleaseName} onChange={(event) => setNewReleaseName(event.target.value)} placeholder="Enter the release name" /></label>}
         <div className={resolvedNewRowRelease ? "assignment-preview ready" : "assignment-preview"}><span>{resolvedNewRowRelease ? "Row will be assigned to" : "Waiting for release selection"}</span><strong>{resolvedNewRowRelease || "No release selected"}</strong></div>
@@ -1025,13 +1058,13 @@ export function BaselineManager() {
       <section className="import-modal quality-help-modal" role="dialog" aria-modal="true" aria-labelledby="quality-help-title">
         <span className="eyebrow">AUTOMATED HEALTH CHECKS</span>
         <h2 id="quality-help-title">Why does the system check each row?</h2>
-        <p>Automated checks identify missing or inconsistent baseline values. They are <strong>application metadata</strong> and are not included in A2O XLSX export.</p>
+        <p>Automated checks apply to <strong>release baseline records</strong>. They identify missing or inconsistent values in a fielded record. They are calculated indicators, not source data or manual assessment, and are not included in the A2O Tech Stack XLSX export.</p>
         <div className="quality-key">
-          <div><Mark quality={{ level: "ready", label: "Pass", issues: [] }} /><span>No configured source-value checks failed.</span></div>
+          <div><Mark quality={{ level: "ready", label: "Pass", issues: [] }} /><span>No configured baseline-value checks failed.</span></div>
           <div><Mark quality={{ level: "review", label: "Warning", issues: [] }} /><span>The row is usable, but a value is incomplete or inconsistent.</span></div>
           <div><Mark quality={{ level: "issue", label: "Blocking", issues: [] }} /><span>The row cannot be used until a required identity is corrected.</span></div>
         </div>
-        <p className="modal-note">Automated checks and manual review are separate. A row can pass checks and still need analyst review.</p>
+        <p className="modal-note">Product catalog entries do not receive this status until they are fielded in a Release. Automated checks and manual review are separate; a record can pass checks and still need analyst review.</p>
         <footer><button className="primary-button" onClick={() => setShowQualityHelp(false)}>Got it</button></footer>
       </section>
     </div>}
@@ -1042,7 +1075,7 @@ export function BaselineManager() {
 
     {(draft || importError) && <div className="modal-backdrop" role="presentation">
       <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
-        <span className="eyebrow">WORKBOOK INTAKE</span>
+        <span className="eyebrow">A2O TECH STACK EXCHANGE</span>
         <h2 id="import-title">{importError ? "Contract mismatch" : "Ready to reconcile"}</h2>
         {importError ? <>
           <p className="error-copy">{importError}</p>
@@ -1058,7 +1091,7 @@ export function BaselineManager() {
           </div>
           {reconciliation?.conflicts ? <p className="error-copy"><strong>{reconciliation.conflicts} duplicate identity conflict{reconciliation.conflicts === 1 ? "" : "s"}.</strong> Resolve repeated ReleaseName + # identities (or semantic fallback identities) before import.</p> : null}
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
-          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming workbook leave the active baseline. Each imported workbook remains available as an immutable intake snapshot for history and rollback.</p>
+          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming A2O exchange file leave the active baseline. Each import is retained as an immutable intake package for history and rollback.</p>
           <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" disabled={Boolean(reconciliation?.conflicts)} onClick={acceptImport}>Import and reconcile</button></footer>
         </>}
       </section>
@@ -1071,13 +1104,13 @@ export function BaselineManager() {
         <button className="modal-close" type="button" aria-label="Close workspace menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
         <span className="eyebrow">WORKSPACE</span>
         <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
-        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, and traceability. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import workbook to establish or replace the active baseline."}</p>
+        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, and traceability. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import A2O XLSX to establish or replace the active baseline."}</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Baseline records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
           <div><strong>8</strong><span>Products</span></div>
         </div>
-        <p className="modal-note">{demoEnabled ? <>This replaces the active baseline with demonstration records. It also adds Platform, topology, Change Request, dependency, and decision detail for testing. Prior workbooks remain available and can be restored from Import &amp; Data Quality.</> : <>Demonstration data is disabled. Workbook restore, void/restore, audit history, and exact XLSX export remain available.</>}</p>
+        <p className="modal-note">{demoEnabled ? <>This replaces the active baseline with demonstration records. It also adds Platform, topology, Change Request, dependency, and decision detail for testing. Prior A2O exchange packages remain available and can be restored from Import &amp; Data Quality.</> : <>Demonstration data is disabled. A2O exchange restore, void/restore, audit history, and exact XLSX export remain available.</>}</p>
         {demoError ? <p className="error-copy" role="alert">{demoError}</p> : null}
         <footer><button className="ghost-button" type="button" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>Close</button>{demoEnabled ? <button className="primary-button" type="button" disabled={demoLoading} onClick={loadDemonstrationWorkspace}>{demoLoading ? "Loading demonstration data…" : "Load demonstration dataset"}</button> : null}</footer>
       </section>
