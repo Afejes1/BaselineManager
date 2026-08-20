@@ -6,7 +6,7 @@ This application is being matured for an eventual JSF air-gapped deployment. The
 
 - The intake/export boundary is the exact retained 24-column A2O XLSX contract. Application properties outside that contract never alter the workbook shape.
 - Source packages and raw rows are immutable intake snapshots. They support reconciliation, rollback, and audit; import does not designate them as official Lockheed Martin or Government records.
-- The editable working projection and normalized model are the contractor-maintained analytical baseline. Analyst edits do not overwrite intake snapshots.
+- Canonical Baseline Records and normalized release-specific state are the contractor-maintained analytical baseline. Analyst edits do not overwrite intake snapshots.
 - An erroneous baseline record is voided and restorable; it is never silently hard-deleted.
 - Release roles (`historical`, `as_is`, `to_be`, `reported`) are analytical perspectives. They are not approval states.
 - Change Requests are references to the external incumbent system. This application owns Government priority, impact links, dependencies, consequences, and the `fund` / `defer` / `decline` decision record.
@@ -58,5 +58,5 @@ Required deployment contents:
 - Retain the application version, migrations, configuration, and manifest with each recovery point.
 - Encrypt backup media under the enclave's key-management policy.
 - Perform a documented restore drill; a backup that has not been restored is not accepted.
-- Verify the restored database preserves source packages, raw source rows, working projection, reviews, audit events, Platform hierarchy, Change Requests, effects, dependencies, and decision authority/rationale.
+- Verify the restored database preserves source packages, raw source rows, Baseline Records, reviews, audit events, Platform hierarchy, Change Requests, effects, dependencies, and decision authority/rationale.
 

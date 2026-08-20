@@ -1,7 +1,9 @@
 export const initiativeStatuses = ["draft", "active", "decision_required", "closed"] as const;
 export const initiativePriorities = ["low", "medium", "high", "critical"] as const;
 export const workPackageStatuses = ["planned", "in_progress", "on_hold", "complete", "cancelled"] as const;
-export const governanceRecordTypes = ["mcp", "technical_call", "decision", "risk", "question", "technical_note"] as const;
+// Change Requests are the funding/decision record. Governance records capture
+// calls, decisions, risks, questions, and notes; they do not duplicate MCPs.
+export const governanceRecordTypes = ["technical_call", "decision", "risk", "question", "technical_note"] as const;
 export const governanceRecordStatuses = ["open", "in_review", "approved", "closed", "superseded"] as const;
 export const briefStatuses = ["draft", "reviewed", "published", "superseded"] as const;
 
@@ -23,8 +25,6 @@ export type ScopeLink = {
 export type WorkPackage = {
   id: string;
   initiativeId: string | null;
-  changeRequestId: string | null;
-  objectiveId: string | null;
   parentId: string | null;
   wbsCode: string;
   title: string;

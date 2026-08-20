@@ -26,7 +26,7 @@ export async function fetchAuditHistory(kind: string, id: string) {
 }
 
 export function useMasterData() {
-  const [portfolio, setPortfolio] = useState<MasterDataPortfolio>({ releases: [], milestones: [], products: [], organizations: [], capabilities: [], configurationNodes: [] });
+  const [portfolio, setPortfolio] = useState<MasterDataPortfolio>({ releases: [], milestones: [], configurationSets: [], products: [], organizations: [], capabilities: [], configurationNodes: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const reload = useCallback(async () => {

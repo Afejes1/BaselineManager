@@ -19,8 +19,8 @@ export default function ObjectivesPage() {
   const [message, setMessage] = useState("");
   const [form, setForm] = useState({ changeRequestId: "", externalSystem: "LM Jira", externalIdentifier: "", title: "", summary: "", technicalOwner: "", status: "planned", plannedStart: "", plannedFinish: "", sourceLocator: "", sourceAsOf: "" });
 
-  const requests = workspace?.changes.requests || [];
-  const objectives = workspace?.objectives || [];
+  const requests = useMemo(() => workspace?.changes.requests || [], [workspace?.changes.requests]);
+  const objectives = useMemo(() => workspace?.objectives || [], [workspace?.objectives]);
   const owners = useMemo(() => [...new Set(objectives.map((item) => item.technicalOwner).filter(Boolean))] as string[], [objectives]);
   const requestById = useMemo(() => new Map(requests.map((item) => [item.id, item])), [requests]);
   const visible = useMemo(() => objectives.filter((item) => {

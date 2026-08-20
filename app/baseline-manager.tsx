@@ -184,7 +184,7 @@ export function BaselineManager() {
   const selected = selectedIndex === null ? blankRecord() : rows[selectedIndex] ?? blankRecord();
   const selectedMeta = selectedIndex === null ? null : rows[selectedIndex]?.__meta ?? null;
   const selectedQuality = qualityForRecord(selected);
-  const selectedReview = !selectedMeta ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[selectedMeta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
+  const selectedReview = !selectedMeta ? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null } : reviews[selectedMeta.occurrenceId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
   const reviewDraftHasChanges = reviewDraftStatus !== selectedReview.status || reviewDraftNote.trim() !== (selectedReview.note ?? "").trim();
   const selectedSavePending = selectedMeta ? pendingSaveOccurrences.has(selectedMeta.occurrenceId) : false;
   const selectedSaveFailed = selectedMeta ? failedSaveOccurrences.has(selectedMeta.occurrenceId) : false;
@@ -204,7 +204,7 @@ export function BaselineManager() {
     const releaseMatch = activeRelease === "All releases" || releaseOf(row) === activeRelease;
     const tierMatch = activeTier === "All records" || tierOf(row) === activeTier;
     const qualityMatch = activeQuality === "All checks" || qualityForRecord(row).label === activeQuality;
-    const rowReview = reviews[row.__meta.sourceRowId]?.status ?? "not_reviewed";
+    const rowReview = reviews[row.__meta.occurrenceId]?.status ?? "not_reviewed";
     const reviewMatch = activeReview === "All review statuses" || manualReviewLabel(rowReview) === activeReview;
     const lifecycleMatch = activeLifecycle === "All lifecycle states" || (activeLifecycle === "Active records" ? row.__meta.lifecycleStatus === "active" : row.__meta.lifecycleStatus === "voided");
     return releaseMatch && tierMatch && qualityMatch && reviewMatch && lifecycleMatch && TECHNICAL_BASELINE_COLUMNS.map((column) => text(row[column])).join(" ").toLowerCase().includes(query.toLowerCase());
@@ -406,7 +406,7 @@ export function BaselineManager() {
       setSelectedIndex(null);
       return;
     }
-    const review = reviews[record.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
+    const review = reviews[record.__meta.occurrenceId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null, note: null };
     setShowGridSummary(false);
     setSelectedIndex(index);
     setActiveDetailTab("record");
@@ -423,13 +423,13 @@ export function BaselineManager() {
   }
 
   async function setManualReview(status: ReviewStatus, note?: string) {
-    const sourceRowId = selectedMeta?.sourceRowId;
-    if (!sourceRowId) {
+    const occurrenceId = selectedMeta?.occurrenceId;
+    if (!occurrenceId) {
       setNotice("Choose a baseline record before recording a manual review.");
       return;
     }
 
-    const key = sourceRowId;
+    const key = occurrenceId;
     const previous = reviews[key];
     const cleanedNote = note?.trim() ?? "";
     const optimistic = { status, reviewedAt: status === "not_reviewed" ? null : new Date().toISOString(), note: cleanedNote || null };
@@ -440,7 +440,7 @@ export function BaselineManager() {
       const response = await fetch("/api/baseline/reviews", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourceRowId, status, note: cleanedNote }),
+        body: JSON.stringify({ occurrenceId, status, note: cleanedNote }),
       });
       if (!response.ok) throw new Error("Unable to save review.");
       const payload = await response.json() as { review: ManualReview };
@@ -772,7 +772,7 @@ export function BaselineManager() {
                     {filtered.map(({ row, index }) => {
                       const key = text(row["#"]);
                       const quality = qualityForRecord(row);
-                      const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
+                      const rowReview = reviews[row.__meta.occurrenceId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
                       return <tr
                         key={row.__meta.occurrenceId}
                         className={`${selectedIndex === index ? "row-selected" : ""} ${row.__meta.lifecycleStatus === "voided" ? "row-voided" : ""}`}
@@ -953,7 +953,7 @@ export function BaselineManager() {
                               selectedValue: text(selected[column]),
                               comparedValue: text(row[column]),
                             }));
-                          const rowReview = reviews[row.__meta.sourceRowId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
+                          const rowReview = reviews[row.__meta.occurrenceId] ?? { status: "not_reviewed" as ReviewStatus, reviewedAt: null };
                           return <button type="button" key={`${text(row.ReleaseName)}:${index}`} className={`occurrence-row ${isCurrent ? "occurrence-row-current" : ""}`} onClick={() => selectRecord(index)}>
                             <div className="occurrence-row-head">
                               <strong>{text(row.ReleaseName) || "Unassigned"}<small>Release baseline</small></strong>

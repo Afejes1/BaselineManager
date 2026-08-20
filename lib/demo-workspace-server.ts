@@ -24,7 +24,7 @@ type DemoOccurrence = {
 type RationalePlan = {
   id: string;
   externalReference: string;
-  recordType: "mcp" | "technical_call" | "decision";
+  recordType: "technical_note" | "technical_call" | "decision";
   title: string;
   status: "open" | "in_review" | "approved";
   occurredAt: string;
@@ -42,8 +42,8 @@ const versions: Record<string, string> = {
 
 const rationales: RationalePlan[] = [
   {
-    id: "demo-record-mcp-r6-mps", externalReference: "DEMO-MCP-061", recordType: "mcp", title: "Mission Planning Service relocation and capacity uplift", status: "in_review", occurredAt: "2026-04-15",
-    summary: "Synthetic MCP example for moving Mission Planning Service to its Release 6 compute host and increasing capacity.", decisionAsk: "Approve the proposed Release 6 deployment position.", impact: "Moves the service and changes its reported storage, CPU, and memory values.", sourceKey: "DEMO-R6-001",
+    id: "demo-record-mcp-r6-mps", externalReference: "DEMO-ANALYSIS-MCP-061", recordType: "technical_note", title: "Mission Planning Service relocation assessment", status: "in_review", occurredAt: "2026-04-15",
+    summary: "Synthetic contractor assessment supporting DEMO-MCP-061. The Change Request remains the authoritative external work reference.", decisionAsk: "Confirm the assessed Release 6 deployment consequence.", impact: "Moves the service and changes its reported storage, CPU, and memory values.", sourceKey: "DEMO-R6-001",
   },
   {
     id: "demo-record-call-r6-tls", externalReference: "DEMO-TC-062", recordType: "technical_call", title: "Threat Library Service capacity review", status: "open", occurredAt: "2026-05-02",
@@ -88,22 +88,24 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   requireWriter(actor);
   const occurrences = await db.prepare(`
     SELECT bo.id AS occurrence_id,bo.release_id,bo.configuration_node_id,bo.product_id,
-      sr.source_key,sr.short_name,sr.containerized,r.name AS release_name,n.name AS host_name,p.owner_organization_id
+      COALESCE(ext.source_key,sr.source_key) AS source_key,p.short_name,bds.containerized,r.name AS release_name,n.name AS host_name,
+      (SELECT ps.organization_id FROM product_supplier ps WHERE ps.product_id=p.id AND ps.supplier_role='supplier' ORDER BY ps.organization_id LIMIT 1) AS supplier_organization_id
     FROM baseline_occurrence bo
-    JOIN source_row_24 sr ON sr.id=bo.source_row_id
-    JOIN source_package sp ON sp.id=sr.source_package_id
+    LEFT JOIN baseline_record_extension ext ON ext.baseline_occurrence_id=bo.id
+    LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id
     JOIN release r ON r.id=bo.release_id
     JOIN configuration_node n ON n.id=bo.configuration_node_id
     LEFT JOIN product p ON p.id=bo.product_id
+    LEFT JOIN baseline_deployment_state bds ON bds.baseline_id=bo.baseline_id AND bds.deployment_id=bo.deployment_id
     WHERE bo.program_id=? AND bo.workspace_id=?
     ORDER BY sr.row_number ASC
   `).bind(PROGRAM_ID, WORKSPACE_ID).all<{
     occurrence_id: string; release_id: string; configuration_node_id: string; product_id: string | null;
-    source_key: string | null; short_name: string | null; containerized: string | null; release_name: string; host_name: string; owner_organization_id: string | null;
+    source_key: string | null; short_name: string | null; containerized: string | null; release_name: string; host_name: string; supplier_organization_id: string | null;
   }>();
 
   const rows: DemoOccurrence[] = occurrences.results.map((row) => ({
-    occurrenceId: row.occurrence_id, releaseId: row.release_id, configurationNodeId: row.configuration_node_id, productId: row.product_id, organizationId: row.owner_organization_id,
+    occurrenceId: row.occurrence_id, releaseId: row.release_id, configurationNodeId: row.configuration_node_id, productId: row.product_id, organizationId: row.supplier_organization_id,
     sourceKey: row.source_key || "", shortName: row.short_name, containerized: row.containerized, releaseName: row.release_name, hostName: row.host_name,
   }));
   if (!rows.length || rows.some((row) => !row.sourceKey.startsWith(DEMO_PREFIX))) {
@@ -253,9 +255,13 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   const javaInitiativeId = "demo-initiative-java8";
   const javaObjectiveIds = ["demo-objective-java-inventory", "demo-objective-java-upgrade", "demo-objective-java-acceptance"];
   statements.push(db.prepare("DELETE FROM work_package_dependency WHERE predecessor_work_package_id LIKE 'demo-java-wbs-%' OR successor_work_package_id LIKE 'demo-java-wbs-%'"));
-  statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id=? OR objective_id IN (?,?,?)").bind(javaInitiativeId, ...javaObjectiveIds));
+  statements.push(db.prepare("DELETE FROM work_package_objective WHERE work_package_id IN (SELECT id FROM work_package WHERE initiative_id=?)").bind(javaInitiativeId));
+  statements.push(db.prepare("DELETE FROM work_package WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM acceptance_signoff WHERE criterion_id IN (SELECT id FROM acceptance_criterion WHERE objective_id IN (?,?,?))").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM acceptance_criterion WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
+  statements.push(db.prepare("DELETE FROM objective_requirement WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
+  statements.push(db.prepare("DELETE FROM requirement WHERE id LIKE 'demo-requirement-%'"));
+  // Remove pre-0013 demonstration traces left by an older demo load.
   statements.push(db.prepare("DELETE FROM requirement_trace WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM objective_source_row WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
@@ -307,15 +313,25 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     ["demo-requirement-mission", javaObjectiveIds[2], "DEMO-REQ-MIS-220", "Preserve mission-planning thread performance", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/MIS-220", "2026-08-18", "verify", "The mission-planning thread shall complete within the approved performance envelope.", "The mission-planning thread shall complete within the approved performance envelope on the modernized runtime under the representative Release 7 load profile.", "Verifies the runtime change does not degrade mission behavior.", "traced"],
     ["demo-requirement-interface", javaObjectiveIds[1], "DEMO-REQ-INT-118", "Threat-data interface compatibility", "Synthetic authoritative requirements repository", "DEMO://REQUIREMENTS/INT-118", "2026-08-18", "modify", "Threat data shall be available to mission planning.", "Interface timing, error handling, and compatibility text is awaiting requirements authority reconciliation.", "The current requirement is not specific enough to support acceptance after library and runtime changes.", "analysis_needed"],
   ] as const;
-  for (const requirement of requirementPlan) statements.push(db.prepare("INSERT INTO requirement_trace (id,objective_id,external_identifier,title,source_system,source_locator,source_as_of,change_action,before_text,after_text,rationale,trace_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(...requirement, actor.id, at, at));
+  for (const requirement of requirementPlan) {
+    const [requirementId, objectiveId, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, changeAction, beforeText, afterText, rationale, disposition] = requirement;
+    const objectiveRequirementId = requirementId.replace("demo-requirement-", "demo-objective-requirement-");
+    statements.push(
+      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, changeAction === "retire" ? "retired" : "active", actor.id, at, at),
+      db.prepare("INSERT INTO objective_requirement (id,objective_id,requirement_id,version_label,change_action,before_text,after_text,rationale,disposition,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(objectiveRequirementId, objectiveId, requirementId, "1", changeAction, beforeText, afterText, rationale, disposition, sourceLocator, sourceAsOf, actor.id, at, at),
+    );
+  }
   const criterionPlan = [
-    ["demo-criterion-sbom", javaObjectiveIds[0], "demo-requirement-sbom", "tier_4", "DEMO-T4-CM-01", "Every in-scope fielded build has a signed machine-readable SBOM that identifies its runtime distribution and version.", "inspection", "passed", "2026-08-18", "2026-08-18", "DEMO://EVIDENCE/SBOM-INVENTORY-2026-08-18"],
-    ["demo-criterion-runtime", javaObjectiveIds[1], "demo-requirement-runtime", "tier_4", "DEMO-T4-CYB-02", "Automated scan and installation inspection find no executable Java 8 runtime in either in-scope Release 7 product deployment.", "test", "ready", "2027-02-26", null, null],
-    ["demo-criterion-mission", javaObjectiveIds[2], "demo-requirement-mission", "tier_3", "DEMO-T3-MIS-01", "Representative mission planning completes the approved mission thread within its governed performance envelope using Release 7 threat data.", "demonstration", "draft", "2027-04-16", null, null],
+    ["demo-criterion-sbom", javaObjectiveIds[0], "demo-objective-requirement-sbom", "tier_4", "DEMO-T4-CM-01", "Every in-scope fielded build has a signed machine-readable SBOM that identifies its runtime distribution and version.", "inspection", "passed", "2026-08-18", "2026-08-18", "DEMO://EVIDENCE/SBOM-INVENTORY-2026-08-18"],
+    ["demo-criterion-runtime", javaObjectiveIds[1], "demo-objective-requirement-runtime", "tier_4", "DEMO-T4-CYB-02", "Automated scan and installation inspection find no executable Java 8 runtime in either in-scope Release 7 product deployment.", "test", "ready", "2027-02-26", null, null],
+    ["demo-criterion-mission", javaObjectiveIds[2], "demo-objective-requirement-mission", "tier_3", "DEMO-T3-MIS-01", "Representative mission planning completes the approved mission thread within its governed performance envelope using Release 7 threat data.", "demonstration", "draft", "2027-04-16", null, null],
     ["demo-criterion-regression", javaObjectiveIds[2], null, "tier_4", "DEMO-T4-SYS-03", "The Release 7 regression suite completes with no unresolved Severity 1 or Severity 2 defect attributable to the runtime modernization.", "test", "draft", "2027-04-30", null, null],
     ["demo-criterion-rollback", javaObjectiveIds[2], null, "tier_4", "DEMO-T4-FLD-04", "The fielding team restores the approved prior baseline within the governed rollback window using the signed deployment package.", "demonstration", "draft", "2027-05-14", null, null],
   ] as const;
-  for (const criterion of criterionPlan) statements.push(db.prepare("INSERT INTO acceptance_criterion (id,objective_id,requirement_trace_id,tier,code,statement,verification_method,status,planned_date,actual_date,evidence_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(...criterion, actor.id, at, at));
+  for (const criterion of criterionPlan) {
+    const [criterionId, objectiveId, objectiveRequirementId, tier, code, statement, verificationMethod, status, plannedDate, actualDate, evidenceReference] = criterion;
+    statements.push(db.prepare("INSERT INTO acceptance_criterion (id,objective_id,requirement_trace_id,objective_requirement_id,tier,code,statement,verification_method,status,planned_date,actual_date,evidence_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(criterionId, objectiveId, null, objectiveRequirementId, tier, code, statement, verificationMethod, status, plannedDate, actualDate, evidenceReference, actor.id, at, at));
+  }
   for (const signoff of [
     ["demo-signoff-sbom", "demo-criterion-sbom", "Government configuration management authority", "Synthetic CM authority", "accepted", "2026-08-18", "Accepted for demonstration after matching signed SBOM identifiers to the synthetic installation inventory.", null],
     ["demo-signoff-mission", "demo-criterion-mission", "Government mission acceptance authority", null, "pending", null, null, null],
@@ -340,7 +356,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     const workPackageId = `demo-java-wbs-${index + 1}`;
     const workType = index === 0 ? "analysis" : index === 1 ? "coordination" : index === 2 ? "verification" : "decision_support";
     const relationship = index === 0 ? "assesses" : index === 1 ? "coordinates" : index === 2 ? "verifies" : "supports";
-    statements.push(db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, javaInitiativeId, work[2], work[1], null, work[0], work[3], work[4], work[5], work[6], work[7], workType, work[9], "Status is supported by the linked estimate, requirement, or briefing artifact.", work[8], index, at, at));
+    statements.push(db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, javaInitiativeId, null, null, null, work[0], work[3], work[4], work[5], work[6], work[7], workType, work[9], "Status is supported by the linked estimate, requirement, or briefing artifact.", work[8], index, at, at));
     statements.push(db.prepare("INSERT INTO work_package_objective (id,work_package_id,objective_id,relationship,rationale,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(`demo-java-wbs-objective-${index + 1}`, workPackageId, work[1], relationship, "Synthetic Government work-to-incumbent Objective association.", actor.id, at, at));
   }
   for (const dependency of [

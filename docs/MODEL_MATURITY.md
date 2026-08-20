@@ -1,14 +1,20 @@
 # Model maturity decisions
 
-This document records the boundaries implemented in migration `0009_model_maturity.sql`.
+This document records the boundaries implemented through migrations
+`0009_model_maturity.sql`, `0012_authoritative_baseline.sql`, and
+`0013_delivery_model.sql`.
 
-## Working baseline and exchange contract
+## Authoritative baseline and exchange contract
 
-- The application owns one editable, contractor-maintained **Working Technical Baseline** for analysis and reporting.
+- The application database owns the contractor-maintained **Technical Baseline** for analysis and reporting.
 - The A2O XLSX file is an exact 24-column import/export exchange contract. It is not treated as an official Lockheed Martin or Government record merely because it was imported.
-- Each import creates an immutable package and row snapshot for reconciliation, rollback, and audit. Analyst edits update the working projection and normalized model; they do not rewrite the intake snapshot.
+- Each import creates an immutable package and row snapshot for reconciliation and audit. Analyst edits update canonical Baseline Records and normalized release-specific state; they do not rewrite the intake snapshot.
+- A Baseline Record may be created without an imported row. Imported rows are evidence linked to the record, not the record's identity.
+- Export rows are assembled from the normalized database and Baseline Record exchange extensions. Stored intake JSON is never an independent editable projection.
 - Supporting sources are linked separately and may include Lockheed Martin artifacts, Government artifacts, technical calls, contractor assessments, or records managed in another system.
 - Properties required by the application may extend beyond the 24-column exchange contract. Those properties remain in the database and are excluded from the exact A2O XLSX export.
+- Manual review belongs to the Baseline Record, so it remains valid when a later import contributes a new source row.
+- Configuration Sets are revisioned independently from Release lifecycle. Review locks edits; approval locks the revision and subsequent edits create a new working revision.
 
 ## Canonical identity
 
@@ -25,20 +31,21 @@ This document records the boundaries implemented in migration `0009_model_maturi
 - Platform is the stable installation hierarchy: `ALOU → OCK → OBK → PMA`.
 - A baseline record is assigned to a Platform through a release-specific `platform_baseline_assignment` record.
 - Each assignment records role, confidence, review state, source reference, source-as-of date, and reviewer.
-- A replacement workbook import clears assignments tied to the prior active projection. This produces an unmapped review queue rather than carrying an old fielding claim onto the reconciled working baseline.
+- Workbook intake reconciles existing Baseline Records. It preserves assignments on matched records and reports records that were absent from the incoming file for analyst disposition.
 - Platform retirement is a status change. It does not delete history.
 
 ## Delivery structure
 
 - LM Objectives remain incumbent-owned delivery units beneath a Change Request.
-- Government work packages belong to an Initiative and form the Government WBS.
+- Government work packages belong to an Initiative and form an internal Initiative Work Plan. They are not presented as an official DoD WBS.
 - A work package may support, assess, verify, or coordinate an LM Objective. The Objective does not own the Government work package.
 - Parent/child relationships are decomposition. Accepted dependency edges are schedule logic.
 - Reparenting and accepted schedule dependencies are cycle-checked.
+- Requirements are reusable external references. `objective_requirement` records the Objective-specific version, proposed action, disposition, rationale, and source basis.
 
 ## Product structure
 
-The `/pbs` route is labeled **Product Deployment Structure**. It reports Product → Release → configuration placement from working baseline records. It is not presented as an internal component PBS because the current data does not provide governed component relationships.
+The `/pbs` route is labeled **Product Deployment Structure**. It reports Product → Release → configuration placement from Baseline Records. It is not presented as an internal component PBS because the current data does not provide governed component relationships.
 
 ## Analyst control
 

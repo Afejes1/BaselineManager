@@ -102,4 +102,6 @@ native runtime files.
   database and object storage, backups, monitoring, TLS, and security approval.
 
 See [docs/LOCAL_OPERATOR_RUNBOOK.md](docs/LOCAL_OPERATOR_RUNBOOK.md) for the
-value-producing analyst workflow and recovery procedures.
+value-producing analyst workflow and recovery procedures. See
+[docs/AUTHORITATIVE_DATA_MODEL.md](docs/AUTHORITATIVE_DATA_MODEL.md) for the
+implemented ownership, lifecycle, intake, export, and delivery boundaries.

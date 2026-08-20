@@ -6,7 +6,8 @@ import type { Cell, Record24 } from "./baseline-data";
 
 export type BaselineRecordMeta = {
   occurrenceId: string;
-  sourceRowId: string;
+  /** Immutable intake evidence, when the record was imported. */
+  sourceRowId: string | null;
   revision: number;
   materializationStatus: string;
   lifecycleStatus: "active" | "voided";

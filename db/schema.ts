@@ -37,8 +37,15 @@ export const releaseMilestones = sqliteTable("release_milestone", {
 ]);
 
 export const configurationBaselines = sqliteTable("configuration_baseline", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), releaseId: text("release_id").notNull().references(() => releases.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), maturity: text("maturity").notNull().default("reported"), asOf: text("as_of").notNull(), status: text("status").notNull().default("working"), description: text("description"), parentBaselineId: text("parent_baseline_id"), ...timestamps,
-}, (t) => [uniqueIndex("baseline_release_name_asof_uq").on(t.releaseId, t.normalizedName, t.asOf), index("baseline_release_ix").on(t.programId, t.releaseId, t.status)]);
+  // `status` is retained for migration compatibility. New code uses the
+  // explicit approval fields below, rather than overloading Release lifecycle.
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), releaseId: text("release_id").notNull().references(() => releases.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), maturity: text("maturity").notNull().default("reported"), asOf: text("as_of").notNull(), status: text("status").notNull().default("working"), revisionNumber: integer("revision_number").notNull().default(1), approvalStatus: text("approval_status").notNull().default("working"), approvedAt: text("approved_at"), approvedByUserId: text("approved_by_user_id").references(() => appUsers.id), lockedAt: text("locked_at"), supersededAt: text("superseded_at"), supersededByBaselineId: text("superseded_by_baseline_id"), description: text("description"), parentBaselineId: text("parent_baseline_id"), ...timestamps,
+}, (t) => [
+  check("baseline_approval_status", sql`${t.approvalStatus} IN ('working','under_review','approved','superseded')`),
+  uniqueIndex("baseline_release_name_asof_uq").on(t.releaseId, t.normalizedName, t.asOf),
+  index("baseline_release_ix").on(t.programId, t.releaseId, t.status),
+  index("baseline_release_approval_ix").on(t.programId, t.releaseId, t.approvalStatus, t.asOf),
+]);
 
 export const organizations = sqliteTable("organization", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), name: text("name").notNull(), normalizedName: text("normalized_name").notNull(), organizationType: text("organization_type"), description: text("description"), lifecycleStatus: text("lifecycle_status").notNull().default("active"), sourceReference: text("source_reference"), sourceAsOf: text("source_as_of"), ...timestamps,
@@ -113,7 +120,9 @@ export const baselineNodeStates = sqliteTable("baseline_node_state", {
 }, (t) => [uniqueIndex("baseline_node_state_uq").on(t.baselineId, t.configurationNodeId), index("baseline_node_state_node_ix").on(t.baselineId, t.configurationNodeId)]);
 
 export const baselineDeploymentStates = sqliteTable("baseline_deployment_state", {
-  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), baselineId: text("baseline_id").notNull().references(() => configurationBaselines.id), deploymentId: text("deployment_id").notNull().references(() => deployments.id), sourceRowId: text("source_row_id"), reportedVersion: text("reported_version"), presence: text("presence").notNull().default("unknown"), status: text("status").notNull().default("reported"), installationType: text("installation_type"), containerized: text("containerized"), containerTechnology: text("container_technology"), containerType: text("container_type"), language: text("language"), notes: text("notes"), ...timestamps,
+  // `reportedVersion` is retained for imported legacy values. Application and
+  // runtime version are distinct governed baseline state from this migration.
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), baselineId: text("baseline_id").notNull().references(() => configurationBaselines.id), deploymentId: text("deployment_id").notNull().references(() => deployments.id), sourceRowId: text("source_row_id"), reportedVersion: text("reported_version"), applicationVersion: text("application_version"), runtimeVersion: text("runtime_version"), presence: text("presence").notNull().default("unknown"), status: text("status").notNull().default("reported"), installationType: text("installation_type"), containerized: text("containerized"), containerTechnology: text("container_technology"), containerType: text("container_type"), language: text("language"), notes: text("notes"), ...timestamps,
 }, (t) => [check("baseline_deployment_presence", sql`${t.presence} IN ('present','absent','unknown')`), uniqueIndex("baseline_deployment_state_uq").on(t.baselineId, t.deploymentId), index("baseline_deployment_state_baseline_ix").on(t.baselineId, t.status, t.presence)]);
 
 // Every original cell is kept as text (including the five notes fields) and the
@@ -134,13 +143,15 @@ export const baselineWorkspaces = sqliteTable("baseline_workspace", {
   ...timestamps,
 }, (t) => [uniqueIndex("baseline_workspace_program_label_uq").on(t.programId, t.label)]);
 
-// This is the managed 24-column projection. rawPayload on source_row_24 is
-// never overwritten; corrections live here and are explicitly auditable.
+// This is the authoritative Baseline Record. A2O source rows may be linked to
+// it, but source-row provenance is optional so analyst-created records are not
+// forced to masquerade as workbook imports. New canonical IDs are UUID text
+// values; legacy deterministic text IDs continue to be valid foreign keys.
 export const baselineOccurrences = sqliteTable("baseline_occurrence", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
   workspaceId: text("workspace_id").notNull().references(() => baselineWorkspaces.id),
-  sourceRowId: text("source_row_id").notNull().references(() => sourceRows24.id),
+  sourceRowId: text("source_row_id").references(() => sourceRows24.id),
   releaseId: text("release_id").references(() => releases.id),
   baselineId: text("baseline_id").references(() => configurationBaselines.id),
   configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id),
@@ -159,6 +170,58 @@ export const baselineOccurrences = sqliteTable("baseline_occurrence", {
   index("baseline_occurrence_workspace_release_ix").on(t.workspaceId, t.releaseId, t.baselineId),
   index("baseline_occurrence_workspace_product_ix").on(t.workspaceId, t.productId),
   index("baseline_occurrence_workspace_lifecycle_ix").on(t.workspaceId, t.lifecycleStatus, t.releaseId),
+  index("baseline_occurrence_workspace_deployment_ix").on(t.workspaceId, t.deploymentId, t.lifecycleStatus),
+]);
+
+// These fields are A2O exchange-only values which do not have a governed
+// normalized owner. They retain the exact 24-column export without making the
+// exchange projection the source of truth.
+export const baselineRecordExtensions = sqliteTable("baseline_record_extension", {
+  baselineOccurrenceId: text("baseline_occurrence_id").primaryKey().references(() => baselineOccurrences.id),
+  sourceKey: text("source_key"),
+  notes: text("notes"),
+  capabilityNotes: text("capability_notes"),
+  notes1: text("notes_1"),
+  notes2: text("notes_2"),
+  notes3: text("notes_3"),
+  notes4: text("notes_4"),
+  ...timestamps,
+}, (t) => [index("baseline_record_extension_source_key_ix").on(t.sourceKey)]);
+
+// Source rows are immutable import evidence. A record can retain more than
+// one row over time, while the nullable convenience pointer above represents
+// its current imported row when one exists.
+export const baselineRecordSources = sqliteTable("baseline_record_source", {
+  id: text("id").primaryKey(),
+  baselineOccurrenceId: text("baseline_occurrence_id").notNull().references(() => baselineOccurrences.id),
+  sourceRowId: text("source_row_id").notNull().references(() => sourceRows24.id),
+  relationship: text("relationship").notNull().default("imported"),
+  disposition: text("disposition").notNull().default("current"),
+  ...timestamps,
+}, (t) => [
+  check("baseline_record_source_relationship", sql`${t.relationship} IN ('imported','reconciled','reference')`),
+  check("baseline_record_source_disposition", sql`${t.disposition} IN ('current','superseded','rejected')`),
+  uniqueIndex("baseline_record_source_record_row_uq").on(t.baselineOccurrenceId, t.sourceRowId),
+  index("baseline_record_source_row_ix").on(t.sourceRowId, t.disposition),
+  index("baseline_record_source_record_ix").on(t.baselineOccurrenceId, t.disposition),
+]);
+
+// Manual review is a decision about the canonical Baseline Record, not a
+// transient source row. The older source-row review tables remain readable
+// during the data transition only.
+export const baselineRecordReviews = sqliteTable("baseline_record_review", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  baselineOccurrenceId: text("baseline_occurrence_id").notNull().references(() => baselineOccurrences.id),
+  status: text("status").notNull().default("not_reviewed"),
+  reviewedAt: text("reviewed_at"),
+  reviewedByUserId: text("reviewed_by_user_id").references(() => appUsers.id),
+  note: text("note"),
+  ...timestamps,
+}, (t) => [
+  check("baseline_record_review_status", sql`${t.status} IN ('not_reviewed','reviewed','follow_up')`),
+  uniqueIndex("baseline_record_review_record_uq").on(t.baselineOccurrenceId),
+  index("baseline_record_review_status_ix").on(t.programId, t.status, t.reviewedAt),
 ]);
 
 // Steward review is governed application metadata. It is intentionally kept
@@ -665,10 +728,53 @@ export const requirementTraces = sqliteTable("requirement_trace", {
   index("requirement_trace_status_ix").on(t.objectiveId, t.traceStatus),
 ]);
 
+// Requirements are reusable references to an external requirements authority.
+// An Objective links to a requirement through objective_requirement so the
+// proposed change, version, disposition, and evidence remain Objective-specific.
+export const requirements = sqliteTable("requirement", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  externalIdentifier: text("external_identifier").notNull(),
+  title: text("title").notNull(),
+  sourceSystem: text("source_system").notNull(),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  currentText: text("current_text"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("requirement_lifecycle_status", sql`${t.lifecycleStatus} IN ('active','retired','superseded')`),
+  uniqueIndex("requirement_external_uq").on(t.programId, t.sourceSystem, t.externalIdentifier),
+  index("requirement_program_ix").on(t.programId, t.lifecycleStatus, t.updatedAt),
+]);
+
+export const objectiveRequirements = sqliteTable("objective_requirement", {
+  id: text("id").primaryKey(),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  requirementId: text("requirement_id").notNull().references(() => requirements.id),
+  versionLabel: text("version_label").notNull().default("1"),
+  changeAction: text("change_action").notNull().default("verify"),
+  beforeText: text("before_text"),
+  afterText: text("after_text"),
+  rationale: text("rationale"),
+  disposition: text("disposition").notNull().default("identified"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("objective_requirement_action", sql`${t.changeAction} IN ('add','modify','retire','verify','none')`),
+  check("objective_requirement_disposition", sql`${t.disposition} IN ('identified','analysis_needed','traced','verified','not_applicable')`),
+  uniqueIndex("objective_requirement_version_uq").on(t.objectiveId, t.requirementId, t.versionLabel),
+  index("objective_requirement_requirement_ix").on(t.requirementId, t.disposition),
+]);
+
 export const acceptanceCriteria = sqliteTable("acceptance_criterion", {
   id: text("id").primaryKey(),
   objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
   requirementTraceId: text("requirement_trace_id").references(() => requirementTraces.id),
+  objectiveRequirementId: text("objective_requirement_id").references(() => objectiveRequirements.id),
   tier: text("tier").notNull(),
   code: text("code").notNull(),
   statement: text("statement").notNull(),
@@ -685,6 +791,7 @@ export const acceptanceCriteria = sqliteTable("acceptance_criterion", {
   check("acceptance_criterion_status", sql`${t.status} IN ('draft','ready','in_verification','passed','failed','waived')`),
   uniqueIndex("acceptance_criterion_objective_code_uq").on(t.objectiveId, t.code),
   index("acceptance_criterion_status_ix").on(t.objectiveId, t.status, t.plannedDate),
+  index("acceptance_criterion_objective_requirement_ix").on(t.objectiveRequirementId),
 ]);
 
 export const acceptanceSignoffs = sqliteTable("acceptance_signoff", {
@@ -889,12 +996,18 @@ export const auditEvents = sqliteTable("audit_event", {
 
 export const schema = {
   programs,
+  releaseMilestones,
+  canonicalAliases,
+  canonicalMergeEvents,
   sourcePackages,
   sourceRows24,
   sourceOccurrenceReviews,
   sourceOccurrenceReviewsV2,
   baselineWorkspaces,
   baselineOccurrences,
+  baselineRecordExtensions,
+  baselineRecordSources,
+  baselineRecordReviews,
   releases,
   releaseProfiles,
   configurationBaselines,
@@ -907,6 +1020,7 @@ export const schema = {
   managedDeploymentProfiles,
   platforms,
   platformOrganizations,
+  platformBaselineAssignments,
   organizations,
   productSuppliers,
   capabilities,
@@ -926,11 +1040,14 @@ export const schema = {
   objectiveSourceRows,
   objectiveEstimates,
   requirementTraces,
+  requirements,
+  objectiveRequirements,
   acceptanceCriteria,
   acceptanceSignoffs,
   initiativeMilestones,
   initiativeScopes,
   workPackages,
+  workPackageObjectives,
   workPackageDependencies,
   governanceRecords,
   governanceRecordLinks,

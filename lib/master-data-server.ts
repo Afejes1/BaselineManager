@@ -15,19 +15,43 @@ const releaseRoleSet = new Set<ReleaseStateRole>(["historical", "as_is", "to_be"
 const milestoneStatusSet = new Set(["planned", "at_risk", "complete", "cancelled"]);
 
 export async function masterDataPortfolio(db: Database): Promise<MasterDataPortfolio> {
-  const [releases, milestones, products, organizations, capabilities, configurationNodes] = await Promise.all([
+  const [releases, milestones, configurationSets, products, organizations, capabilities, configurationNodes] = await Promise.all([
     db.prepare(`SELECT r.id,r.code,r.name,r.status,r.description,r.owner,r.predecessor_release_id AS predecessorReleaseId,r.target_date AS targetDate,r.actual_date AS actualDate,r.source_reference AS sourceReference,r.source_as_of AS sourceAsOf,COALESCE(rp.state_role,'reported') AS stateRole,rp.effective_date AS effectiveDate,rp.description AS profileDescription,COUNT(DISTINCT CASE WHEN bo.lifecycle_status='active' THEN bo.id END) AS baselineRecordCount,COUNT(DISTINCT CASE WHEN bo.lifecycle_status='active' THEN bo.product_id END) AS productCount,r.updated_at AS updatedAt FROM release r LEFT JOIN release_profile rp ON rp.release_id=r.id LEFT JOIN baseline_occurrence bo ON bo.release_id=r.id AND bo.workspace_id='workspace-jsf-current' WHERE r.program_id=? GROUP BY r.id ORDER BY COALESCE(r.target_date,r.actual_date,'9999-12-31'),r.name`).bind(PROGRAM_ID).all(),
     db.prepare(`SELECT id,release_id AS releaseId,milestone_type AS milestoneType,title,status,planned_date AS plannedDate,forecast_date AS forecastDate,actual_date AS actualDate,owner,source_reference AS sourceReference,source_as_of AS sourceAsOf,notes,updated_at AS updatedAt FROM release_milestone WHERE program_id=? ORDER BY COALESCE(planned_date,forecast_date,actual_date,'9999-12-31'),title`).bind(PROGRAM_ID).all(),
+    db.prepare(`SELECT cb.id,cb.release_id AS releaseId,cb.name,cb.revision_number AS revisionNumber,cb.approval_status AS approvalStatus,cb.as_of AS asOf,cb.description,cb.approved_at AS approvedAt,cb.locked_at AS lockedAt,COUNT(DISTINCT CASE WHEN bo.lifecycle_status='active' THEN bo.id END) AS baselineRecordCount,cb.updated_at AS updatedAt FROM configuration_baseline cb LEFT JOIN baseline_occurrence bo ON bo.baseline_id=cb.id WHERE cb.program_id=? GROUP BY cb.id ORDER BY cb.release_id,cb.revision_number DESC`).bind(PROGRAM_ID).all(),
     db.prepare(`SELECT id,canonical_name AS canonicalName,short_name AS shortName,product_type AS productType,software_classification AS softwareClassification,owner_organization_id AS ownerOrganizationId,description,lifecycle_status AS lifecycleStatus,source_reference AS sourceReference,source_as_of AS sourceAsOf,updated_at AS updatedAt FROM product WHERE program_id=? ORDER BY canonical_name`).bind(PROGRAM_ID).all(),
     db.prepare(`SELECT id,name,organization_type AS organizationType,description,lifecycle_status AS lifecycleStatus,source_reference AS sourceReference,source_as_of AS sourceAsOf,updated_at AS updatedAt FROM organization WHERE program_id=? ORDER BY name`).bind(PROGRAM_ID).all(),
     db.prepare(`SELECT id,parent_id AS parentId,code,name,description,lifecycle_status AS lifecycleStatus,source_reference AS sourceReference,source_as_of AS sourceAsOf,updated_at AS updatedAt FROM capability WHERE program_id=? ORDER BY name`).bind(PROGRAM_ID).all(),
     db.prepare(`SELECT id,parent_id AS parentId,node_type AS nodeType,code,name,description,owner_organization_id AS ownerOrganizationId,lifecycle_status AS lifecycleStatus,source_reference AS sourceReference,source_as_of AS sourceAsOf,updated_at AS updatedAt FROM configuration_node WHERE program_id=? ORDER BY node_type,name`).bind(PROGRAM_ID).all(),
   ]);
   return {
-    releases: releases.results as MasterDataPortfolio["releases"], milestones: milestones.results as MasterDataPortfolio["milestones"],
+    releases: releases.results as MasterDataPortfolio["releases"], milestones: milestones.results as MasterDataPortfolio["milestones"], configurationSets: configurationSets.results as MasterDataPortfolio["configurationSets"],
     products: products.results as MasterDataPortfolio["products"], organizations: organizations.results as MasterDataPortfolio["organizations"],
     capabilities: capabilities.results as MasterDataPortfolio["capabilities"], configurationNodes: configurationNodes.results as MasterDataPortfolio["configurationNodes"],
   };
+}
+
+export async function transitionConfigurationSet(db: Database, actor: Actor, body: Record<string, unknown>) {
+  requireWriter(actor);
+  const configurationSetId = clean(body.id);
+  const target = clean(body.approvalStatus) as "working" | "under_review" | "approved" | "superseded";
+  const rationale = clean(body.rationale);
+  const current = await db.prepare("SELECT * FROM configuration_baseline WHERE id=? AND program_id=?").bind(configurationSetId, PROGRAM_ID).first<Record<string, unknown>>();
+  if (!current) throw new Error("The Configuration Set was not found.");
+  const from = String(current.approval_status || "working");
+  const allowed = new Set(["working:under_review", "under_review:working", "under_review:approved"]);
+  if (!allowed.has(`${from}:${target}`)) throw new Error(`Configuration Set cannot transition from ${from.replaceAll("_", " ")} to ${target.replaceAll("_", " ")}.`);
+  if (target === "approved" && !rationale) throw new Error("Approval requires a rationale.");
+  if (target === "approved" && actor.role !== "steward") throw new Error("Only the baseline steward may approve a Configuration Set.");
+  const at = now();
+  const statements = [
+    db.prepare("UPDATE configuration_baseline SET approval_status=?,approved_at=CASE WHEN ?='approved' THEN ? ELSE approved_at END,approved_by_user_id=CASE WHEN ?='approved' THEN ? ELSE approved_by_user_id END,locked_at=CASE WHEN ?='approved' THEN ? ELSE locked_at END,superseded_at=CASE WHEN ?='superseded' THEN ? ELSE superseded_at END,updated_at=? WHERE id=?")
+      .bind(target, target, at, target, actor.id, target, at, target, at, at, configurationSetId),
+    audit(db, actor, "configuration_set_transitioned", "configuration_baseline", configurationSetId, { from, to: target, rationale }, current),
+  ];
+  if (target === "approved") statements.unshift(db.prepare("UPDATE configuration_baseline SET approval_status='superseded',superseded_at=?,superseded_by_baseline_id=?,updated_at=? WHERE program_id=? AND release_id=? AND approval_status='approved' AND id<>?").bind(at, configurationSetId, at, PROGRAM_ID, String(current.release_id), configurationSetId));
+  await db.batch(statements);
+  return configurationSetId;
 }
 
 async function validateParent(db: Database, table: "capability" | "configuration_node", id: string, parentId: string | null) {
@@ -64,7 +88,9 @@ export async function saveRelease(db: Database, actor: Actor, body: Record<strin
   const profileId = makeId("release-profile");
   statements.push(db.prepare("INSERT INTO release_profile (id,program_id,release_id,state_role,effective_date,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(release_id) DO UPDATE SET state_role=excluded.state_role,effective_date=excluded.effective_date,description=excluded.description,updated_at=excluded.updated_at")
     .bind(profileId, PROGRAM_ID, releaseId, stateRole, nullable(body.effectiveDate), nullable(body.profileDescription), actor.id, at, at));
-  if (before && before.name !== name) statements.push(db.prepare("UPDATE baseline_occurrence SET projection_payload=json_set(projection_payload,'$.ReleaseName',?),revision=revision+1,updated_at=? WHERE release_id=? AND workspace_id=? AND lifecycle_status='active'").bind(name, at, releaseId, "workspace-jsf-current"));
+  // Baseline exports resolve ReleaseName through the governed Release link.
+  // Renaming a Release therefore does not rewrite imported row snapshots or a
+  // second JSON projection.
   statements.push(audit(db, actor, before ? "release_updated" : "release_created", "release", releaseId, { name, code, status, stateRole, predecessorReleaseId, targetDate: nullable(body.targetDate), actualDate: nullable(body.actualDate), lifecycleRationale: nullable(body.lifecycleRationale) }, before));
   await db.batch(statements);
   return releaseId;

@@ -13,7 +13,7 @@ type Actor = Portfolio["actor"];
 const initiativeStatusSet = new Set<InitiativeStatus>(["draft", "active", "decision_required", "closed"]);
 const initiativePrioritySet = new Set<InitiativePriority>(["low", "medium", "high", "critical"]);
 const workPackageStatusSet = new Set<WorkPackageStatus>(["planned", "in_progress", "on_hold", "complete", "cancelled"]);
-const recordTypeSet = new Set<GovernanceRecordType>(["mcp", "technical_call", "decision", "risk", "question", "technical_note"]);
+const recordTypeSet = new Set<GovernanceRecordType>(["technical_call", "decision", "risk", "question", "technical_note"]);
 const recordStatusSet = new Set<GovernanceRecordStatus>(["open", "in_review", "approved", "closed", "superseded"]);
 const briefStatusSet = new Set<BriefStatus>(["draft", "reviewed", "published", "superseded"]);
 
@@ -64,7 +64,7 @@ type InitiativeRow = {
   consequence: string | null; desired_outcome: string | null; decision_ask: string | null; created_at: string; updated_at: string; primary_release_name: string | null;
 };
 
-type WorkPackageRow = { id: string; initiative_id: string | null; change_request_id: string | null; objective_id: string | null; parent_id: string | null; wbs_code: string; title: string; owner: string | null; planned_start: string | null; due_date: string | null; actual_start: string | null; actual_finish: string | null; status: WorkPackageStatus; work_type: "analysis" | "coordination" | "verification" | "decision_support" | "other"; definition_of_done: string | null; progress_basis: string | null; notes: string | null; sort_order: number; created_at: string; updated_at: string };
+type WorkPackageRow = { id: string; initiative_id: string; parent_id: string | null; wbs_code: string; title: string; owner: string | null; planned_start: string | null; due_date: string | null; actual_start: string | null; actual_finish: string | null; status: WorkPackageStatus; work_type: "analysis" | "coordination" | "verification" | "decision_support" | "other"; definition_of_done: string | null; progress_basis: string | null; notes: string | null; sort_order: number; created_at: string; updated_at: string };
 type WorkPackageObjectiveRow = { work_package_id: string; objective_id: string; relationship: "supports" | "assesses" | "verifies" | "coordinates"; rationale: string | null };
 type WorkPackageDependencyRow = { id: string; predecessor_work_package_id: string; successor_work_package_id: string; relationship: "FS" | "SS" | "FF" | "SF"; lag_days: number; status: "proposed" | "accepted" | "rejected" | "retired"; rationale: string; source_reference: string | null; updated_at: string };
 type ScopeRow = { id: string; initiative_id: string; scope_kind: "product" | "release" | "capability" | "occurrence" | "configuration_node"; scope_id: string; display_label: string | null };
@@ -78,9 +78,9 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
   const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult] = await Promise.all([
     db.prepare("SELECT i.*, r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
-    db.prepare("SELECT w.* FROM work_package w LEFT JOIN initiative i ON i.id=w.initiative_id LEFT JOIN incumbent_objective o ON o.id=w.objective_id LEFT JOIN change_request cr ON cr.id=COALESCE(w.change_request_id,o.change_request_id) WHERE i.program_id=? OR o.program_id=? OR cr.program_id=? ORDER BY COALESCE(w.initiative_id,''),COALESCE(w.objective_id,''),w.sort_order,w.wbs_code").bind(PROGRAM_ID, PROGRAM_ID, PROGRAM_ID).all<WorkPackageRow>(),
+    db.prepare("SELECT w.id,w.initiative_id,w.parent_id,w.wbs_code,w.title,w.owner,w.planned_start,w.due_date,w.actual_start,w.actual_finish,w.status,w.work_type,w.definition_of_done,w.progress_basis,w.notes,w.sort_order,w.created_at,w.updated_at FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY w.initiative_id,w.sort_order,w.wbs_code").bind(PROGRAM_ID).all<WorkPackageRow>(),
     db.prepare("SELECT l.work_package_id,l.objective_id,l.relationship,l.rationale FROM work_package_objective l JOIN work_package w ON w.id=l.work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY l.created_at").bind(PROGRAM_ID).all<WorkPackageObjectiveRow>(),
-    db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id LEFT JOIN initiative i ON i.id=w.initiative_id LEFT JOIN incumbent_objective o ON o.id=w.objective_id WHERE i.program_id=? OR o.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID, PROGRAM_ID).all<WorkPackageDependencyRow>(),
+    db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID).all<WorkPackageDependencyRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
     db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,pl.code || ' · ' || pl.name,org.name,cr.external_identifier || ' · ' || cr.title,obj.external_identifier || ' · ' || obj.title,w.wbs_code || ' · ' || w.title,CASE WHEN bo.id IS NOT NULL THEN 'Baseline record' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN work_package w ON l.entity_kind='work_package' AND w.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence bo ON l.entity_kind='occurrence' AND bo.id=l.entity_id LEFT JOIN platform pl ON l.entity_kind='platform' AND pl.id=l.entity_id LEFT JOIN organization org ON l.entity_kind='organization' AND org.id=l.entity_id LEFT JOIN change_request cr ON l.entity_kind='change_request' AND cr.id=l.entity_id LEFT JOIN incumbent_objective obj ON l.entity_kind='objective' AND obj.id=l.entity_id").all<LinkRow>(),
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
@@ -176,13 +176,13 @@ export async function objectCatalog(db: Database): Promise<ObjectCatalogItem[]> 
     db.prepare("SELECT 'objective' AS kind,id,external_identifier || ' · ' || title AS label,'LM Objective · ' || status AS detail FROM incumbent_objective WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'initiative' AS kind,id,title AS label,'Initiative · ' || status AS detail FROM initiative WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'work_package' AS kind,w.id,w.wbs_code || ' · ' || w.title AS label,'Government work package · ' || w.status AS detail FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
-    db.prepare("SELECT 'occurrence' AS kind,bo.id,COALESCE(json_extract(bo.projection_payload,'$.LongName'),json_extract(bo.projection_payload,'$.ShortName'),json_extract(bo.projection_payload,'$.\"#\"'),'Baseline record') AS label,COALESCE(json_extract(bo.projection_payload,'$.ReleaseName'),'Release unassigned') || ' · Baseline record' AS detail FROM baseline_occurrence bo WHERE bo.program_id=? AND bo.lifecycle_status='active'").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'occurrence' AS kind,bo.id,COALESCE(p.canonical_name,p.short_name,ext.source_key,'Baseline record') AS label,COALESCE(r.name,'Release unassigned') || ' · Baseline Record' AS detail FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN baseline_record_extension ext ON ext.baseline_occurrence_id=bo.id WHERE bo.program_id=? AND bo.lifecycle_status='active'").bind(PROGRAM_ID).all<CatalogRow>(),
   ]);
   return results.flatMap((result) => result.results).sort((left, right) => `${left.kind}:${left.label}`.localeCompare(`${right.kind}:${right.label}`)).map((item) => ({ kind: item.kind, id: item.id, label: item.label, detail: item.detail || "", href: catalogHref(item) }));
 }
 
 function mapWorkPackage(work: WorkPackageRow, objectiveLinks: WorkPackageObjectiveRow[]) {
-  return { id: work.id, initiativeId: work.initiative_id, changeRequestId: work.change_request_id, objectiveId: work.objective_id, parentId: work.parent_id, wbsCode: work.wbs_code, title: work.title, owner: work.owner, plannedStart: work.planned_start, dueDate: work.due_date, actualStart: work.actual_start, actualFinish: work.actual_finish, status: work.status, workType: work.work_type, objectiveLinks: objectiveLinks.map((item) => ({ objectiveId: item.objective_id, relationship: item.relationship, rationale: item.rationale })), definitionOfDone: work.definition_of_done, progressBasis: work.progress_basis, notes: work.notes, sortOrder: work.sort_order, createdAt: work.created_at, updatedAt: work.updated_at };
+  return { id: work.id, initiativeId: work.initiative_id, parentId: work.parent_id, wbsCode: work.wbs_code, title: work.title, owner: work.owner, plannedStart: work.planned_start, dueDate: work.due_date, actualStart: work.actual_start, actualFinish: work.actual_finish, status: work.status, workType: work.work_type, objectiveLinks: objectiveLinks.map((item) => ({ objectiveId: item.objective_id, relationship: item.relationship, rationale: item.rationale })), definitionOfDone: work.definition_of_done, progressBasis: work.progress_basis, notes: work.notes, sortOrder: work.sort_order, createdAt: work.created_at, updatedAt: work.updated_at };
 }
 
 function emptySnapshot(): BriefSnapshot {
@@ -257,13 +257,10 @@ export async function createWorkPackage(db: Database, actor: Actor, body: Record
   if (!initiativeId || !title) throw new Error("A Government work package requires an Initiative and a title.");
   const initiative = await db.prepare("SELECT id FROM initiative WHERE id=? AND program_id=?").bind(initiativeId, PROGRAM_ID).first<{ id: string }>();
   if (!initiative) throw new Error("Choose an Initiative from this program.");
-  let changeRequestId = clean(body.changeRequestId) || null;
   if (objectiveId) {
     const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
     if (!objective) throw new Error("Choose an LM Objective from this program.");
-    if (changeRequestId && changeRequestId !== objective.change_request_id) throw new Error("The work package Change Request must own the selected Objective.");
-    changeRequestId = objective.change_request_id;
-    const linked = await db.prepare("SELECT id FROM initiative_change_request WHERE initiative_id=? AND change_request_id=?").bind(initiativeId, changeRequestId).first<{ id: string }>();
+    const linked = await db.prepare("SELECT id FROM initiative_change_request WHERE initiative_id=? AND change_request_id=?").bind(initiativeId, objective.change_request_id).first<{ id: string }>();
     if (!linked) throw new Error("The Objective's Change Request must be linked to the selected Initiative.");
   }
   const parentId = clean(body.parentId) || null;
@@ -279,11 +276,11 @@ export async function createWorkPackage(db: Database, actor: Actor, body: Record
   const workType = new Set(["analysis", "coordination", "verification", "decision_support", "other"]).has(clean(body.workType)) ? clean(body.workType) : "analysis";
   const relationship = new Set(["supports", "assesses", "verifies", "coordinates"]).has(clean(body.objectiveRelationship)) ? clean(body.objectiveRelationship) : "supports";
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, initiativeId, changeRequestId, objectiveId || null, parentId, code, title, nullable(body.owner), nullable(body.plannedStart), nullable(body.dueDate), status, workType, nullable(body.definitionOfDone), nullable(body.progressBasis), nullable(body.notes), Number(count?.count ?? 0), at, at),
+    db.prepare("INSERT INTO work_package (id,initiative_id,change_request_id,objective_id,parent_id,wbs_code,title,owner,planned_start,due_date,status,work_type,definition_of_done,progress_basis,notes,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workPackageId, initiativeId, null, null, parentId, code, title, nullable(body.owner), nullable(body.plannedStart), nullable(body.dueDate), status, workType, nullable(body.definitionOfDone), nullable(body.progressBasis), nullable(body.notes), Number(count?.count ?? 0), at, at),
   ];
   if (objectiveId) statements.push(db.prepare("INSERT INTO work_package_objective (id,work_package_id,objective_id,relationship,rationale,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id("wbs-objective"), workPackageId, objectiveId, relationship, nullable(body.objectiveRationale), actor.id, at, at));
   statements.push(
-    audit(db, actor, "work_package_created", "work_package", workPackageId, { initiativeId: initiativeId || null, changeRequestId, objectiveId: objectiveId || null, code, title, status }),
+    audit(db, actor, "work_package_created", "work_package", workPackageId, { initiativeId, objectiveId: objectiveId || null, code, title, status }),
   );
   await db.batch(statements);
   return workPackageId;
@@ -352,6 +349,28 @@ function governanceLinks(value: unknown) {
   return [...unique.values()];
 }
 
+async function assertGovernanceLinkTargets(db: Database, links: Array<{ kind: string; id: string }>) {
+  const targetSql: Record<string, string> = {
+    initiative: "SELECT id FROM initiative WHERE id=? AND program_id=?",
+    work_package: "SELECT w.id FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE w.id=? AND i.program_id=?",
+    release: "SELECT id FROM release WHERE id=? AND program_id=?",
+    product: "SELECT id FROM product WHERE id=? AND program_id=?",
+    capability: "SELECT id FROM capability WHERE id=? AND program_id=?",
+    occurrence: "SELECT id FROM baseline_occurrence WHERE id=? AND program_id=?",
+    configuration_node: "SELECT id FROM configuration_node WHERE id=? AND program_id=?",
+    platform: "SELECT id FROM platform WHERE id=? AND program_id=?",
+    organization: "SELECT id FROM organization WHERE id=? AND program_id=?",
+    change_request: "SELECT id FROM change_request WHERE id=? AND program_id=?",
+    objective: "SELECT id FROM incumbent_objective WHERE id=? AND program_id=?",
+  };
+  for (const link of links) {
+    const statement = targetSql[link.kind];
+    if (!statement) throw new Error("Unsupported governance-link object type.");
+    const found = await db.prepare(statement).bind(link.id, PROGRAM_ID).first<{ id: string }>();
+    if (!found) throw new Error(`The linked ${link.kind.replaceAll("_", " ")} no longer exists in this program.`);
+  }
+}
+
 export async function createGovernanceRecord(db: Database, actor: Actor, body: Record<string, unknown>) {
   requireWriter(actor);
   const type = recordTypeSet.has(body.recordType as GovernanceRecordType) ? body.recordType as GovernanceRecordType : "technical_note";
@@ -361,6 +380,7 @@ export async function createGovernanceRecord(db: Database, actor: Actor, body: R
   const recordId = id("record");
   const at = now();
   const links = governanceLinks(body.links);
+  await assertGovernanceLinkTargets(db, links);
   const statements: D1PreparedStatement[] = [
     db.prepare("INSERT INTO governance_record (id,program_id,record_type,external_reference,title,status,owner,occurred_at,participants,due_date,summary,decision_ask,action_items,impact,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(recordId, PROGRAM_ID, type, nullable(body.externalReference), title, status, nullable(body.owner), nullable(body.occurredAt), nullable(body.participants), nullable(body.dueDate), nullable(body.summary), nullable(body.decisionAsk), nullable(body.actionItems), nullable(body.impact), actor.id, at, at),
   ];
@@ -383,6 +403,7 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   ];
   if (body.links !== undefined) {
     const links = governanceLinks(body.links);
+    await assertGovernanceLinkTargets(db, links);
     statements.push(db.prepare("DELETE FROM governance_record_link WHERE governance_record_id=?").bind(recordId));
     const at = now();
     for (const link of links) statements.push(db.prepare("INSERT INTO governance_record_link (id,governance_record_id,entity_kind,entity_id,relationship,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("record-link"), recordId, link.kind, link.id, link.relationship, at, at));
@@ -391,7 +412,7 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   await db.batch(statements);
 }
 
-type SourceScopeRow = { projection_payload: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
+type SourceScopeRow = { product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
 
 export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>) {
   requireWriter(actor);
@@ -400,12 +421,12 @@ export async function createExecutiveBrief(db: Database, actor: Actor, body: Rec
   if (!initiative) throw new Error("Choose a durable initiative before creating a brief.");
   const productScopes = await db.prepare("SELECT scope_id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ scope_id: string }>();
   const scopedProductIds = new Set(productScopes.results.map((entry) => entry.scope_id));
-  const sourceRows = await db.prepare("SELECT bo.projection_payload,bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.workspace_id=?").bind(WORKSPACE_ID).all<SourceScopeRow>();
+  const sourceRows = await db.prepare("SELECT bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
   const selectedRows = sourceRows.results.filter((row) => (!initiative.primary_release_id || row.release_id === initiative.primary_release_id) && (!scopedProductIds.size || (row.product_id && scopedProductIds.has(row.product_id))));
   const linkedRecords = await db.prepare("SELECT g.record_type,g.title,g.status FROM governance_record g JOIN governance_record_link l ON l.governance_record_id=g.id WHERE l.entity_kind='initiative' AND l.entity_id=? ORDER BY g.updated_at DESC").bind(initiativeId).all<{ record_type: string; title: string; status: string }>();
-  const productNames = [...new Set(selectedRows.map((row) => row.product_name || productFromPayload(row.projection_payload)).filter(Boolean))].slice(0, 20) as string[];
+  const productNames = [...new Set(selectedRows.map((row) => row.product_name).filter(Boolean))].slice(0, 20) as string[];
   const releaseNames = new Set(selectedRows.map((row) => row.release_name).filter(Boolean));
-  const snapshot: BriefSnapshot = { asOf: now(), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id || productFromPayload(row.projection_payload))).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
+  const snapshot: BriefSnapshot = { asOf: now(), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
   const title = clean(body.title) || `${initiative.title} - Executive one-pager`;
   const briefId = id("brief");
   const at = now();
@@ -444,11 +465,6 @@ export async function recordBriefPublication(db: Database, actor: Actor, body: R
     db.prepare("INSERT INTO brief_publication (id,brief_id,format,content_hash,snapshot_payload,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(publicationId, briefId, format, `${briefId}:${brief.updated_at}:${format}`, brief.snapshot_payload, actor.id, at),
     audit(db, actor, "executive_brief_exported", "executive_brief", briefId, { publicationId, format }),
   ]);
-}
-
-function productFromPayload(payload: string) {
-  const row = json<Record<string, unknown>>(payload, {});
-  return clean(row.LongName) || clean(row.ShortName) || "Unassigned product";
 }
 
 function briefMarkdown(title: string, initiative: InitiativeRow, snapshot: BriefSnapshot) {

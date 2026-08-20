@@ -40,6 +40,20 @@ export type ReleaseMilestone = {
   updatedAt: string;
 };
 
+export type ConfigurationSetRecord = {
+  id: string;
+  releaseId: string;
+  name: string;
+  revisionNumber: number;
+  approvalStatus: "working" | "under_review" | "approved" | "superseded";
+  asOf: string;
+  description: string | null;
+  approvedAt: string | null;
+  lockedAt: string | null;
+  baselineRecordCount: number;
+  updatedAt: string;
+};
+
 export type ProductMaster = {
   id: string; canonicalName: string; shortName: string | null; productType: string | null; softwareClassification: string | null;
   ownerOrganizationId: string | null; description: string | null; lifecycleStatus: "active" | "retired"; sourceReference: string | null; sourceAsOf: string | null; updatedAt: string;
@@ -65,6 +79,7 @@ export type AuditEntry = { id: string; action: string; actorId: string; beforePa
 export type MasterDataPortfolio = {
   releases: ReleaseRecord[];
   milestones: ReleaseMilestone[];
+  configurationSets: ConfigurationSetRecord[];
   products: ProductMaster[];
   organizations: OrganizationMaster[];
   capabilities: CapabilityMaster[];

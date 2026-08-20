@@ -5,7 +5,10 @@ import type { ObjectiveStatus } from "../../../../lib/initiative-decision-model"
 
 type ExistingRow = { id: string; change_request_id: string; external_system: string; external_identifier: string; external_item_type: string; title: string; summary: string | null; technical_owner: string | null; status: ObjectiveStatus; planned_start: string | null; planned_finish: string | null; actual_start: string | null; actual_finish: string | null; source_locator: string | null; source_as_of: string | null };
 const now = () => new Date().toISOString();
-const stableHash = (value: string) => { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(16).padStart(8, "0"); };
+async function contentHash(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
 
 async function context() {
   const [current, requests] = await Promise.all([
@@ -40,12 +43,12 @@ export async function POST(request: Request) {
 
     const at = now();
     const content = JSON.stringify(rows);
-    const contentHash = stableHash(content);
-    const packageId = `objective-package-${contentHash}`;
-    const already = await env.DB.prepare("SELECT id,status FROM objective_source_package WHERE program_id=? AND external_system=? AND content_hash=?").bind(PROGRAM_ID, rows[0].ExternalSystem, contentHash).first<{ id: string; status: string }>();
+    const packageHash = await contentHash(content);
+    const packageId = `objective-package-${crypto.randomUUID()}`;
+    const already = await env.DB.prepare("SELECT id,status FROM objective_source_package WHERE program_id=? AND external_system=? AND content_hash=?").bind(PROGRAM_ID, rows[0].ExternalSystem, packageHash).first<{ id: string; status: string }>();
     if (already) return Response.json({ error: `This exact source package was already ${already.status}.`, packageId: already.id }, { status: 409 });
     const statements: D1PreparedStatement[] = [
-      env.DB.prepare("INSERT INTO objective_source_package (id,program_id,external_system,file_name,sheet_name,content_hash,received_at,status,row_count,added_count,changed_count,unchanged_count,blocked_count,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(packageId, PROGRAM_ID, rows[0].ExternalSystem, body.fileName, body.sheetName || null, contentHash, at, "applied", rows.length, preview.added, preview.changed, preview.unchanged, preview.blocked, actor.id, at, at),
+      env.DB.prepare("INSERT INTO objective_source_package (id,program_id,external_system,file_name,sheet_name,content_hash,received_at,status,row_count,added_count,changed_count,unchanged_count,blocked_count,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(packageId, PROGRAM_ID, rows[0].ExternalSystem, body.fileName, body.sheetName || null, packageHash, at, "applied", rows.length, preview.added, preview.changed, preview.unchanged, preview.blocked, actor.id, at, at),
     ];
     for (const item of preview.rows) {
       const objectiveId = item.existingObjectiveId || `objective-${crypto.randomUUID()}`;

@@ -53,3 +53,23 @@ test("traceability links identify and navigate to their governed object", () => 
   assert.match(server, /function governanceLinkHref/);
   assert.match(server, /href: governanceLinkHref\(link\.entity_kind, link\.entity_id, link\.display_label\)/);
 });
+
+test("delivery model keeps Government work Initiative-owned and requirements reusable", () => {
+  const migration = read("drizzle/0013_delivery_model.sql");
+  const governance = read("lib/governance-server.ts");
+  const decisions = read("lib/initiative-decision-server.ts");
+  const delivery = read("app/delivery/page.tsx");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS `requirement`/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS `objective_requirement`/);
+  assert.match(migration, /work_package_parent_same_initiative/);
+  assert.match(migration, /work_package_initiative_code_v2_uq/);
+  assert.match(governance, /change_request_id,objective_id,parent_id/);
+  assert.match(governance, /\.bind\(workPackageId, initiativeId, null, null, parentId/);
+  assert.match(decisions, /INSERT INTO objective_requirement/);
+  assert.match(decisions, /objective_requirement_id/);
+  assert.match(delivery, /This is not an official DoD WBS/);
+  const demo = read("lib/demo-workspace-server.ts");
+  assert.match(demo, /INSERT INTO requirement \(/);
+  assert.match(demo, /INSERT INTO objective_requirement \(/);
+  assert.match(demo, /objective_requirement_id/);
+});

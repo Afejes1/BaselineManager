@@ -113,6 +113,10 @@ export type ObjectiveEffectAttributionRecord = {
 export type RequirementTrace = {
   id: string;
   objectiveId: string;
+  /** Canonical reusable requirement identity. */
+  requirementId?: string;
+  /** Version/change relationship, not a new requirement identity. */
+  versionLabel?: string;
   externalIdentifier: string;
   title: string;
   sourceSystem: string;

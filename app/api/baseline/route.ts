@@ -1,322 +1,163 @@
 import { env } from "cloudflare:workers";
-import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../../../lib/technical-baseline-contract";
+import {
+  BASELINE_PROGRAM_ID, BASELINE_WORKSPACE_ID, asA2ORow, normalized, numberCell,
+  readAssembledBaselineRecords, recordRequiresReview, textCell, type A2ORow,
+} from "../../../lib/a2o-baseline-server";
 import { audit, ensureActor, requireWriter } from "../../../lib/governance-server";
 
-type Cell = string | number | boolean | null | undefined;
-type Record24 = Record<TechnicalBaselineColumn, Cell>;
-type WorkspaceRow = {
-  occurrence_id: string;
-  source_row_id: string;
-  revision: number;
-  materialization_status: string;
-  lifecycle_status: "active" | "voided";
-  lifecycle_reason: string | null;
-  voided_at: string | null;
-  voided_by_user_id: string | null;
-  projection_payload: string;
-  baseline_name: string | null;
-  baseline_maturity: string | null;
-  baseline_as_of: string | null;
-  source_file_name: string | null;
-  release_id: string | null;
-  product_id: string | null;
-  configuration_node_id: string | null;
-  deployment_id: string | null;
-};
-
-const programId = "program-jsf";
-const workspaceId = "workspace-jsf-current";
 const nowIso = () => new Date().toISOString();
-const cell = (value: Cell) => value == null ? null : String(value);
-const normalized = (value: Cell) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
-const numberCell = (value: Cell) => {
-  if (value === null || value === undefined || String(value).trim() === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+export type CurrentBaselineRecord = { source_row_id: string | null; release_id: string | null; product_id: string | null; configuration_node_id: string | null; deployment_id: string | null; revision: number; projection_payload: string | null; lifecycle_status: string };
+type Current = CurrentBaselineRecord;
+type Ids = { releaseId: string; baselineId: string; baselineRevision: number; baselineParentId: string | null; baselineIsNew: boolean; tierId: string; resourceId: string; hostId: string; productId: string | null; supplierId: string | null; deploymentId: string | null };
+
+export type BaselineResolver = {
+  releases: Map<string, string>;
+  workingSets: Map<string, { id: string; revision: number }>;
+  latestSets: Map<string, { id: string; revision: number }>;
+  underReviewReleases: Set<string>;
+  tiers: Map<string, string>;
+  resources: Map<string, string>;
+  hosts: Map<string, string>;
+  products: Map<string, string>;
+  suppliers: Map<string, string>;
+  deployments: Map<string, string>;
 };
 
-function stableId(kind: string, ...parts: Cell[]) {
-  const input = parts.map(normalized).join("|");
-  let hash = 2166136261;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
+export async function createBaselineResolver(db: D1Database): Promise<BaselineResolver> {
+  const [releases, sets, nodes, products, aliases, suppliers, deployments] = await Promise.all([
+    db.prepare("SELECT id,normalized_name FROM release WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
+    db.prepare("SELECT id,release_id,revision_number,approval_status FROM configuration_baseline WHERE program_id=? ORDER BY revision_number DESC,updated_at DESC").bind(BASELINE_PROGRAM_ID).all<{ id: string; release_id: string; revision_number: number; approval_status: string }>(),
+    db.prepare("SELECT id,parent_id,node_type,normalized_name FROM configuration_node WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; parent_id: string | null; node_type: string; normalized_name: string }>(),
+    db.prepare("SELECT id,normalized_name FROM product WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
+    db.prepare("SELECT entity_kind,entity_id,normalized_alias FROM canonical_alias WHERE program_id=? AND namespace='name' AND status='accepted'").bind(BASELINE_PROGRAM_ID).all<{ entity_kind: string; entity_id: string; normalized_alias: string }>(),
+    db.prepare("SELECT id,normalized_name FROM organization WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
+    db.prepare("SELECT id,product_id,configuration_node_id FROM deployment WHERE program_id=? AND environment='unknown' AND site='unknown'").bind(BASELINE_PROGRAM_ID).all<{ id: string; product_id: string; configuration_node_id: string }>(),
+  ]);
+  const workingSets = new Map<string, { id: string; revision: number }>();
+  const latestSets = new Map<string, { id: string; revision: number }>();
+  const underReviewReleases = new Set<string>();
+  for (const set of sets.results) {
+    if (!latestSets.has(set.release_id)) latestSets.set(set.release_id, { id: set.id, revision: set.revision_number });
+    if (set.approval_status === "working" && !workingSets.has(set.release_id)) workingSets.set(set.release_id, { id: set.id, revision: set.revision_number });
+    if (set.approval_status === "under_review") underReviewReleases.add(set.release_id);
   }
-  return `${kind}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
-}
-
-function emptyRow(): Record24 {
-  return Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, ""])) as Record24;
-}
-
-function asRecord24(value: unknown): Record24 | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as Record<string, unknown>;
-  if (Object.keys(candidate).some((key) => !TECHNICAL_BASELINE_COLUMNS.includes(key as TechnicalBaselineColumn))) return null;
-  const row = emptyRow();
-  for (const column of TECHNICAL_BASELINE_COLUMNS) {
-    const current = candidate[column];
-    if (current !== undefined && current !== null && typeof current !== "string" && typeof current !== "number" && typeof current !== "boolean") return null;
-    row[column] = current as Cell;
+  const tiers = new Map<string, string>(); const resources = new Map<string, string>(); const hosts = new Map<string, string>();
+  for (const node of nodes.results) {
+    if (node.node_type === "tier") tiers.set(node.normalized_name, node.id);
+    if (node.node_type === "resource") resources.set(`${node.parent_id || ""}|${node.normalized_name}`, node.id);
+    if (node.node_type === "host") hosts.set(`${node.parent_id || ""}|${node.normalized_name}`, node.id);
   }
-  return row;
-}
-
-function requiresReview(row: Record24) {
-  return !normalized(row.ReleaseName) || (!normalized(row.LongName) && !normalized(row.ShortName) && !normalized(row.HW_Host));
-}
-
-type NodeStateRow = {
-  source_row_id: string | null;
-  storage_type: string | null;
-  storage_gb: number | null;
-  cpu_cores: number | null;
-  ram_gb: number | null;
-};
-type DeploymentStateRow = {
-  source_row_id: string | null;
-  containerized: string | null;
-  container_technology: string | null;
-  container_type: string | null;
-  language: string | null;
-};
-type PeerOccurrence = { projection_payload: string };
-
-function nodeStateSignature(row: Record24) {
-  return JSON.stringify([normalized(row.HW_Storage_Type), numberCell(row["HW_Storage (GB)"]), numberCell(row.HW_CPU_CORES), numberCell(row["HW_RAM (GB)"])]);
-}
-
-function deploymentStateSignature(row: Record24) {
-  return JSON.stringify([normalized(row.Containerized), normalized(row["Container Technology"]), normalized(row["Container Type"]), normalized(row["SW Language"])]);
-}
-
-function readProjection(payload: string) {
-  try {
-    return asRecord24(JSON.parse(payload));
-  } catch {
-    return null;
+  const productMap = new Map(products.results.map((item) => [item.normalized_name, item.id]));
+  const supplierMap = new Map(suppliers.results.map((item) => [item.normalized_name, item.id]));
+  for (const alias of aliases.results) {
+    if (alias.entity_kind === "product") productMap.set(alias.normalized_alias, alias.entity_id);
+    if (alias.entity_kind === "organization") supplierMap.set(alias.normalized_alias, alias.entity_id);
   }
-}
-
-function sameNodeState(existing: NodeStateRow, row: Record24) {
-  return normalized(existing.storage_type) === normalized(row.HW_Storage_Type)
-    && existing.storage_gb === numberCell(row["HW_Storage (GB)"])
-    && existing.cpu_cores === numberCell(row.HW_CPU_CORES)
-    && existing.ram_gb === numberCell(row["HW_RAM (GB)"]);
-}
-
-function sameDeploymentState(existing: DeploymentStateRow, row: Record24) {
-  return normalized(existing.containerized) === normalized(row.Containerized)
-    && normalized(existing.container_technology) === normalized(row["Container Technology"])
-    && normalized(existing.container_type) === normalized(row["Container Type"])
-    && normalized(existing.language) === normalized(row["SW Language"]);
-}
-
-type IdentityAliases = { product: Map<string, string>; organization: Map<string, string> };
-async function identityAliases(db: D1Database): Promise<IdentityAliases> {
-  const rows = await db.prepare("SELECT entity_kind,entity_id,normalized_alias FROM canonical_alias WHERE program_id=? AND namespace='name' AND status='accepted' AND entity_kind IN ('product','organization')").bind(programId).all<{ entity_kind: "product" | "organization"; entity_id: string; normalized_alias: string }>();
   return {
-    product: new Map(rows.results.filter((item) => item.entity_kind === "product").map((item) => [item.normalized_alias, item.entity_id])),
-    organization: new Map(rows.results.filter((item) => item.entity_kind === "organization").map((item) => [item.normalized_alias, item.entity_id])),
+    releases: new Map(releases.results.map((item) => [item.normalized_name, item.id])), workingSets, latestSets, underReviewReleases,
+    tiers, resources, hosts, products: productMap, suppliers: supplierMap,
+    deployments: new Map(deployments.results.map((item) => [`${item.product_id}|${item.configuration_node_id}`, item.id])),
   };
 }
 
-function materializationIds(row: Record24, mode: "working" | "reported", packageId?: string, aliases?: IdentityAliases) {
-  const releaseName = cell(row.ReleaseName) || "Unassigned";
-  const releaseId = stableId("release", releaseName);
-  const baselineId = mode === "working"
-    ? stableId("baseline-working", workspaceId, releaseId)
-    : stableId("baseline", releaseId, packageId || "reported");
-  const tierName = cell(row.Tier) || "Unassigned";
-  const resourceName = cell(row.Resource) || "Unassigned";
-  const hostName = cell(row.HW_Host) || "Unassigned";
-  const tierId = stableId("tier", tierName);
-  const resourceId = stableId("resource", tierId, resourceName);
-  const hostId = stableId("host", resourceId, hostName);
-  const productName = cell(row.LongName) || cell(row.ShortName);
-  const productId = productName ? aliases?.product.get(normalized(productName)) || stableId("product", productName) : null;
-  const oem = cell(row.OEM);
-  const organizationId = oem ? aliases?.organization.get(normalized(oem)) || stableId("org", oem) : null;
-  const deploymentId = productId ? stableId("deploy", productId, hostId) : null;
-  const capabilityName = cell(row["Technical Capability Satisfied by this SW/Tech - Notes"]);
-  const capabilityId = capabilityName ? stableId("capability", capabilityName) : null;
-  return { releaseName, releaseId, baselineId, tierName, resourceName, hostName, tierId, resourceId, hostId, productName, productId, oem, organizationId, deploymentId, capabilityName, capabilityId };
+async function firstId(db: D1Database, sql: string, ...params: unknown[]) { return (await db.prepare(sql).bind(...params).first<{ id: string }>())?.id || null; }
+
+async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolver): Promise<Ids> {
+  const releaseName = textCell(row.ReleaseName) || "Unassigned";
+  const releaseKey = normalized(releaseName);
+  const releaseId = resolver ? resolver.releases.get(releaseKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM release WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, releaseKey) || crypto.randomUUID();
+  if (resolver) resolver.releases.set(releaseKey, releaseId);
+  // A working Configuration Set is editable. Approved/superseded sets are never selected for a write.
+  const editableSet = resolver?.workingSets.get(releaseId) || await db.prepare("SELECT id,revision_number AS revision FROM configuration_baseline WHERE program_id=? AND release_id=? AND approval_status='working' ORDER BY revision_number DESC, updated_at DESC LIMIT 1").bind(BASELINE_PROGRAM_ID, releaseId).first<{ id: string; revision: number }>();
+  const underReview = resolver ? resolver.underReviewReleases.has(releaseId) : Boolean(await firstId(db, "SELECT id FROM configuration_baseline WHERE program_id=? AND release_id=? AND approval_status='under_review' LIMIT 1", BASELINE_PROGRAM_ID, releaseId));
+  if (!editableSet && underReview) throw new Error(`${releaseName} has a Configuration Set under review. Return it to working before changing Baseline Records.`);
+  const latestSet = resolver?.latestSets.get(releaseId) || await db.prepare("SELECT id,revision_number AS revision FROM configuration_baseline WHERE program_id=? AND release_id=? ORDER BY revision_number DESC,updated_at DESC LIMIT 1").bind(BASELINE_PROGRAM_ID, releaseId).first<{ id: string; revision: number }>();
+  const baselineId = editableSet?.id || crypto.randomUUID();
+  const baselineRevision = editableSet?.revision || Number(latestSet?.revision || 0) + 1;
+  const baselineIsNew = !editableSet;
+  if (resolver && baselineIsNew) resolver.workingSets.set(releaseId, { id: baselineId, revision: baselineRevision });
+  const tierName = textCell(row.Tier) || "Unassigned"; const resourceName = textCell(row.Resource) || "Unassigned"; const hostName = textCell(row.HW_Host) || "Unassigned";
+  const tierKey = normalized(tierName); const tierId = resolver ? resolver.tiers.get(tierKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id IS NULL AND node_type='tier' AND normalized_name=?", BASELINE_PROGRAM_ID, tierKey) || crypto.randomUUID(); if (resolver) resolver.tiers.set(tierKey, tierId);
+  const resourceKey = `${tierId}|${normalized(resourceName)}`; const resourceId = resolver ? resolver.resources.get(resourceKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id=? AND node_type='resource' AND normalized_name=?", BASELINE_PROGRAM_ID, tierId, normalized(resourceName)) || crypto.randomUUID(); if (resolver) resolver.resources.set(resourceKey, resourceId);
+  const hostKey = `${resourceId}|${normalized(hostName)}`; const hostId = resolver ? resolver.hosts.get(hostKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id=? AND node_type='host' AND normalized_name=?", BASELINE_PROGRAM_ID, resourceId, normalized(hostName)) || crypto.randomUUID(); if (resolver) resolver.hosts.set(hostKey, hostId);
+  const productName = textCell(row.LongName) || textCell(row.ShortName);
+  // Baseline Record editing assigns a Product; it does not rename the Product
+  // already linked to other releases. Canonical renames use the Product editor.
+  const productKey = normalized(productName); const productId = productName ? resolver ? resolver.products.get(productKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM product WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, productKey) || await firstId(db, "SELECT entity_id AS id FROM canonical_alias WHERE program_id=? AND entity_kind='product' AND namespace='name' AND status='accepted' AND normalized_alias=?", BASELINE_PROGRAM_ID, productKey) || crypto.randomUUID() : null; if (resolver && productId) resolver.products.set(productKey, productId);
+  const supplierName = textCell(row.OEM);
+  const supplierKey = normalized(supplierName); const supplierId = supplierName ? resolver ? resolver.suppliers.get(supplierKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM organization WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, supplierKey) || await firstId(db, "SELECT entity_id AS id FROM canonical_alias WHERE program_id=? AND entity_kind='organization' AND namespace='name' AND status='accepted' AND normalized_alias=?", BASELINE_PROGRAM_ID, supplierKey) || crypto.randomUUID() : null; if (resolver && supplierId) resolver.suppliers.set(supplierKey, supplierId);
+  const deploymentKey = productId ? `${productId}|${hostId}` : ""; const deploymentId = productId ? resolver ? resolver.deployments.get(deploymentKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM deployment WHERE program_id=? AND product_id=? AND configuration_node_id=? AND environment='unknown' AND site='unknown'", BASELINE_PROGRAM_ID, productId, hostId) || crypto.randomUUID() : null; if (resolver && deploymentId) resolver.deployments.set(deploymentKey, deploymentId);
+  return { releaseId, baselineId, baselineRevision, baselineParentId: editableSet ? null : latestSet?.id || null, baselineIsNew, tierId, resourceId, hostId, productId, supplierId, deploymentId };
 }
 
-function materializeCurrentRow(db: D1Database, row: Record24, sourceRowId: string, occurrenceId: string, revision: number, beforePayload: string | null, action: string, aliases?: IdentityAliases) {
-  const now = nowIso();
-  const ids = materializationIds(row, "working", undefined, aliases);
-  const status = requiresReview(row) ? "review" : "working";
-  const baselineName = `${ids.releaseName} Working baseline`;
+/** Materialize a database-authoritative record. JSON persists only as a legacy fallback. */
+export async function materializeBaselineRecord(db: D1Database, occurrenceId: string, row: A2ORow, revision: number, beforePayload: string | null, sourceRowId: string | null, resolver?: BaselineResolver) {
+  const now = nowIso(); const ids = await resolveIds(db, row, resolver); const status = recordRequiresReview(row) ? "review" : "materialized";
+  const releaseName = textCell(row.ReleaseName) || "Unassigned"; const tierName = textCell(row.Tier) || "Unassigned"; const resourceName = textCell(row.Resource) || "Unassigned"; const hostName = textCell(row.HW_Host) || "Unassigned"; const productName = textCell(row.LongName) || textCell(row.ShortName); const supplierName = textCell(row.OEM);
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(programId, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
-    db.prepare("INSERT INTO release (id,program_id,code,normalized_code,name,normalized_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.releaseId, programId, ids.releaseName, normalized(ids.releaseName), ids.releaseName, normalized(ids.releaseName), "working", now, now),
-    db.prepare("INSERT INTO configuration_baseline (id,program_id,release_id,name,normalized_name,maturity,as_of,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET maturity=excluded.maturity,as_of=excluded.as_of,status=excluded.status,updated_at=excluded.updated_at").bind(ids.baselineId, programId, ids.releaseId, baselineName, normalized(baselineName), "working", now.slice(0, 10), "working", now, now),
-    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.tierId, programId, null, "tier", ids.tierName, normalized(ids.tierName), now, now),
-    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.resourceId, programId, ids.tierId, "resource", ids.resourceName, normalized(ids.resourceName), now, now),
-    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.hostId, programId, ids.resourceId, "host", ids.hostName, normalized(ids.hostName), now, now),
+    db.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_PROGRAM_ID, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
+    db.prepare("INSERT INTO baseline_workspace (id,program_id,label,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_WORKSPACE_ID, BASELINE_PROGRAM_ID, "Working Technical Baseline", now, now),
+    db.prepare("INSERT INTO release (id,program_id,code,normalized_code,name,normalized_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalized_name=excluded.normalized_name,updated_at=excluded.updated_at").bind(ids.releaseId, BASELINE_PROGRAM_ID, releaseName, normalized(releaseName), releaseName, normalized(releaseName), "planned", now, now),
+    db.prepare("INSERT INTO configuration_baseline (id,program_id,release_id,name,normalized_name,maturity,as_of,status,revision_number,approval_status,parent_baseline_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET as_of=excluded.as_of,status=excluded.status,updated_at=excluded.updated_at WHERE configuration_baseline.approval_status='working'").bind(ids.baselineId, BASELINE_PROGRAM_ID, ids.releaseId, `${releaseName} Working configuration r${ids.baselineRevision}`, normalized(`${releaseName} Working configuration r${ids.baselineRevision}`), "government_assessed", now.slice(0, 10), "working", ids.baselineRevision, "working", ids.baselineParentId, now, now),
+    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.tierId, BASELINE_PROGRAM_ID, null, "tier", tierName, normalized(tierName), now, now),
+    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.resourceId, BASELINE_PROGRAM_ID, ids.tierId, "resource", resourceName, normalized(resourceName), now, now),
+    db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.hostId, BASELINE_PROGRAM_ID, ids.resourceId, "host", hostName, normalized(hostName), now, now),
   ];
-
-  if (ids.organizationId) statements.push(db.prepare("INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET organization_type=COALESCE(organization.organization_type,excluded.organization_type),updated_at=excluded.updated_at").bind(ids.organizationId, programId, ids.oem, normalized(ids.oem), "supplier", now, now));
-  if (ids.productId) {
-    statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET short_name=COALESCE(product.short_name,excluded.short_name),product_type=COALESCE(excluded.product_type,product.product_type),software_classification=COALESCE(excluded.software_classification,product.software_classification),owner_organization_id=COALESCE(excluded.owner_organization_id,product.owner_organization_id),updated_at=excluded.updated_at").bind(ids.productId, programId, ids.productName, normalized(ids.productName), cell(row.ShortName), cell(row.TechStackType), cell(row["Software Type"]), ids.organizationId, now, now));
-  }
-  if (ids.productId && ids.organizationId) statements.push(db.prepare("INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.productId, ids.organizationId, "supplier", now, now));
-  if (ids.capabilityId) statements.push(db.prepare("INSERT INTO capability (id,program_id,parent_id,code,name,normalized_name,description,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,updated_at=excluded.updated_at").bind(ids.capabilityId, programId, null, null, ids.capabilityName, normalized(ids.capabilityName), "Governed from working baseline projection", now, now));
-  if (ids.productId && ids.capabilityId) statements.push(db.prepare("INSERT INTO product_capability (product_id,capability_id,relationship,rationale,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(product_id,capability_id,relationship) DO UPDATE SET rationale=excluded.rationale,updated_at=excluded.updated_at").bind(ids.productId, ids.capabilityId, "satisfies", ids.capabilityName, now, now));
-  if (ids.productId && ids.deploymentId) statements.push(db.prepare("INSERT INTO deployment (id,program_id,product_id,configuration_node_id,environment,site,deployment_role,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET deployment_role=excluded.deployment_role,updated_at=excluded.updated_at").bind(ids.deploymentId, programId, ids.productId, ids.hostId, "unknown", "unknown", cell(row.TechStackType), now, now));
-
-  statements.push(
-    db.prepare("INSERT INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,configuration_node_id) DO UPDATE SET source_row_id=excluded.source_row_id,storage_type=excluded.storage_type,storage_gb=excluded.storage_gb,cpu_cores=excluded.cpu_cores,ram_gb=excluded.ram_gb,updated_at=excluded.updated_at").bind(stableId("node-state", ids.baselineId, ids.hostId), programId, ids.baselineId, ids.hostId, sourceRowId, cell(row.HW_Storage_Type), numberCell(row["HW_Storage (GB)"]), numberCell(row.HW_CPU_CORES), numberCell(row["HW_RAM (GB)"]), null, now, now),
+  if (ids.baselineIsNew && ids.baselineParentId) statements.push(
+    db.prepare("INSERT OR IGNORE INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,created_at,updated_at) SELECT 'clone-' || ? || '-' || id,program_id,?,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,?,? FROM baseline_node_state WHERE baseline_id=?").bind(ids.baselineId, ids.baselineId, now, now, ids.baselineParentId),
+    db.prepare("INSERT OR IGNORE INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,reported_version,application_version,runtime_version,presence,status,installation_type,containerized,container_technology,container_type,language,notes,created_at,updated_at) SELECT 'clone-' || ? || '-' || id,program_id,?,deployment_id,source_row_id,reported_version,application_version,runtime_version,presence,status,installation_type,containerized,container_technology,container_type,language,notes,?,? FROM baseline_deployment_state WHERE baseline_id=?").bind(ids.baselineId, ids.baselineId, now, now, ids.baselineParentId),
+    db.prepare("UPDATE baseline_occurrence SET baseline_id=?,updated_at=? WHERE release_id=? AND baseline_id=? AND lifecycle_status='active'").bind(ids.baselineId, now, ids.releaseId, ids.baselineParentId),
   );
-  if (ids.deploymentId) statements.push(db.prepare("INSERT INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,presence,status,containerized,container_technology,container_type,language,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,deployment_id) DO UPDATE SET source_row_id=excluded.source_row_id,containerized=excluded.containerized,container_technology=excluded.container_technology,container_type=excluded.container_type,language=excluded.language,updated_at=excluded.updated_at").bind(stableId("deploy-state", ids.baselineId, ids.deploymentId), programId, ids.baselineId, ids.deploymentId, sourceRowId, "present", status, cell(row.Containerized), cell(row["Container Technology"]), cell(row["Container Type"]), cell(row["SW Language"]), null, now, now));
-
-  // source_row_24 is an immutable intake snapshot. All analyst edits belong to
-  // baseline_occurrence.projection_payload and the normalized working model.
-  statements.push(
-    db.prepare("UPDATE baseline_occurrence SET release_id=?,baseline_id=?,configuration_node_id=?,product_id=?,deployment_id=?,projection_payload=?,materialization_status=?,revision=?,updated_at=? WHERE id=? AND revision=?").bind(ids.releaseId, ids.baselineId, ids.hostId, ids.productId, ids.deploymentId, JSON.stringify(row), status, revision + 1, now, occurrenceId, revision),
-    db.prepare("INSERT INTO audit_event (id,program_id,action,entity_kind,entity_id,before_payload,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), programId, action, "baseline_occurrence", occurrenceId, beforePayload, JSON.stringify(row), now),
+  if (ids.supplierId) statements.push(db.prepare("INSERT INTO organization (id,program_id,name,normalized_name,organization_type,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.supplierId, BASELINE_PROGRAM_ID, supplierName, normalized(supplierName), "supplier", now, now));
+  if (ids.productId) statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,normalized_name=excluded.normalized_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,updated_at=excluded.updated_at").bind(ids.productId, BASELINE_PROGRAM_ID, productName, normalized(productName), textCell(row.ShortName), textCell(row.TechStackType), textCell(row["Software Type"]), now, now));
+  // OEM creates only a supplier relationship. Ownership requires a separate governed action.
+  if (ids.productId && ids.supplierId) statements.push(db.prepare("INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.productId, ids.supplierId, "supplier", now, now));
+  if (ids.deploymentId && ids.productId) statements.push(db.prepare("INSERT INTO deployment (id,program_id,product_id,configuration_node_id,environment,site,deployment_role,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.deploymentId, BASELINE_PROGRAM_ID, ids.productId, ids.hostId, "unknown", "unknown", null, now, now));
+  if (sourceRowId) statements.push(
+    db.prepare("UPDATE baseline_record_source SET disposition='superseded',updated_at=? WHERE baseline_occurrence_id=? AND source_row_id<>? AND disposition='current'").bind(now, occurrenceId, sourceRowId),
+    db.prepare("INSERT INTO baseline_record_source (id,baseline_occurrence_id,source_row_id,relationship,disposition,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id,source_row_id) DO UPDATE SET relationship=excluded.relationship,disposition=excluded.disposition,updated_at=excluded.updated_at").bind(crypto.randomUUID(), occurrenceId, sourceRowId, "imported", "current", now, now),
   );
-  return { statements, ids, now, status };
-}
-
-function toResponse(rows: WorkspaceRow[]) {
-  const records = rows.map((entry) => ({
-    occurrenceId: entry.occurrence_id,
-    sourceRowId: entry.source_row_id,
-    revision: entry.revision,
-    materializationStatus: entry.materialization_status,
-    lifecycleStatus: entry.lifecycle_status,
-    lifecycleReason: entry.lifecycle_reason,
-    voidedAt: entry.voided_at,
-    voidedByUserId: entry.voided_by_user_id,
-    baseline: { name: entry.baseline_name, maturity: entry.baseline_maturity, asOf: entry.baseline_as_of },
-    source: { fileName: entry.source_file_name },
-    releaseId: entry.release_id,
-    productId: entry.product_id,
-    configurationNodeId: entry.configuration_node_id,
-    deploymentId: entry.deployment_id,
-    row: asRecord24(JSON.parse(entry.projection_payload)),
-  })).filter((entry) => entry.row);
-  return { workspace: { id: workspaceId, label: "Working Technical Baseline" }, records };
+  statements.push(
+    db.prepare("INSERT INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,configuration_node_id) DO UPDATE SET source_row_id=excluded.source_row_id,storage_type=excluded.storage_type,storage_gb=excluded.storage_gb,cpu_cores=excluded.cpu_cores,ram_gb=excluded.ram_gb,updated_at=excluded.updated_at").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, ids.baselineId, ids.hostId, sourceRowId, textCell(row.HW_Storage_Type), numberCell(row["HW_Storage (GB)"]), numberCell(row.HW_CPU_CORES), numberCell(row["HW_RAM (GB)"]), now, now),
+  );
+  if (ids.deploymentId) statements.push(db.prepare("INSERT INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,presence,status,containerized,container_technology,container_type,language,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,deployment_id) DO UPDATE SET source_row_id=excluded.source_row_id,containerized=excluded.containerized,container_technology=excluded.container_technology,container_type=excluded.container_type,language=excluded.language,updated_at=excluded.updated_at").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, ids.baselineId, ids.deploymentId, sourceRowId, "present", status, textCell(row.Containerized), textCell(row["Container Technology"]), textCell(row["Container Type"]), textCell(row["SW Language"]), now, now));
+  statements.push(
+    // Capability text stays staged; only a user resolution can create Product-Capability.
+    db.prepare("INSERT INTO baseline_record_extension (baseline_occurrence_id,source_key,notes,capability_notes,notes_1,notes_2,notes_3,notes_4,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id) DO UPDATE SET source_key=excluded.source_key,notes=excluded.notes,capability_notes=excluded.capability_notes,notes_1=excluded.notes_1,notes_2=excluded.notes_2,notes_3=excluded.notes_3,notes_4=excluded.notes_4,updated_at=excluded.updated_at").bind(occurrenceId, textCell(row["#"]), textCell(row.Notes), textCell(row["Technical Capability Satisfied by this SW/Tech - Notes"]), textCell(row["Notes.1"]), textCell(row["Notes.2"]), textCell(row["Notes.3"]), textCell(row["Notes.4"]), now, now),
+    db.prepare("UPDATE baseline_occurrence SET source_row_id=?,release_id=?,baseline_id=?,configuration_node_id=?,product_id=?,deployment_id=?,projection_payload=?,materialization_status=?,revision=?,updated_at=? WHERE id=? AND revision=?").bind(sourceRowId, ids.releaseId, ids.baselineId, ids.hostId, ids.productId, ids.deploymentId, JSON.stringify(row), status, revision + 1, now, occurrenceId, revision),
+    db.prepare("INSERT INTO audit_event (id,program_id,action,entity_kind,entity_id,before_payload,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, "baseline_record_materialized", "baseline_occurrence", occurrenceId, beforePayload, JSON.stringify({ authoritative: "normalized", row }), now),
+  );
+  return { statements, updateIndex: statements.length - 2, ids, status, now };
 }
 
 export async function GET(request: Request) {
-  try {
-    const includeVoided = new URL(request.url).searchParams.get("includeVoided") === "true";
-    const result = await env.DB.prepare(`SELECT bo.id AS occurrence_id, bo.source_row_id, bo.revision, bo.materialization_status, bo.lifecycle_status,bo.lifecycle_reason,bo.voided_at,bo.voided_by_user_id,bo.projection_payload, cb.name AS baseline_name, cb.maturity AS baseline_maturity, cb.as_of AS baseline_as_of, sp.file_name AS source_file_name, bo.release_id, bo.product_id, bo.configuration_node_id, bo.deployment_id FROM baseline_occurrence bo LEFT JOIN configuration_baseline cb ON cb.id = bo.baseline_id JOIN source_row_24 sr ON sr.id = bo.source_row_id JOIN source_package sp ON sp.id = sr.source_package_id WHERE bo.workspace_id = ? ${includeVoided ? "" : "AND bo.lifecycle_status='active'"} ORDER BY bo.created_at ASC`).bind(workspaceId).all<WorkspaceRow>();
-    return Response.json(toResponse(result.results));
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The working baseline workspace is unavailable." }, { status: 500 });
-  }
+  try { const records = await readAssembledBaselineRecords(env.DB, { includeVoided: new URL(request.url).searchParams.get("includeVoided") === "true" }); return Response.json({ workspace: { id: BASELINE_WORKSPACE_ID, label: "Working Technical Baseline" }, records: records.map((record) => ({ ...record, sourceRowId: record.sourceRowId || record.occurrenceId })) }); }
+  catch (error) { return Response.json({ error: error instanceof Error ? error.message : "The working baseline is unavailable." }, { status: 500 }); }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json() as { occurrenceId?: unknown; expectedRevision?: unknown; row?: unknown };
-    const occurrenceId = String(body.occurrenceId ?? "").trim();
-    const revision = Number(body.expectedRevision);
-    const row = asRecord24(body.row);
-    if (!occurrenceId || !Number.isInteger(revision) || !row) return Response.json({ error: "occurrenceId, expectedRevision, and the exact 24-column projection are required." }, { status: 400 });
-    const current = await env.DB.prepare("SELECT id,source_row_id,revision,projection_payload,lifecycle_status FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<{ id: string; source_row_id: string; revision: number; projection_payload: string; lifecycle_status: string }>();
-    if (!current) return Response.json({ error: "The selected baseline record is no longer in the current workspace." }, { status: 404 });
-    if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided baseline record before editing it." }, { status: 409 });
-    if (current.revision !== revision) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
-    const aliases = await identityAliases(env.DB);
-    const ids = materializationIds(row, "working", undefined, aliases);
-    const nodePeers = await env.DB.prepare("SELECT projection_payload FROM baseline_occurrence WHERE workspace_id=? AND id<>? AND baseline_id=? AND configuration_node_id=?").bind(workspaceId, current.id, ids.baselineId, ids.hostId).all<PeerOccurrence>();
-    if (nodePeers.results.some((peer) => {
-      const peerRow = readProjection(peer.projection_payload);
-      return peerRow !== null && nodeStateSignature(peerRow) !== nodeStateSignature(row);
-    })) {
-      return Response.json({ error: "This edit conflicts with another baseline record's hardware state at the same release configuration node. Resolve the two records before changing the shared node state." }, { status: 409 });
-    }
-    const existingNodeState = await env.DB.prepare("SELECT source_row_id,storage_type,storage_gb,cpu_cores,ram_gb FROM baseline_node_state WHERE baseline_id=? AND configuration_node_id=?").bind(ids.baselineId, ids.hostId).first<NodeStateRow>();
-    if (existingNodeState && existingNodeState.source_row_id !== current.source_row_id && !sameNodeState(existingNodeState, row)) {
-      return Response.json({ error: "This edit conflicts with a different baseline record's hardware state at the same release configuration node. Resolve the two records before changing the shared node state." }, { status: 409 });
-    }
-    if (ids.deploymentId) {
-      const deploymentPeers = await env.DB.prepare("SELECT projection_payload FROM baseline_occurrence WHERE workspace_id=? AND id<>? AND baseline_id=? AND deployment_id=?").bind(workspaceId, current.id, ids.baselineId, ids.deploymentId).all<PeerOccurrence>();
-      if (deploymentPeers.results.some((peer) => {
-        const peerRow = readProjection(peer.projection_payload);
-        return peerRow !== null && deploymentStateSignature(peerRow) !== deploymentStateSignature(row);
-      })) {
-        return Response.json({ error: "This edit conflicts with another baseline record's runtime state at the same release deployment. Resolve the two records before changing the shared deployment state." }, { status: 409 });
-      }
-      const existingDeploymentState = await env.DB.prepare("SELECT source_row_id,containerized,container_technology,container_type,language FROM baseline_deployment_state WHERE baseline_id=? AND deployment_id=?").bind(ids.baselineId, ids.deploymentId).first<DeploymentStateRow>();
-      if (existingDeploymentState && existingDeploymentState.source_row_id !== current.source_row_id && !sameDeploymentState(existingDeploymentState, row)) {
-        return Response.json({ error: "This edit conflicts with a different baseline record's runtime state at the same release deployment. Resolve the two records before changing the shared deployment state." }, { status: 409 });
-      }
-    }
-    const materialized = materializeCurrentRow(env.DB, row, current.source_row_id, current.id, revision, current.projection_payload, "baseline_occurrence_updated", aliases);
-    const result = await env.DB.batch(materialized.statements);
-    const update = result[result.length - 2];
-    if (!update.success || Number(update.meta.changes ?? 0) !== 1) return Response.json({ error: "This record changed elsewhere. Reload the workspace before saving again." }, { status: 409 });
-    return Response.json({ occurrenceId, revision: revision + 1, materializationStatus: materialized.status, baseline: { name: `${materialized.ids.releaseName} Working baseline`, maturity: "working", asOf: materialized.now.slice(0, 10) } });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be saved." }, { status: 500 });
-  }
+    const body = await request.json() as { occurrenceId?: unknown; expectedRevision?: unknown; row?: unknown }; const occurrenceId = String(body.occurrenceId ?? "").trim(); const revision = Number(body.expectedRevision); const row = asA2ORow(body.row);
+    if (!occurrenceId || !Number.isInteger(revision) || !row) return Response.json({ error: "occurrenceId, expectedRevision, and the exact A2O Tech Stack row are required." }, { status: 400 });
+    const current = await env.DB.prepare("SELECT source_row_id,release_id,product_id,configuration_node_id,deployment_id,revision,projection_payload,lifecycle_status FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, BASELINE_WORKSPACE_ID).first<Current>();
+    if (!current) return Response.json({ error: "Baseline record was not found." }, { status: 404 }); if (current.lifecycle_status !== "active") return Response.json({ error: "Restore this voided baseline record before editing it." }, { status: 409 }); if (current.revision !== revision) return Response.json({ error: "This record changed elsewhere. Reload before saving." }, { status: 409 });
+    const materialized = await materializeBaselineRecord(env.DB, occurrenceId, row, revision, current.projection_payload, current.source_row_id); const result = await env.DB.batch(materialized.statements); const update = result[materialized.updateIndex];
+    if (!update.success || Number(update.meta.changes ?? 0) !== 1) return Response.json({ error: "This record changed elsewhere. Reload before saving." }, { status: 409 });
+    return Response.json({ occurrenceId, revision: revision + 1, materializationStatus: materialized.status, baseline: { name: `${textCell(row.ReleaseName)} Working configuration`, maturity: "government_assessed", asOf: materialized.now.slice(0, 10) } });
+  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be saved." }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json() as { action?: unknown; occurrenceId?: unknown; row?: unknown };
-    if (body.action === "restore_occurrence") {
-      const actor = await ensureActor(env.DB, request);
-      requireWriter(actor);
-      const occurrenceId = String(body.occurrenceId || "").trim();
-      if (!occurrenceId) return Response.json({ error: "occurrenceId is required." }, { status: 400 });
-      const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
-      if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 });
-      const at = nowIso();
-      await env.DB.batch([
-        env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='active',lifecycle_reason=NULL,voided_at=NULL,voided_by_user_id=NULL,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(at, occurrenceId, workspaceId),
-        audit(env.DB, actor, "baseline_occurrence_restored", "baseline_occurrence", occurrenceId, { lifecycleStatus: "active" }, before),
-      ]);
-      return Response.json({ ok: true, occurrenceId });
-    }
-    const row = asRecord24(body.row);
-    if (!row || !normalized(row.ReleaseName)) return Response.json({ error: "Choose ReleaseName before creating a baseline record." }, { status: 400 });
-    const now = nowIso();
-    const sourcePackageId = `manual-${crypto.randomUUID()}`;
-    const sourceRowId = `source-row-${crypto.randomUUID()}`;
-    const occurrenceId = `occurrence-${crypto.randomUUID()}`;
-    const initial = [
-      env.DB.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(programId, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
-      env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING").bind(workspaceId, programId, "Working Technical Baseline", sourcePackageId, now, now),
-      env.DB.prepare("INSERT INTO source_package (id,program_id,source_system,file_name,sheet_name,content_hash,received_at,status,row_count,accepted_count,exception_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(sourcePackageId, programId, "manual-entry", "Manual baseline entry", null, stableId("hash", sourceRowId), now, "working", 1, 0, 1, now, now),
-      env.DB.prepare("INSERT INTO source_row_24 (id,source_package_id,source_key,row_number,row_hash,raw_payload,materialization_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(sourceRowId, sourcePackageId, cell(row["#"]), 1, stableId("hash", JSON.stringify(row)), JSON.stringify(row), "review", now, now),
-      env.DB.prepare("INSERT INTO baseline_occurrence (id,program_id,workspace_id,source_row_id,projection_payload,materialization_status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(occurrenceId, programId, workspaceId, sourceRowId, JSON.stringify(row), "review", 0, now, now),
-    ];
-    const aliases = await identityAliases(env.DB);
-    const materialized = materializeCurrentRow(env.DB, row, sourceRowId, occurrenceId, 0, null, "baseline_occurrence_created", aliases);
-    const result = await env.DB.batch([...initial, ...materialized.statements]);
-    const update = result[result.length - 2];
-    if (!update.success || Number(update.meta.changes ?? 0) !== 1) throw new Error("The new baseline record could not be materialized.");
-    return Response.json({ occurrenceId, revision: 1, materializationStatus: materialized.status }, { status: 201 });
-  } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be created." }, { status: 500 });
-  }
+    if (body.action === "restore_occurrence") { const actor = await ensureActor(env.DB, request); requireWriter(actor); const occurrenceId = String(body.occurrenceId || "").trim(); if (!occurrenceId) return Response.json({ error: "occurrenceId is required." }, { status: 400 }); const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, BASELINE_WORKSPACE_ID).first<Record<string, unknown>>(); if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 }); const at = nowIso(); await env.DB.batch([env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='active',lifecycle_reason=NULL,voided_at=NULL,voided_by_user_id=NULL,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(at, occurrenceId, BASELINE_WORKSPACE_ID), audit(env.DB, actor, "baseline_record_restored", "baseline_occurrence", occurrenceId, { lifecycleStatus: "active" }, before)]); return Response.json({ ok: true, occurrenceId }); }
+    const row = asA2ORow(body.row); if (!row || !normalized(row.ReleaseName)) return Response.json({ error: "Choose a release before creating a baseline record." }, { status: 400 }); const now = nowIso(); const occurrenceId = crypto.randomUUID();
+    const initial = [env.DB.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_PROGRAM_ID, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now), env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_WORKSPACE_ID, BASELINE_PROGRAM_ID, "Working Technical Baseline", now, now), env.DB.prepare("INSERT INTO baseline_occurrence (id,program_id,workspace_id,source_row_id,projection_payload,materialization_status,revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(occurrenceId, BASELINE_PROGRAM_ID, BASELINE_WORKSPACE_ID, null, JSON.stringify(row), "review", 0, now, now)];
+    const materialized = await materializeBaselineRecord(env.DB, occurrenceId, row, 0, null, null); const result = await env.DB.batch([...initial, ...materialized.statements]); const update = result[initial.length + materialized.updateIndex]; if (!update.success || Number(update.meta.changes ?? 0) !== 1) throw new Error("The new baseline record could not be materialized."); return Response.json({ occurrenceId, revision: 1, materializationStatus: materialized.status }, { status: 201 });
+  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "The baseline record could not be created." }, { status: 500 }); }
 }
 
 export async function DELETE(request: Request) {
-  try {
-    const actor = await ensureActor(env.DB, request);
-    requireWriter(actor);
-    const body = await request.json() as { occurrenceId?: unknown; reason?: unknown };
-    const occurrenceId = String(body.occurrenceId || "").trim();
-    const reason = String(body.reason || "").trim();
-    if (!occurrenceId || !reason) return Response.json({ error: "Baseline record and a reason are required. Records are voided, never silently deleted." }, { status: 400 });
-    const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, workspaceId).first<Record<string, unknown>>();
-    if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 });
-    const at = nowIso();
-    await env.DB.batch([
-      env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='voided',lifecycle_reason=?,voided_at=?,voided_by_user_id=?,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(reason, at, actor.id, at, occurrenceId, workspaceId),
-      audit(env.DB, actor, "baseline_occurrence_voided", "baseline_occurrence", occurrenceId, { lifecycleStatus: "voided", reason }, before),
-    ]);
-    return Response.json({ ok: true, occurrenceId });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Source occurrence could not be voided.";
-    return Response.json({ error: message }, { status: message.includes("viewer") ? 403 : 400 });
-  }
+  try { const actor = await ensureActor(env.DB, request); requireWriter(actor); const body = await request.json() as { occurrenceId?: unknown; reason?: unknown }; const occurrenceId = String(body.occurrenceId || "").trim(); const reason = String(body.reason || "").trim(); if (!occurrenceId || !reason) return Response.json({ error: "Baseline record and a reason are required. Records are voided, not deleted." }, { status: 400 }); const before = await env.DB.prepare("SELECT lifecycle_status,lifecycle_reason,voided_at FROM baseline_occurrence WHERE id=? AND workspace_id=?").bind(occurrenceId, BASELINE_WORKSPACE_ID).first<Record<string, unknown>>(); if (!before) return Response.json({ error: "Baseline record was not found." }, { status: 404 }); const at = nowIso(); await env.DB.batch([env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='voided',lifecycle_reason=?,voided_at=?,voided_by_user_id=?,revision=revision+1,updated_at=? WHERE id=? AND workspace_id=?").bind(reason, at, actor.id, at, occurrenceId, BASELINE_WORKSPACE_ID), audit(env.DB, actor, "baseline_record_voided", "baseline_occurrence", occurrenceId, { lifecycleStatus: "voided", reason }, before)]); return Response.json({ ok: true, occurrenceId }); }
+  catch (error) { const message = error instanceof Error ? error.message : "Baseline record could not be voided."; return Response.json({ error: message }, { status: message.includes("viewer") ? 403 : 400 }); }
 }
