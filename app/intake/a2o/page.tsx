@@ -76,8 +76,13 @@ export default function A2OTechStackImportPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...draft, resolutions }),
       });
-      const payload = await response.json() as { error?: string; added?: number; updated?: number; unchanged?: number; absent?: number };
-      if (!response.ok) throw new Error(payload.error || "The reviewed A2O Tech Stack import could not be applied.");
+      const payload = await response.json() as { error?: string; added?: number; updated?: number; unchanged?: number; absent?: number; conflicts?: Array<{ rowNumber?: number; message?: string }> };
+      if (!response.ok) {
+        const conflictDetail = payload.conflicts?.length
+          ? ` Affected row${payload.conflicts.length === 1 ? "" : "s"}: ${payload.conflicts.map((item) => `#${item.rowNumber || "?"} ${item.message || "duplicate identity"}`).join("; ")}`
+          : "";
+        throw new Error(`${payload.error || "The reviewed A2O Tech Stack import could not be applied."}${conflictDetail}`);
+      }
       await reload();
       setDraft(null); setDecisions({});
       setMessage(`Applied reviewed baseline records: ${payload.added || 0} added, ${payload.updated || 0} updated, ${payload.unchanged || 0} unchanged. ${payload.absent || 0} existing record${payload.absent === 1 ? " was" : "s were"} absent from this file and retained.`);
@@ -92,7 +97,7 @@ export default function A2OTechStackImportPage() {
     <section className="decision-principle"><strong>Exchange rule</strong><span>The A2O Tech Stack workbook is a compatibility exchange. Its exact 24 columns seed and update the governed baseline; it does not replace the rest of the application data model.</span></section>
     <section className="import-hub-grid">
       <article className="domain-card import-start-card"><span className="eyebrow">WORKBOOK REQUIRED</span><h2>Exact 24-column A2O Tech Stack XLSX</h2><p>Use the first worksheet. Header names and their order must match the exchange contract. The import is reconciled: new and changed records are presented for approval; records absent from a later file are retained.</p><button className="primary-button" type="button" onClick={() => fileRef.current?.click()} disabled={busy}>{busy ? "Reading workbook…" : "Select workbook"}</button></article>
-      <article className="domain-card import-contract-card"><span className="eyebrow">WHAT IS CHECKED</span><h3>Before any baseline change</h3><ul className="compact-list"><li>Worksheet one contains all 24 required columns in the required order.</li><li>Rows are matched by release and source key, then shown as new, changed, unchanged, or blocked.</li><li>Approved records update the governed baseline without deleting absent rows, reviews, or linked analysis.</li></ul><details><summary>Show the 24 required headers</summary><ol className="contract-header-list">{TECHNICAL_BASELINE_COLUMNS.map((column, index) => <li key={column}><span>{index + 1}</span><code>{column}</code></li>)}</ol></details></article>
+      <article className="domain-card import-contract-card"><span className="eyebrow">WHAT IS CHECKED</span><h3>Before any baseline change</h3><ul className="compact-list"><li>Worksheet one contains all 24 required columns in the required order.</li><li>Rows are matched by release and source key, then shown as new, changed, unchanged, or blocked.</li><li>The same <code>#</code> may appear in different releases; it must be unique only within a release.</li><li>Approved records update the governed baseline without deleting absent rows, reviews, or linked analysis.</li></ul><details><summary>Show the 24 required headers</summary><ol className="contract-header-list">{TECHNICAL_BASELINE_COLUMNS.map((column, index) => <li key={column}><span>{index + 1}</span><code>{column}</code></li>)}</ol></details></article>
     </section>
     {workspaceError ? <p className="error-copy">Current baseline comparison is unavailable: {workspaceError}</p> : null}
     {loading ? <p className="entity-meta">Loading the current governed baseline for comparison…</p> : null}

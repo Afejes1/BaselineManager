@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   TECHNICAL_BASELINE_COLUMNS, booleanCell, describeTechnicalBaselineHeaderIssue, diagnoseTechnicalBaselineHeaders, exactContractValues, normalizeIdentity,
-  numericCell, reconcileRows, rowFromCells, rowIdentities, sourceRow24, validateHeaders,
+  numericCell, reconcileRows, rowFromCells, rowIdentities, sourceRow24, validateHeaders, validateRows,
 } from "../lib/technical-baseline-contract.js";
 import { allContractValues, hostOnlyRow, productAcrossTwoReleases, productOnTwoPlatforms } from "./technical-baseline-fixtures.js";
 
@@ -61,6 +61,29 @@ test("reconciliation is deterministic and reports exact changed columns", () => 
   assert.deepEqual(result.changed[0].changedColumns, ["Notes"]);
   assert.equal(result.unchanged.length, 1);
   assert.equal(result.added.length, 0);
+});
+
+test("reconciliation permits a repeated # across releases and matches it within the correct release", () => {
+  const release5 = sourceRow24({ ...productAcrossTwoReleases[0], "#": "42" }, 2);
+  const release6 = sourceRow24({ ...productAcrossTwoReleases[1], "#": "42" }, 3);
+  const changedRelease6 = sourceRow24({ ...release6.values, Notes: "Release 6 correction" }, 4);
+  const result = reconcileRows([release5, release6], [release5, changedRelease6]);
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.unchanged.length, 1);
+  assert.equal(result.changed.length, 1);
+  assert.equal(result.changed[0].before.rowNumber, 3);
+  assert.deepEqual(result.changed[0].changedColumns, ["Notes"]);
+});
+
+test("validation blocks a duplicate # only when it repeats within the same release", () => {
+  const release5 = sourceRow24({ ...productAcrossTwoReleases[0], "#": "42" }, 2);
+  const release6 = sourceRow24({ ...productAcrossTwoReleases[1], "#": "42" }, 3);
+  const duplicateRelease5 = sourceRow24({ ...productAcrossTwoReleases[0], "#": "42", HW_Host: "host-b" }, 4);
+  assert.equal(validateRows([release5, release6]).filter((issue) => issue.code === "DuplicateRowKey").length, 0);
+  const conflicts = validateRows([release5, duplicateRelease5]);
+  assert.equal(conflicts.filter((issue) => issue.code === "DuplicateRowKey").length, 1);
+  assert.match(conflicts[0].message, /30P05/);
+  assert.match(conflicts[0].message, /row 2/);
 });
 
 test("headers require exact order and spelling", () => {

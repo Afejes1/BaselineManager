@@ -57,6 +57,21 @@ export function cleanCell(value: unknown): string | undefined {
   return result || undefined;
 }
 
+/**
+ * The retained `#` field identifies a source occurrence, not a global product
+ * key. The same application is legitimately represented once in each release,
+ * so `Release 5 / #42` and `Release 6 / #42` are distinct baseline facts.
+ *
+ * Keep this rule next to the 24-column contract so preview reconciliation and
+ * server-side materialization cannot disagree about what is a duplicate.
+ */
+export function sourceOccurrenceKey(row: TechnicalBaselineRow): string | undefined {
+  const sourceKey = cleanCell(row["#"]);
+  if (!sourceKey) return undefined;
+  const release = normalizeIdentity(cleanCell(row.ReleaseName)) || "unassigned-release";
+  return `${release}|source:${normalizeIdentity(sourceKey)}`;
+}
+
 /** Numeric conversion intentionally preserves the distinction between blank and zero. */
 export function numericCell(value: CellValue): number | undefined {
   if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) return undefined;
@@ -143,9 +158,14 @@ export function validateRows(rows: readonly SourceRow24[]): ContractIssue[] {
   const identities = new Map<string, number>();
   for (const row of rows) {
     const key = cleanCell(row.values["#"]);
-    if (!key) issues.push({ code: "MissingRowKey", rowNumber: row.rowNumber, column: "#", message: "An imported A2O row must preserve its # value (blank is allowed only for a new baseline record)." });
-    else if (keys.has(normalizeIdentity(key))) issues.push({ code: "DuplicateRowKey", rowNumber: row.rowNumber, column: "#", message: `Duplicate A2O # value ${key}.` });
-    else keys.set(normalizeIdentity(key), row.rowNumber);
+    const occurrenceKey = sourceOccurrenceKey(row.values);
+    // A blank # is permitted by the exchange. In that case, the placement
+    // identity below is the available duplicate check. A populated # is only
+    // unique within a ReleaseName, not across the whole workbook.
+    if (key && occurrenceKey && keys.has(occurrenceKey)) {
+      const release = cleanCell(row.values.ReleaseName) || "unassigned release";
+      issues.push({ code: "DuplicateRowKey", rowNumber: row.rowNumber, column: "#", message: `Duplicate A2O # value ${key} in ${release}; it first appears on row ${keys.get(occurrenceKey)}.` });
+    } else if (occurrenceKey) keys.set(occurrenceKey, row.rowNumber);
     const identity = deploymentIdentity(row.values);
     if (identity && identities.has(identity)) issues.push({ code: "DuplicateIdentity", rowNumber: row.rowNumber, message: "Rows share the same deployment identity; retain both baseline records and review their values." });
     else if (identity) identities.set(identity, row.rowNumber);
@@ -185,12 +205,15 @@ function changedColumns(before: SourceRow24, after: SourceRow24): TechnicalBasel
 
 /** Deterministically reconcile source occurrences by #, then canonical identity. */
 export function reconcileRows(existing: readonly SourceRow24[], incoming: readonly SourceRow24[]): Reconciliation {
-  const byKey = new Map(existing.map((row) => [normalizeIdentity(cleanCell(row.values["#"])), row]));
+  const byKey = new Map(existing.flatMap((row) => {
+    const key = sourceOccurrenceKey(row.values);
+    return key ? [[key, row] as const] : [];
+  }));
   const byIdentity = new Map(existing.filter((row) => deploymentIdentity(row.values)).map((row) => [deploymentIdentity(row.values), row]));
   const used = new Set<SourceRow24>();
   const result: Reconciliation = { added: [], unchanged: [], changed: [], conflicts: [], unmatched: [] };
   for (const after of incoming) {
-    const key = normalizeIdentity(cleanCell(after.values["#"]));
+    const key = sourceOccurrenceKey(after.values);
     const before = (key && byKey.get(key)) ?? byIdentity.get(deploymentIdentity(after.values));
     if (!before) { result.added.push(after); continue; }
     used.add(before);

@@ -1,4 +1,4 @@
-import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineRow } from "./technical-baseline-contract.js";
+import { deploymentIdentity, TECHNICAL_BASELINE_COLUMNS, sourceOccurrenceKey, type TechnicalBaselineRow } from "./technical-baseline-contract.js";
 
 export type ImportReconciliation = {
   added: number;
@@ -22,9 +22,11 @@ export type ImportReconciliationRow = {
 const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 
 export function intakeIdentity(row: TechnicalBaselineRow) {
+  const sourceKey = sourceOccurrenceKey(row);
+  if (sourceKey) return sourceKey;
+  const deployment = deploymentIdentity(row);
+  if (deployment) return `deployment:${deployment}`;
   const release = clean(row.ReleaseName) || "unassigned-release";
-  const sourceKey = clean(row["#"]);
-  if (sourceKey) return `${release}|source:${sourceKey}`;
   return `${release}|semantic:${[row.LongName || row.ShortName, row.Tier, row.Resource, row.HW_Host].map(clean).join("|")}`;
 }
 

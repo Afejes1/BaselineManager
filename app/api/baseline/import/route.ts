@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     const existing = await readAssembledBaselineRecords(env.DB, { includeVoided: false });
     const historical = replaceActiveBaseline ? await readAssembledBaselineRecords(env.DB, { includeVoided: true }) : existing;
     const reconciliation = reconcileRows(existing.map((record, index) => sourceRow24(record.row, index + 2)), approvedIncoming.map((row, index) => sourceRow24(row, index + 2)));
-    if (reconciliation.conflicts.length) return Response.json({ error: "Import contains ambiguous A2O identities. Resolve duplicate # values or deployment identities before materializing.", conflicts: reconciliation.conflicts }, { status: 422 });
+    if (reconciliation.conflicts.length) return Response.json({ error: "Import contains duplicate A2O identities within the same release. Review the affected rows below; a repeated # across different releases is valid.", conflicts: reconciliation.conflicts }, { status: 422 });
 
     // A demo reset is repeatable: it reactivates its original immutable source
     // rows rather than attempting to insert a duplicate source package.
