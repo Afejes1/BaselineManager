@@ -30,12 +30,10 @@ useful evidence that the external source was observed and did not change.
 
 ### Synthetic smoke test
 
-Fixtures under `examples/lockheed-objective-feed/` are clearly labeled
-synthetic and are not Lockheed, Government, GitLab, or program data. Upload
-`01-synthetic-day-one.json` and apply it. Upload
-`02-synthetic-day-two.json` and inspect Preview before applying it. The second
-preview demonstrates added, changed, unchanged, removed, no-JPO, multi-JPO,
-and resolved/unresolved dependency cases.
+The full development branch contains clearly labeled synthetic fixtures that
+exercise added, changed, unchanged, removed, no-JPO, multi-JPO, and
+resolved/unresolved dependency cases. Fixtures are excluded from the hardened
+operator package.
 
 ## Source-field interpretation
 

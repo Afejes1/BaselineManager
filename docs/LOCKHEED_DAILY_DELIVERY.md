@@ -59,6 +59,6 @@ they are not discarded. If the production extract contains a materially
 different header or multi-table layout, add a source-specific alias or parsing
 rule rather than manually rewriting the file.
 
-Synthetic two-day fixtures are under `examples/lockheed-daily-delivery`. They
+The full development branch contains synthetic two-day fixtures that
 demonstrate changes to Objective ROM, completion, schedule, status, and
-dependencies.
+dependencies. Fixtures are excluded from the hardened operator package.

@@ -15,11 +15,7 @@
     "local:backup": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Backup-A2OWorkspace.ps1",
     "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
     "local:verify": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1",
-    "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild",
-    "test": "npm run build && npm run test:contract",
-    "test:contract": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/technical-baseline-contract.test.ts tests/technical-baseline-fixtures.ts tests/xlsx-roundtrip.test.ts tests/baseline-scope.test.ts tests/baseline-quality.test.ts tests/release-analysis.test.ts tests/import-reconciliation.test.ts tests/objective-import.test.ts tests/change-import.test.ts tests/lm-objective-feed.test.ts tests/lockheed-daily-import.test.ts tests/initiative-readiness.test.ts tests/baseline-storage-semantics.test.ts tests/object-workspace-semantics.test.ts lib/technical-baseline-contract.ts lib/baseline-scope.ts lib/baseline-quality.ts lib/release-analysis.ts lib/topology-model.ts lib/import-reconciliation.ts lib/objective-import.ts lib/change-import.ts lib/governed-import.ts lib/lm-objective-feed.ts lib/lockheed-daily-import.ts lib/initiative-decision-model.ts lib/initiative-readiness.ts lib/change-model.ts && node --test .test-dist/tests/*.test.js",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern outputs --ignore-pattern .test-dist",
-    "db:generate": "drizzle-kit generate"
+    "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild"
   },
   "dependencies": {
     "docx": "^9.7.1",
@@ -32,8 +28,6 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.53.0",
-    "@eslint/js": "9.39.4",
-    "@next/eslint-plugin-next": "16.2.6",
     "@openai/sites-vite-plugin": "0.1.0",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
@@ -41,16 +35,9 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.34",
-    "drizzle-kit": "0.31.10",
-    "eslint": "9.39.4",
-    "eslint-plugin-jsx-a11y": "6.10.2",
-    "eslint-plugin-react": "7.37.5",
-    "eslint-plugin-react-hooks": "7.1.1",
-    "globals": "16.4.0",
     "react-server-dom-webpack": "19.2.8",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.59.3",
     "vinext": "1.0.0-beta.7",
     "vite": "8.2.1",
     "wrangler": "4.124.0"

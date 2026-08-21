@@ -47,7 +47,9 @@ Required deployment contents:
 
 ## Acceptance gates before real JSF data
 
-1. Build, lint, and contract tests pass from the locked dependency set.
+1. The full development branch passes build, lint, and contract tests; the
+   hardened operator package passes its production build and local runtime
+   verification from the locked dependency set.
 2. Exact 24-column workbook round-trip preserves headers, order, blanks, zeroes, booleans, and all Notes fields.
 3. Import reconciliation shows added/changed/unchanged/absent/conflict counts before mutation.
 4. Intake-package restore and baseline-record void/restore are exercised, including audit events.
