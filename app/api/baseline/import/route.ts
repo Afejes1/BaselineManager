@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     const existing = await readAssembledBaselineRecords(env.DB, { includeVoided: false });
     const historical = replaceActiveBaseline ? await readAssembledBaselineRecords(env.DB, { includeVoided: true }) : existing;
     const reconciliation = reconcileRows(existing.map((record, index) => sourceRow24(record.row, index + 2)), approvedIncoming.map((row, index) => sourceRow24(row, index + 2)));
-    if (reconciliation.conflicts.length) return Response.json({ error: "Import contains duplicate A2O identities within the same release. Review the affected rows below; a repeated # across different releases is valid.", conflicts: reconciliation.conflicts }, { status: 422 });
+    if (reconciliation.conflicts.length) return Response.json({ error: "Import contains duplicate or indistinguishable A2O source identities within the same release. Review the affected rows below; a repeated # across different releases is valid.", conflicts: reconciliation.conflicts }, { status: 422 });
 
     // A demo reset is repeatable: it reactivates its original immutable source
     // rows rather than attempting to insert a duplicate source package.
@@ -109,8 +109,8 @@ export async function POST(request: Request) {
       const identity = await importIdentity("a2o_tech_stack_xlsx", null, serializedIncoming);
       statements.push(...importRunStatements(env.DB, { runId: `ingestion-run-${crypto.randomUUID()}`, adapterKey: "a2o_tech_stack_xlsx", sourceSystem: "A2O Tech Stack exchange", fileName: body.fileName, sheetName: body.sheetName || null, contentHash: identity.contentHash, idempotencyKey: identity.idempotencyKey, items: governedItems, resolutions: body.resolutions || governedItems.map((item) => ({ rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.defaultDecision })), rawRows: incoming, normalizedRows: incoming, targetSnapshotKind: "source_package", targetSnapshotId: packageId, actorId: actor.id, at: now }));
     }
-    statements.push(audit(env.DB, actor, replaceActiveBaseline ? "demonstration_baseline_loaded" : "a2o_intake_reconciled", "source_package", packageId, { rows: incoming.length, approved: approvedIncoming.length, skipped: incoming.length - approvedIncoming.length, added, updated, unchanged: reconciliation.unchanged.length, archivedActiveRecords: replaceActiveBaseline ? existing.map((record) => record.occurrenceId) : [], absent: absent.map((record) => record.occurrenceId) }));
+    statements.push(audit(env.DB, actor, replaceActiveBaseline ? "demonstration_baseline_loaded" : "a2o_intake_reconciled", "source_package", packageId, { rows: incoming.length, approved: approvedIncoming.length, skipped: incoming.length - approvedIncoming.length, added, updated, unchanged: reconciliation.unchanged.length, parallelDeploymentWarnings: reconciliation.warnings.length, archivedActiveRecords: replaceActiveBaseline ? existing.map((record) => record.occurrenceId) : [], absent: absent.map((record) => record.occurrenceId) }));
     await env.DB.batch(statements);
-    return Response.json({ packageId, rows: incoming.length, added, updated, unchanged: reconciliation.unchanged.length, absent: absent.length, archived: replaceActiveBaseline ? existing.length : 0, preservedLinks: true }, { status: 201 });
+    return Response.json({ packageId, rows: incoming.length, added, updated, unchanged: reconciliation.unchanged.length, parallelDeploymentWarnings: reconciliation.warnings.length, absent: absent.length, archived: replaceActiveBaseline ? existing.length : 0, preservedLinks: true }, { status: 201 });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Import failed without changing the baseline." }, { status: 500 }); }
 }
