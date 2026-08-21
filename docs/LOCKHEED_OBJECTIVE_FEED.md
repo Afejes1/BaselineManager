@@ -13,7 +13,7 @@ changing the Working Technical Baseline automatically.
 ## Daily operating sequence
 
 1. Save the supplied JSON file in an approved local location.
-2. Open **LM Objectives → Import Lockheed feed**.
+2. Open **Import Hub & Quality → Import Objective JSON**.
 3. Select the file and enter the source snapshot date.
 4. Review every parsed record: new, changed, unchanged, removed, and invalid.
    Approve or skip each valid row. When evidence supports it, select an

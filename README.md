@@ -88,8 +88,8 @@ used because the selected backup path must be visible and deliberate.
 
 ## Daily Lockheed objective feed
 
-Load the daily Lockheed GitLab Pages JSON locally from **LM Objectives →
-Import Lockheed feed**. The application does not fetch GitLab or replace prior
+Load the daily Lockheed GitLab Pages JSON locally from **Import Hub & Quality →
+Import Objective JSON**. The application does not fetch GitLab or replace prior
 observations. Each applied file is an immutable receipt; preview reports new,
 changed, unchanged, removed, and invalid subjects before commit. Upload the
 file again on the next working day even when unchanged so observation history
@@ -107,7 +107,7 @@ branch. They are intentionally excluded from this AWS Workspace package.
 
 ## Daily Lockheed multi-file delivery
 
-Open **Source Intake → Lockheed daily delivery** to load the delivered CAPES,
+Open **Import Hub & Quality → Import daily delivery** to load the delivered CAPES,
 Jira, MCP/DSOR, and Objective CSV/XLSX files together. The analyst verifies the
 dataset classification, row disposition, and optional governed trace link
 before applying. Each accepted source observation is retained by date and
@@ -117,9 +117,9 @@ Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md`.
 
 ## Governed source imports
 
-The Confluence Change Request export, Lockheed Objective JSON feed, Lockheed
-daily-delivery files, and A2O
-Tech Stack workbook use a common analyst-review control. Preview every row,
+The **Import Hub & Quality** page is the first stop for the Confluence Change
+Request export, Lockheed Objective JSON feed, Lockheed daily-delivery files,
+and A2O Tech Stack workbook. Each uses a common analyst-review control. Preview every row,
 confirm or override the proposed canonical match, skip questionable rows, and
 then apply approved records. Imports retain their source receipts and do not
 overwrite Government analysis. See

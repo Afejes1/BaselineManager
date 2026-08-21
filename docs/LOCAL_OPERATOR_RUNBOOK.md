@@ -27,7 +27,8 @@ Workspace and storage location are approved for that data.
 2. Run `npm run local:verify`.
 3. Run `npm run local:start`.
 4. Confirm the workspace identifies demonstration data as disabled.
-5. Import the current A2O exchange workbook.
+5. Open **Import Hub & Quality → Import A2O workbook**, then select the current
+   A2O exchange workbook.
 6. Resolve blocking import and release-assignment findings.
 7. Export the retained XLSX projection.
 8. Compare intake and export column order, row count, release assignments, and
@@ -92,7 +93,7 @@ Build one Initiative completely before expanding the portfolio.
 
 1. Save the daily JSON export in the approved local directory. Do not edit the
    received file before import.
-2. Open **LM Objectives → Import Lockheed feed**, select the file, and enter the
+2. Open **Import Hub & Quality → Import Objective JSON**, select the file, and enter the
    source-as-of date.
 3. Review new, changed, unchanged, removed, and invalid counts. Inspect
    `blocks`, `blocked_by`, and JPO/MCP values. A blank JPO is valid; a

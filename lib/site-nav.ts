@@ -9,7 +9,7 @@ export type NavItem = {
 
 export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Baseline Records", icon: "▦", enabled: true, section: "Baseline" },
-  { href: "/intake", label: "Import & Data Quality", icon: "⇣", enabled: true, section: "Baseline" },
+  { href: "/intake", label: "Import Hub & Quality", icon: "⇣", enabled: true, section: "Baseline" },
   { href: "/control", label: "Analyst Control", icon: "◎", enabled: true, section: "Baseline" },
   { href: "/stewardship", label: "Identity Stewardship", icon: "≡", enabled: true, section: "Baseline" },
   { href: "/evidence", label: "Calls & Evidence", icon: "◇", enabled: true, section: "Baseline" },
