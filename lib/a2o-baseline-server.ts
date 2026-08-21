@@ -34,8 +34,8 @@ type RecordRow = {
   product_name: string | null; product_short_name: string | null; product_type: string | null; software_classification: string | null;
   configuration_node_id: string | null; node_name: string | null; node_type: string | null;
   parent_name: string | null; parent_type: string | null; grandparent_name: string | null; grandparent_type: string | null;
-  deployment_id: string | null; storage_type: string | null; storage_gb: number | null; cpu_cores: number | null; ram_gb: number | null;
-  language: string | null; containerized: string | null; container_technology: string | null; container_type: string | null;
+  deployment_id: string | null; node_state_source_row_id: string | null; storage_type: string | null; storage_gb: number | null; cpu_cores: number | null; ram_gb: number | null;
+  deployment_state_source_row_id: string | null; language: string | null; containerized: string | null; container_technology: string | null; container_type: string | null;
   supplier_name: string | null; extension_source_key: string | null; extension_notes: string | null; extension_capability_notes: string | null;
   extension_notes_1: string | null; extension_notes_2: string | null; extension_notes_3: string | null; extension_notes_4: string | null;
   snapshot_source_key: string | null;
@@ -82,13 +82,20 @@ function nodeNames(record: RecordRow) {
 }
 
 /**
- * The exact A2O exchange projection is assembled from governed tables.  The
- * legacy JSON is used only for values not yet represented in a migrated
- * record, allowing an in-place upgrade without treating it as authority.
+ * The exact A2O exchange projection is assembled from governed tables.  A
+ * denormalized source may, however, contain two distinct source occurrences
+ * at one normalized Product/host placement. In that case the shared node or
+ * deployment state records can represent only one of those source rows. Use
+ * the retained occurrence projection for the other row so XLSX export and the
+ * grid do not silently substitute a neighbour's reported values.
  */
 export function assembleA2ORow(record: RecordRow): A2ORow {
   const fallback = legacyProjection(record.projection_payload);
   const nodes = nodeNames(record);
+  const useOccurrenceNodeValues = Boolean(record.source_row_id && record.node_state_source_row_id && record.source_row_id !== record.node_state_source_row_id);
+  const useOccurrenceDeploymentValues = Boolean(record.source_row_id && record.deployment_state_source_row_id && record.source_row_id !== record.deployment_state_source_row_id);
+  const nodeValue = (governed: CellValue, source: CellValue) => useOccurrenceNodeValues ? source : governed ?? source;
+  const deploymentValue = (governed: CellValue, source: CellValue) => useOccurrenceDeploymentValues ? source : governed ?? source;
   return {
     "#": record.extension_source_key ?? record.snapshot_source_key ?? fallback["#"],
     ReleaseName: governedText(record.release_name, fallback.ReleaseName),
@@ -97,16 +104,16 @@ export function assembleA2ORow(record: RecordRow): A2ORow {
     TechStackType: record.product_type ?? fallback.TechStackType,
     ShortName: record.product_short_name ?? fallback.ShortName,
     HW_Host: governedText(nodes.host || null, fallback.HW_Host),
-    HW_Storage_Type: record.storage_type ?? fallback.HW_Storage_Type,
-    "HW_Storage (GB)": record.storage_gb ?? fallback["HW_Storage (GB)"],
-    HW_CPU_CORES: record.cpu_cores ?? fallback.HW_CPU_CORES,
-    "HW_RAM (GB)": record.ram_gb ?? fallback["HW_RAM (GB)"],
-    "SW Language": record.language ?? fallback["SW Language"],
+    HW_Storage_Type: nodeValue(record.storage_type, fallback.HW_Storage_Type),
+    "HW_Storage (GB)": nodeValue(record.storage_gb, fallback["HW_Storage (GB)"]),
+    HW_CPU_CORES: nodeValue(record.cpu_cores, fallback.HW_CPU_CORES),
+    "HW_RAM (GB)": nodeValue(record.ram_gb, fallback["HW_RAM (GB)"]),
+    "SW Language": deploymentValue(record.language, fallback["SW Language"]),
     "Software Type": record.software_classification ?? fallback["Software Type"],
     OEM: record.supplier_name ?? fallback.OEM,
-    Containerized: record.containerized ?? fallback.Containerized,
-    "Container Technology": record.container_technology ?? fallback["Container Technology"],
-    "Container Type": record.container_type ?? fallback["Container Type"],
+    Containerized: deploymentValue(record.containerized, fallback.Containerized),
+    "Container Technology": deploymentValue(record.container_technology, fallback["Container Technology"]),
+    "Container Type": deploymentValue(record.container_type, fallback["Container Type"]),
     LongName: record.product_name ?? fallback.LongName,
     Notes: record.extension_notes ?? fallback.Notes,
     "Technical Capability Satisfied by this SW/Tech - Notes": record.extension_capability_notes ?? fallback["Technical Capability Satisfied by this SW/Tech - Notes"],
@@ -124,8 +131,8 @@ export function assemblySelect(includeVoided = false) {
     sp.file_name AS source_file_name, r.id AS release_id, r.name AS release_name,
     p.id AS product_id, p.canonical_name AS product_name, p.short_name AS product_short_name, p.product_type, p.software_classification,
     cn.id AS configuration_node_id, cn.name AS node_name, cn.node_type, parent.name AS parent_name, parent.node_type AS parent_type, grandparent.name AS grandparent_name, grandparent.node_type AS grandparent_type,
-    d.id AS deployment_id, bns.storage_type, bns.storage_gb, bns.cpu_cores, bns.ram_gb,
-    bds.language, bds.containerized, bds.container_technology, bds.container_type,
+    d.id AS deployment_id, bns.source_row_id AS node_state_source_row_id, bns.storage_type, bns.storage_gb, bns.cpu_cores, bns.ram_gb,
+    bds.source_row_id AS deployment_state_source_row_id, bds.language, bds.containerized, bds.container_technology, bds.container_type,
     supplier.name AS supplier_name,
     ext.source_key AS extension_source_key, ext.notes AS extension_notes, ext.capability_notes AS extension_capability_notes, ext.notes_1 AS extension_notes_1, ext.notes_2 AS extension_notes_2, ext.notes_3 AS extension_notes_3, ext.notes_4 AS extension_notes_4,
     sr.source_key AS snapshot_source_key

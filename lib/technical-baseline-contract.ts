@@ -36,7 +36,7 @@ export type SourceRow24 = {
 
 export type ContractIssueCode =
   | "HeaderMismatch" | "WrongColumnCount" | "MissingRowKey" | "DuplicateRowKey"
-  | "DuplicateIdentity" | "ConflictingValue";
+  | "DuplicateIdentity" | "ParallelDeployment" | "ConflictingValue";
 export type ContractIssue = { code: ContractIssueCode; rowNumber?: number; column?: string; message: string };
 
 export type Reconciliation = {
@@ -44,6 +44,8 @@ export type Reconciliation = {
   unchanged: SourceRow24[];
   changed: Array<{ before: SourceRow24; after: SourceRow24; changedColumns: TechnicalBaselineColumn[] }>;
   conflicts: ContractIssue[];
+  /** Valid source occurrences that share a normalized placement. They require review, not rejection. */
+  warnings: ContractIssue[];
   unmatched: SourceRow24[];
 };
 
@@ -155,7 +157,7 @@ export function validateHeaders(headers: readonly string[]): ContractIssue[] {
 export function validateRows(rows: readonly SourceRow24[]): ContractIssue[] {
   const issues: ContractIssue[] = [];
   const keys = new Map<string, number>();
-  const identities = new Map<string, number>();
+  const identities = new Map<string, { rowNumber: number; occurrenceKey: string | undefined }>();
   for (const row of rows) {
     const key = cleanCell(row.values["#"]);
     const occurrenceKey = sourceOccurrenceKey(row.values);
@@ -167,8 +169,18 @@ export function validateRows(rows: readonly SourceRow24[]): ContractIssue[] {
       issues.push({ code: "DuplicateRowKey", rowNumber: row.rowNumber, column: "#", message: `Duplicate A2O # value ${key} in ${release}; it first appears on row ${keys.get(occurrenceKey)}.` });
     } else if (occurrenceKey) keys.set(occurrenceKey, row.rowNumber);
     const identity = deploymentIdentity(row.values);
-    if (identity && identities.has(identity)) issues.push({ code: "DuplicateIdentity", rowNumber: row.rowNumber, message: "Rows share the same deployment identity; retain both baseline records and review their values." });
-    else if (identity) identities.set(identity, row.rowNumber);
+    const firstIdentity = identity ? identities.get(identity) : undefined;
+    if (identity && firstIdentity) {
+      // A2O is a denormalized exchange. Multiple source rows can legitimately
+      // describe the same Product/host placement when their source keys differ.
+      // Keep those facts independently traceable. Only an indistinguishable
+      // placement with no source key remains unsafe to apply automatically.
+      if (occurrenceKey && firstIdentity.occurrenceKey && occurrenceKey !== firstIdentity.occurrenceKey) {
+        issues.push({ code: "ParallelDeployment", rowNumber: row.rowNumber, message: `Shares a normalized deployment placement with row ${firstIdentity.rowNumber}, but has a distinct A2O source key. Both rows will be retained for review.` });
+      } else if (!occurrenceKey || !firstIdentity.occurrenceKey || occurrenceKey !== firstIdentity.occurrenceKey) {
+        issues.push({ code: "DuplicateIdentity", rowNumber: row.rowNumber, message: `Shares a normalized deployment placement with row ${firstIdentity.rowNumber} and has no distinct A2O source key.` });
+      }
+    } else if (identity) identities.set(identity, { rowNumber: row.rowNumber, occurrenceKey });
   }
   return issues;
 }
@@ -211,10 +223,13 @@ export function reconcileRows(existing: readonly SourceRow24[], incoming: readon
   }));
   const byIdentity = new Map(existing.filter((row) => deploymentIdentity(row.values)).map((row) => [deploymentIdentity(row.values), row]));
   const used = new Set<SourceRow24>();
-  const result: Reconciliation = { added: [], unchanged: [], changed: [], conflicts: [], unmatched: [] };
+  const result: Reconciliation = { added: [], unchanged: [], changed: [], conflicts: [], warnings: [], unmatched: [] };
   for (const after of incoming) {
     const key = sourceOccurrenceKey(after.values);
-    const before = (key && byKey.get(key)) ?? byIdentity.get(deploymentIdentity(after.values));
+    // A populated A2O source key is the occurrence identity. Do not silently
+    // collapse a new source fact into an existing record merely because both
+    // rows normalize to the same Product/host placement.
+    const before = key ? byKey.get(key) : byIdentity.get(deploymentIdentity(after.values));
     if (!before) { result.added.push(after); continue; }
     used.add(before);
     const columns = changedColumns(before, after);
@@ -222,7 +237,9 @@ export function reconcileRows(existing: readonly SourceRow24[], incoming: readon
     else result.changed.push({ before, after, changedColumns: columns });
   }
   for (const row of existing) if (!used.has(row)) result.unmatched.push(row);
-  result.conflicts = validateRows(incoming).filter((issue) => issue.code === "DuplicateRowKey" || issue.code === "DuplicateIdentity");
+  const issues = validateRows(incoming);
+  result.conflicts = issues.filter((issue) => issue.code === "DuplicateRowKey" || issue.code === "DuplicateIdentity");
+  result.warnings = issues.filter((issue) => issue.code === "ParallelDeployment");
   return result;
 }
 

@@ -86,6 +86,20 @@ test("validation blocks a duplicate # only when it repeats within the same relea
   assert.match(conflicts[0].message, /row 2/);
 });
 
+test("parallel A2O source occurrences at one placement are retained, while indistinguishable placement rows remain blocked", () => {
+  const first = sourceRow24({ ...productOnTwoPlatforms[0], "#": "P-1", HW_Storage_Type: "SSD", "HW_Storage (GB)": 100 }, 2);
+  const parallel = sourceRow24({ ...productOnTwoPlatforms[0], "#": "P-2", HW_Storage_Type: "HDD", "HW_Storage (GB)": 200 }, 3);
+  const reconciliation = reconcileRows([], [first, parallel]);
+  assert.equal(reconciliation.conflicts.length, 0);
+  assert.equal(reconciliation.warnings.length, 1);
+  assert.equal(reconciliation.warnings[0].code, "ParallelDeployment");
+  assert.equal(reconciliation.added.length, 2);
+
+  const unnamedFirst = sourceRow24({ ...productOnTwoPlatforms[0], "#": "" }, 4);
+  const unnamedSecond = sourceRow24({ ...productOnTwoPlatforms[0], "#": "" }, 5);
+  assert.equal(reconcileRows([], [unnamedFirst, unnamedSecond]).conflicts.filter((issue) => issue.code === "DuplicateIdentity").length, 1);
+});
+
 test("headers require exact order and spelling", () => {
   assert.deepEqual(validateHeaders(TECHNICAL_BASELINE_COLUMNS), []);
   assert.equal(validateHeaders([...TECHNICAL_BASELINE_COLUMNS].reverse())[0].code, "HeaderMismatch");

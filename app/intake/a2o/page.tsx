@@ -8,7 +8,7 @@ import { GovernedImportReview } from "../../../components/governed-import-review
 import { useWorkspaceContext } from "../../../components/workspace-context";
 import { importResolutions, type GovernedImportItem, type ImportDecision } from "../../../lib/governed-import";
 import { reconcileIntake } from "../../../lib/import-reconciliation";
-import { describeTechnicalBaselineHeaderIssue, diagnoseTechnicalBaselineHeaders, TECHNICAL_BASELINE_COLUMNS, type CellValue, type TechnicalBaselineColumn, type TechnicalBaselineHeaderDiagnostic } from "../../../lib/technical-baseline-contract";
+import { describeTechnicalBaselineHeaderIssue, diagnoseTechnicalBaselineHeaders, sourceRow24, TECHNICAL_BASELINE_COLUMNS, validateRows, type CellValue, type TechnicalBaselineColumn, type TechnicalBaselineHeaderDiagnostic } from "../../../lib/technical-baseline-contract";
 import { releaseOf } from "../../../lib/baseline-scope";
 
 type Record24 = Record<TechnicalBaselineColumn, CellValue>;
@@ -27,6 +27,9 @@ export default function A2OTechStackImportPage() {
   const [message, setMessage] = useState("");
 
   const reconciliation = useMemo(() => draft ? reconcileIntake(currentRows, draft.rows) : null, [currentRows, draft]);
+  const parallelPlacementWarnings = useMemo(() => draft
+    ? validateRows(draft.rows.map((row, index) => sourceRow24(row as Record<string, CellValue>, index + 2))).filter((issue) => issue.code === "ParallelDeployment")
+    : [], [draft]);
   const items = useMemo<GovernedImportItem[]>(() => reconciliation ? reconciliation.rows.map((item) => ({
     id: `a2o-${item.rowNumber}-${item.identity}`,
     rowNumber: item.rowNumber,
@@ -76,16 +79,19 @@ export default function A2OTechStackImportPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...draft, resolutions }),
       });
-      const payload = await response.json() as { error?: string; added?: number; updated?: number; unchanged?: number; absent?: number; conflicts?: Array<{ rowNumber?: number; message?: string }> };
+      const payload = await response.json() as { error?: string; added?: number; updated?: number; unchanged?: number; absent?: number; parallelDeploymentWarnings?: number; conflicts?: Array<{ rowNumber?: number; message?: string }> };
       if (!response.ok) {
-        const conflictDetail = payload.conflicts?.length
-          ? ` Affected row${payload.conflicts.length === 1 ? "" : "s"}: ${payload.conflicts.map((item) => `#${item.rowNumber || "?"} ${item.message || "duplicate identity"}`).join("; ")}`
+        const shownConflicts = payload.conflicts?.slice(0, 8) || [];
+        const omittedConflictCount = Math.max(0, (payload.conflicts?.length || 0) - shownConflicts.length);
+        const conflictDetail = shownConflicts.length
+          ? ` Affected row${shownConflicts.length === 1 ? "" : "s"}: ${shownConflicts.map((item) => `#${item.rowNumber || "?"} ${item.message || "duplicate identity"}`).join("; ")}${omittedConflictCount ? `; and ${omittedConflictCount} more.` : ""}`
           : "";
         throw new Error(`${payload.error || "The reviewed A2O Tech Stack import could not be applied."}${conflictDetail}`);
       }
       await reload();
       setDraft(null); setDecisions({});
-      setMessage(`Applied reviewed baseline records: ${payload.added || 0} added, ${payload.updated || 0} updated, ${payload.unchanged || 0} unchanged. ${payload.absent || 0} existing record${payload.absent === 1 ? " was" : "s were"} absent from this file and retained.`);
+      const parallelNotice = payload.parallelDeploymentWarnings ? ` ${payload.parallelDeploymentWarnings} parallel placement source row${payload.parallelDeploymentWarnings === 1 ? " was" : "s were"} retained as separate baseline records.` : "";
+      setMessage(`Applied reviewed baseline records: ${payload.added || 0} added, ${payload.updated || 0} updated, ${payload.unchanged || 0} unchanged. ${payload.absent || 0} existing record${payload.absent === 1 ? " was" : "s were"} absent from this file and retained.${parallelNotice}`);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : "The reviewed A2O Tech Stack import could not be applied.");
     } finally { setBusy(false); }
@@ -102,7 +108,7 @@ export default function A2OTechStackImportPage() {
     {workspaceError ? <p className="error-copy">Current baseline comparison is unavailable: {workspaceError}</p> : null}
     {loading ? <p className="entity-meta">Loading the current governed baseline for comparison…</p> : null}
     {headerReview ? <section className="domain-section header-validation-result"><div className="section-toolbar"><div><span className="eyebrow">WORKBOOK HEADER REVIEW</span><h3>{headerReview.fileName} needs correction before import</h3></div><span className="status-pill status-blocked">Not applied</span></div><p className="error-copy">{headerReview.message}</p><div className="header-diagnostic-grid"><article><span>Expected</span><strong>{headerReview.diagnostic.expectedColumnCount} columns</strong></article><article><span>Found</span><strong>{headerReview.diagnostic.actualColumnCount} columns</strong></article><article><span>Additional fields</span><strong>{headerReview.diagnostic.unexpected.length || "None"}</strong><small>{headerReview.diagnostic.unexpected.length ? headerReview.diagnostic.unexpected.map((item) => `${item.name || "(blank)"} · column ${item.actualPosition}`).join("; ") : "No unexpected column names"}</small></article><article><span>Missing fields</span><strong>{headerReview.diagnostic.missing.length || "None"}</strong><small>{headerReview.diagnostic.missing.length ? headerReview.diagnostic.missing.map((item) => item.name).join("; ") : "All required column names are present"}</small></article></div><p className="warning-copy"><strong>Additional columns, including CSCI, are not silently discarded.</strong> They are outside the retained 24-column exchange and are not yet mapped to a governed baseline property. Keep the original file intact; use a working copy with the exact 24 exchange columns for this import until the CSCI meaning and ownership are governed.</p></section> : null}
-    {message ? <p className={message.includes("could not") || message.includes("has no") ? "error-copy" : "notice-copy"}>{message}</p> : null}
-    {draft && reconciliation ? <><section className="summary"><div className="metric"><span>Imported rows</span><strong>{draft.rows.length}</strong><small>{draft.fileName}</small></div><div className="metric"><span>Releases represented</span><strong>{releaseCount}</strong><small>From ReleaseName</small></div><div className="metric"><span>New</span><strong>{reconciliation.added}</strong><small>Not in the current baseline</small></div><div className="metric"><span>Changed</span><strong>{reconciliation.changed}</strong><small>Source-controlled cells differ</small></div></section><GovernedImportReview items={items} decisions={decisions} busy={busy} applyLabel="Apply reviewed A2O baseline" onDecision={(id, decision) => setDecisions((current) => ({ ...current, [id]: decision }))} onBulkDecision={(decision) => setDecisions(Object.fromEntries(items.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])))} onApply={() => void applyImport()} /><p className="warning-copy"><strong>{reconciliation.removedFromWorkingProjection} current baseline record{reconciliation.removedFromWorkingProjection === 1 ? " is" : "s are"} absent from this workbook.</strong> They will remain retained and visible; this import does not delete or void them.</p></> : null}
+    {message ? <p className={message.includes("could not") || message.includes("has no") || message.includes("Import contains") ? "error-copy" : "notice-copy"}>{message}</p> : null}
+    {draft && reconciliation ? <><section className="summary"><div className="metric"><span>Imported rows</span><strong>{draft.rows.length}</strong><small>{draft.fileName}</small></div><div className="metric"><span>Releases represented</span><strong>{releaseCount}</strong><small>From ReleaseName</small></div><div className="metric"><span>New</span><strong>{reconciliation.added}</strong><small>Not in the current baseline</small></div><div className="metric"><span>Changed</span><strong>{reconciliation.changed}</strong><small>Source-controlled cells differ</small></div></section>{parallelPlacementWarnings.length ? <p className="warning-copy"><strong>{parallelPlacementWarnings.length} source row{parallelPlacementWarnings.length === 1 ? " shares" : "s share"} a normalized Product/host placement with another row.</strong> Each has a distinct A2O source key and will be retained as a separate baseline record. Review the source values after import; this is not a duplicate-source error.</p> : null}<GovernedImportReview items={items} decisions={decisions} busy={busy} applyLabel="Apply reviewed A2O baseline" onDecision={(id, decision) => setDecisions((current) => ({ ...current, [id]: decision }))} onBulkDecision={(decision) => setDecisions(Object.fromEntries(items.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])))} onApply={() => void applyImport()} /><p className="warning-copy"><strong>{reconciliation.removedFromWorkingProjection} current baseline record{reconciliation.removedFromWorkingProjection === 1 ? " is" : "s are"} absent from this workbook.</strong> They will remain retained and visible; this import does not delete or void them.</p></> : null}
   </DomainPageShell>;
 }
