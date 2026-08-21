@@ -271,6 +271,10 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("DELETE FROM objective_source_package WHERE external_system='Synthetic incumbent objective register' AND NOT EXISTS (SELECT 1 FROM objective_source_row WHERE objective_source_row.source_package_id=objective_source_package.id)"));
   statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?)").bind(...javaObjectiveIds));
+  // Daily supplier observations are immutable. A demo reload may remove a
+  // governed synthetic Objective, but it must not destroy or partially prune
+  // the linked external feed history; clear only the optional reconciliation.
+  statements.push(db.prepare("UPDATE lm_objective_feed_subject SET canonical_objective_id=NULL,updated_at=? WHERE canonical_objective_id IN (?,?,?)").bind(at, ...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id IN (?,?,?)").bind(...javaObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id=?").bind(javaInitiativeId));
@@ -395,6 +399,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
   statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("UPDATE lm_objective_feed_subject SET canonical_objective_id=NULL,updated_at=? WHERE canonical_objective_id IN (?,?,?,?,?)").bind(at, ...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
   statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));

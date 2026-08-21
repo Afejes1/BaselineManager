@@ -86,6 +86,27 @@ Restore preserves the current local state under `.wrangler` before replacing
 it, so the prior state remains recoverable. The explicit PowerShell command is
 used because the selected backup path must be visible and deliberate.
 
+## Daily Lockheed objective feed
+
+Load the daily Lockheed GitLab Pages JSON locally from **LM Objectives →
+Import Lockheed feed**. The application does not fetch GitLab or replace prior
+observations. Each applied file is an immutable receipt; preview reports new,
+changed, unchanged, removed, and invalid subjects before commit. Upload the
+file again on the next working day even when unchanged so observation history
+is complete.
+
+`jpo` is a reported external MCP/JPO reference. It may be blank or contain
+multiple comma-separated values. `blocks` and `blocked_by` are reported
+dependency references; unknown targets remain unresolved. These values do not
+create Government ownership, funding approval, or an Objective owner. Use an
+explicit analyst link when a source subject is reconciled to a governed LM
+Objective.
+
+Synthetic fixtures are in `examples/lockheed-objective-feed/`. Upload
+`01-synthetic-day-one.json`, apply it, then upload
+`02-synthetic-day-two.json` and inspect the preview. They demonstrate
+add/change/remove/no-JPO/multi-JPO/dependency cases and are not program data.
+
 ## Verification
 
 ```powershell

@@ -82,6 +82,16 @@ const tableOrder: TransferTableName[] = [
   "objectiveEffectAttributions",
   "objectiveSourcePackages",
   "objectiveSourceRows",
+  // Daily LM GitLab feed history is application data and must travel with
+  // the workspace. The feed subject can exist without a governed Objective;
+  // snapshots precede their item/state/link/dependency/delta rows.
+  "lmObjectiveFeedSnapshots",
+  "lmObjectiveFeedSubjects",
+  "lmObjectiveFeedItems",
+  "lmObjectiveFeedStates",
+  "lmObjectiveFeedJpoLinks",
+  "lmObjectiveFeedDependencies",
+  "lmObjectiveFeedDeltas",
   "objectiveEstimates",
   "requirementTraces",
   "requirements",

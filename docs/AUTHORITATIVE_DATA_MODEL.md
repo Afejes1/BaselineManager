@@ -28,6 +28,7 @@ source and assessment status.
 | Deployment State | Release/Configuration-Set runtime, language, version, presence, and installation facts | Stable Product identity |
 | Change Request | Externally managed work/funding request and the Government fund/defer/decline decision reference | The technical baseline itself |
 | LM Objective | Incumbent delivery commitment owned by exactly one Change Request | Government work-plan ownership or a fixed Release commitment unless one is explicitly planned |
+| Lockheed Objective Feed Subject | Stable external-source subject identity, daily raw observations, reported JPO/MCP associations, and dependency references | Government ownership, funding approval, an owning Change Request, or an automatic Release commitment |
 | Requirement | Reusable externally governed requirement identity and version/source metadata | Objective ownership |
 | Objective Requirement | How one Objective adds, modifies, retires, verifies, or is not applicable to a Requirement | The authoritative requirement text in the external requirements system |
 | Initiative | Government outcome that groups Change Requests for analysis and leadership decision support | Incumbent execution ownership |
@@ -64,6 +65,19 @@ not an independent source of truth.
 
 An explicit demo reset may destroy sample data. Ordinary workbook intake may
 not behave as a reset.
+
+### Lockheed objective feed
+
+Each locally supplied daily JSON file creates an immutable feed snapshot. A
+stable feed subject is scoped by external system, program, and the supplied
+source object key; an unambiguous Jira identifier preserves that subject if a
+later file renumbers its source key. It may exist without a JPO value. Each snapshot stores the normalized
+source item and raw payload, current source state, reported JPO/MCP links,
+dependency edges, and field-level deltas. Identical files are accepted as
+separate observations. Unresolved `blocks` and `blocked_by` targets remain
+raw. An analyst may explicitly reconcile a feed subject to an existing
+governed LM Objective; that is a trace link and does not change the Objective's
+owning Change Request or establish Government approval.
 
 ## A2O Tech Stack projection
 

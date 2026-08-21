@@ -596,6 +596,9 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   index("incumbent_objective_request_ix").on(t.changeRequestId, t.status, t.plannedFinish),
 ]);
 
+// A feed may report one Objective against several MCP/JPO identifiers. The
+// legacy change_request_id remains an analyst-designated compatibility field;
+// this table holds every reported association without implying ownership.
 // A Change Request may depend on a specific Objective owned by another
 // Change Request. This is deliberately separate from change_dependency so the
 // dependency remains precise without implying that the entire owning request
@@ -683,6 +686,105 @@ export const objectiveSourceRows = sqliteTable("objective_source_row", {
   uniqueIndex("objective_source_row_number_uq").on(t.sourcePackageId, t.rowNumber),
   index("objective_source_row_key_ix").on(t.externalSystem, t.externalIdentifier),
 ]);
+
+// Daily GitLab Pages objective-feed imports retain the supplied document as an
+// immutable observation. They are separate from generic spreadsheet imports
+// because the feed includes directed dependencies and evolving delivery data.
+export const lmObjectiveFeedSnapshots = sqliteTable("lm_objective_feed_snapshot", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  externalSystem: text("external_system").notNull(),
+  fileName: text("file_name").notNull(),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  observedAt: text("observed_at").notNull(),
+  contentHash: text("content_hash").notNull(),
+  snapshotPayload: text("snapshot_payload").notNull(),
+  recordCount: integer("record_count").notNull().default(0),
+  addedCount: integer("added_count").notNull().default(0),
+  changedCount: integer("changed_count").notNull().default(0),
+  unchangedCount: integer("unchanged_count").notNull().default(0),
+  removedCount: integer("removed_count").notNull().default(0),
+  blockedCount: integer("blocked_count").notNull().default(0),
+  status: text("status").notNull().default("applied"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("lm_objective_feed_snapshot_status", sql`${t.status} IN ('staged','applied','rejected')`),
+  index("lm_objective_feed_snapshot_hash_ix").on(t.programId, t.externalSystem, t.contentHash),
+  index("lm_objective_feed_snapshot_observed_ix").on(t.programId, t.externalSystem, t.observedAt),
+]);
+
+// Stable identity for an externally reported objective. It exists even when
+// the feed supplies no JPO/MCP or no analyst has reconciled it to a legacy LM
+// Objective record.
+export const lmObjectiveFeedSubjects = sqliteTable("lm_objective_feed_subject", {
+  id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id),
+  externalSystem: text("external_system").notNull(), feedKey: text("feed_key").notNull(), jiraIdentifier: text("jira_identifier"), url: text("url"),
+  canonicalObjectiveId: text("canonical_objective_id").references(() => incumbentObjectives.id), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (t) => [uniqueIndex("lm_objective_feed_subject_key_uq").on(t.programId, t.externalSystem, t.feedKey), index("lm_objective_feed_subject_objective_ix").on(t.canonicalObjectiveId)]);
+
+export const lmObjectiveFeedItems = sqliteTable("lm_objective_feed_item", {
+  id: text("id").primaryKey(),
+  snapshotId: text("snapshot_id").notNull().references(() => lmObjectiveFeedSnapshots.id),
+  feedKey: text("feed_key").notNull(),
+  jiraIdentifier: text("jira_identifier"),
+  jpoRaw: text("jpo_raw"),
+  subjectId: text("subject_id").notNull().references(() => lmObjectiveFeedSubjects.id),
+  disposition: text("disposition").notNull(),
+  normalizedPayload: text("normalized_payload").notNull(),
+  rawPayload: text("raw_payload").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("lm_objective_feed_item_disposition", sql`${t.disposition} IN ('add','change','unchanged','blocked')`),
+  uniqueIndex("lm_objective_feed_item_snapshot_key_uq").on(t.snapshotId, t.feedKey),
+  index("lm_objective_feed_item_subject_ix").on(t.subjectId, t.snapshotId),
+]);
+
+// Current supplier-owned projection. Government assessments, estimates,
+// decisions, requirements, and technical effects are deliberately excluded.
+export const lmObjectiveFeedStates = sqliteTable("lm_objective_feed_state", {
+  subjectId: text("subject_id").primaryKey().references(() => lmObjectiveFeedSubjects.id),
+  latestSnapshotId: text("latest_snapshot_id").notNull().references(() => lmObjectiveFeedSnapshots.id),
+  feedKey: text("feed_key").notNull(),
+  url: text("url"), relTo: text("rel_to"), roadmapParent: text("roadmap_parent"), scope: text("scope"),
+  domainsJson: text("domains_json").notNull().default("[]"), itemNumber: integer("item_number"),
+  targetStart: text("target_start"), targetFinish: text("target_finish"), rom: text("rom"), percentComplete: real("percent_complete"),
+  funding: text("funding"), release: text("release"), overview: text("overview"), background: text("background"),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [index("lm_objective_feed_state_snapshot_ix").on(t.latestSnapshotId)]);
+
+// Targets may be numeric feed keys or external planning references such as
+// arch_plan_44. Unresolved values remain useful external evidence.
+export const lmObjectiveFeedDependencies = sqliteTable("lm_objective_feed_dependency", {
+  id: text("id").primaryKey(), snapshotId: text("snapshot_id").notNull().references(() => lmObjectiveFeedSnapshots.id),
+  sourceFeedKey: text("source_feed_key").notNull(), sourceSubjectId: text("source_subject_id").notNull().references(() => lmObjectiveFeedSubjects.id),
+  direction: text("direction").notNull(), targetReference: text("target_reference").notNull(), targetSubjectId: text("target_subject_id").references(() => lmObjectiveFeedSubjects.id), createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("lm_objective_feed_dependency_direction", sql`${t.direction} IN ('blocks','blocked_by')`),
+  uniqueIndex("lm_objective_feed_dependency_uq").on(t.snapshotId, t.sourceFeedKey, t.direction, t.targetReference),
+  index("lm_objective_feed_dependency_source_ix").on(t.sourceSubjectId, t.snapshotId), index("lm_objective_feed_dependency_target_ix").on(t.targetSubjectId, t.snapshotId),
+]);
+
+// Field-level deltas compare only successive supplied snapshots; they do not
+// infer Government analysis or reinterpret the vendor's ROM/percent algorithm.
+export const lmObjectiveFeedDeltas = sqliteTable("lm_objective_feed_delta", {
+  id: text("id").primaryKey(), snapshotId: text("snapshot_id").notNull().references(() => lmObjectiveFeedSnapshots.id),
+  subjectId: text("subject_id").notNull().references(() => lmObjectiveFeedSubjects.id), feedKey: text("feed_key").notNull(),
+  changeKind: text("change_kind").notNull(), fieldName: text("field_name"), beforeValue: text("before_value"), afterValue: text("after_value"), createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("lm_objective_feed_delta_kind", sql`${t.changeKind} IN ('added','changed','unchanged','removed','blocked')`),
+  index("lm_objective_feed_delta_snapshot_ix").on(t.snapshotId, t.changeKind), index("lm_objective_feed_delta_subject_ix").on(t.subjectId, t.snapshotId),
+]);
+
+// Current JPO/MCP references reported by the feed. A missing Change Request
+// resolution is valid; the raw external identifier remains visible.
+export const lmObjectiveFeedJpoLinks = sqliteTable("lm_objective_feed_jpo_link", {
+  id: text("id").primaryKey(), subjectId: text("subject_id").notNull().references(() => lmObjectiveFeedSubjects.id),
+  latestSnapshotId: text("latest_snapshot_id").notNull().references(() => lmObjectiveFeedSnapshots.id), externalIdentifier: text("external_identifier").notNull(), changeRequestId: text("change_request_id").references(() => changeRequests.id),
+  createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (t) => [uniqueIndex("lm_objective_feed_jpo_link_uq").on(t.subjectId, t.externalIdentifier), index("lm_objective_feed_jpo_link_request_ix").on(t.changeRequestId)]);
 
 // Estimates are append-only assessments with explicit provenance. This keeps
 // an incumbent claim separate from a Government or independent assessment.
@@ -1045,6 +1147,13 @@ export const schema = {
   objectiveEffectAttributions,
   objectiveSourcePackages,
   objectiveSourceRows,
+  lmObjectiveFeedSnapshots,
+  lmObjectiveFeedSubjects,
+  lmObjectiveFeedItems,
+  lmObjectiveFeedStates,
+  lmObjectiveFeedJpoLinks,
+  lmObjectiveFeedDependencies,
+  lmObjectiveFeedDeltas,
   objectiveEstimates,
   requirementTraces,
   requirements,

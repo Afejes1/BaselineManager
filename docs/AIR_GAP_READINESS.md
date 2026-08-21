@@ -11,6 +11,11 @@ This application is being matured for an eventual JSF air-gapped deployment. The
 - Release roles (`historical`, `as_is`, `to_be`, `reported`) are analytical perspectives. They are not approval states.
 - Change Requests are references to the external incumbent system. This application owns Government priority, impact links, dependencies, consequences, and the `fund` / `defer` / `decline` decision record.
 - Reports are deterministic and traceable to working baseline records, intake snapshots, and governed evidence links.
+- The local Lockheed objective feed importer accepts a selected JSON file,
+  preserves immutable daily receipts, multi-valued JPO/MCP references,
+  dependency references, and field-level deltas. It makes no GitLab network
+  request and does not create Government ownership or funding decisions from
+  supplier data.
 - A versioned Workspace Transfer Package carries the complete application-owned dataset, relationships, audit history, and attached evidence between compatible deployments. It never carries credentials or destination access roles.
 
 ## Runtime boundary still requiring an environment decision
@@ -52,6 +57,9 @@ Required deployment contents:
 8. Backup/restore and Workspace Transfer are tested against a copy of the relational database and evidence store, including checksum validation and a fresh-destination import.
 9. `DEMO_ENABLED=false`, approved identity mapping, least-privilege roles, TLS, audit retention, session timeout, and log handling are verified.
 10. A representative sanitized workbook passes smoke testing before controlled real-data ingestion.
+11. Two sanitized JSON receipts are imported in sequence and the preview
+    demonstrates added, changed, unchanged, removed, no-JPO, multi-JPO, and
+    unresolved dependency cases.
 
 ## Backup and recovery minimum
 

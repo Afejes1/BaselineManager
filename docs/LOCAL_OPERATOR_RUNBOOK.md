@@ -88,6 +88,28 @@ Build one Initiative completely before expanding the portfolio.
 
 ## Routine analyst cycle
 
+### Daily Lockheed objective feed
+
+1. Save the daily JSON export in the approved local directory. Do not edit the
+   received file before import.
+2. Open **LM Objectives → Import Lockheed feed**, select the file, and enter the
+   source-as-of date.
+3. Review new, changed, unchanged, removed, and invalid counts. Inspect
+   `blocks`, `blocked_by`, and JPO/MCP values. A blank JPO is valid; a
+   comma-separated JPO is multiple reported associations.
+4. Apply the snapshot. The receipt and field-level deltas are retained even
+   when the file is identical to the prior day. Removed subjects are history,
+   not delete instructions for governed records.
+5. Treat supplier ROM, percent complete, dates, release text, and dependencies
+   as source claims—not Government-approved cost, schedule, funding, or
+   progress.
+6. Explicitly link a source subject to a governed LM Objective only when the
+   evidence supports the reconciliation. The link does not create ownership or
+   funding approval.
+
+The prototype reads a selected local file only. It does not fetch Lockheed
+GitLab Pages directly, keeping the workflow explicit for an air-gapped host.
+
 ### Before an incumbent technical call
 
 - Start the application and confirm the current release scope.
