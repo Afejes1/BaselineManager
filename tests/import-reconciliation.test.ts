@@ -18,7 +18,11 @@ test("reconciliation distinguishes added, changed, unchanged, removed, and confl
   const nextChanged = { ...changed, "HW_RAM (GB)": 64 };
   const added = fixture({ "#": "4", ReleaseName: "Release 6", LongName: "Added" });
   const duplicate = fixture({ "#": "5", ReleaseName: "Release 6", LongName: "Duplicate" });
-  assert.deepEqual(reconcileIntake([retained, changed, removed], [retained, nextChanged, added, duplicate, { ...duplicate }]), {
+  const result = reconcileIntake([retained, changed, removed], [retained, nextChanged, added, duplicate, { ...duplicate }]);
+  assert.deepEqual({ added: result.added, changed: result.changed, unchanged: result.unchanged, removedFromWorkingProjection: result.removedFromWorkingProjection, conflicts: result.conflicts, conflictKeys: result.conflictKeys }, {
     added: 1, changed: 1, unchanged: 1, removedFromWorkingProjection: 1, conflicts: 1, conflictKeys: ["release 6|source:5"],
   });
+  assert.equal(result.rows.length, 5);
+  assert.deepEqual(result.rows.find((row) => row.identity === "release 5|source:2")?.changes, [{ field: "HW_RAM (GB)", before: "", after: "64" }]);
+  assert.equal(result.rows.filter((row) => row.disposition === "blocked").length, 2);
 });

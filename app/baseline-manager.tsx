@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../components/app-link";
+import { GovernedImportReview } from "../components/governed-import-review";
 import { usePathname, useSearchParams } from "next/navigation";
 import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
@@ -11,6 +12,7 @@ import { APP_NAV_ITEMS } from "../lib/site-nav";
 import { configNodeIdentity, productIdentityKey } from "../lib/baseline-data";
 import { projectionOf, useBaselineWorkspace, type ManagedRecord24 } from "../lib/baseline-client";
 import { reconcileIntake } from "../lib/import-reconciliation";
+import { importResolutions, type GovernedImportItem, type ImportDecision } from "../lib/governed-import";
 import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
 import { WorkspaceContextControl, useWorkspaceContext } from "../components/workspace-context";
 import { useMasterData } from "../lib/master-data-client";
@@ -126,6 +128,7 @@ export function BaselineManager() {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [draft, setDraft] = useState<ImportDraft | null>(null);
+  const [importDecisions, setImportDecisions] = useState<Record<string, ImportDecision>>({});
   const [importError, setImportError] = useState("");
   const [notice, setNotice] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -231,6 +234,18 @@ export function BaselineManager() {
   const requestedFieldProduct = master.portfolio.products.find((product) => product.id === requestedFieldProductId) || null;
   const resolvedNewRowRelease = newRowRelease === "__new__" ? newReleaseName.trim() : newRowRelease;
   const reconciliation = useMemo(() => draft ? reconcileIntake(activeRows, draft.rows) : null, [activeRows, draft]);
+  const importReviewItems = useMemo<GovernedImportItem[]>(() => (reconciliation?.rows || []).map((item) => ({
+    id: `a2o-${item.rowNumber}-${item.identity}`,
+    rowNumber: item.rowNumber,
+    sourceKey: String(item.row["#"] || item.identity),
+    title: String(item.row.LongName || item.row.ShortName || item.row.HW_Host || "Unnamed baseline record"),
+    detail: [item.row.ReleaseName, item.row.Tier, item.row.Resource].filter(Boolean).join(" · "),
+    disposition: item.disposition,
+    issues: item.issues,
+    changes: item.changes,
+    defaultDecision: item.disposition === "blocked" ? "skip" : "approve",
+  })), [reconciliation?.rows]);
+  const importReviewResolutions = useMemo(() => importResolutions(importReviewItems, importDecisions, {}), [importDecisions, importReviewItems]);
 
   useEffect(() => {
     if (!requestedFieldProduct || fieldProductLaunchRef.current === requestedFieldProduct.id) return;
@@ -523,6 +538,7 @@ export function BaselineManager() {
         const row = Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column, index) => [column, line[index] ?? ""]));
         return row as Record24;
       });
+      setImportDecisions({});
       setDraft({ fileName: file.name, sheetName, rows: imported });
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "The A2O Tech Stack file could not be read.");
@@ -536,7 +552,7 @@ export function BaselineManager() {
     const response = await fetch("/api/baseline/import", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(draft),
+      body: JSON.stringify({ ...draft, resolutions: importReviewResolutions }),
     });
     const payload = await response.json() as { error?: string };
     if (!response.ok) {
@@ -1075,7 +1091,7 @@ export function BaselineManager() {
     {showChangeAssignment ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !changeAssignmentSaving) setShowChangeAssignment(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="assign-change-title"><span className="eyebrow">CHANGE IMPACT</span><h2 id="assign-change-title">Link {checked.size} baseline record{checked.size === 1 ? "" : "s"} to a Change Request</h2><p>The baseline record remains current analytical data. This relationship records proposed impact for consequence analysis and funding reports.</p><label className="modal-field">Change Request<select value={changeAssignment.changeRequestId} onChange={(event) => setChangeAssignment({ ...changeAssignment, changeRequestId: event.target.value })}><option value="">Choose request</option>{changePortfolio.requests.map((request) => <option key={request.id} value={request.id}>{request.externalIdentifier} · {request.title}</option>)}</select></label><div className="form-grid"><label className="modal-field">Action<select value={changeAssignment.effectAction} onChange={(event) => setChangeAssignment({ ...changeAssignment, effectAction: event.target.value })}>{["add", "remove", "move", "modify", "assess"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Aspect<input value={changeAssignment.aspect} onChange={(event) => setChangeAssignment({ ...changeAssignment, aspect: event.target.value })} placeholder="configuration, fielding, capacity…" /></label></div><label className="modal-field">Consequence<textarea rows={3} value={changeAssignment.consequence} onChange={(event) => setChangeAssignment({ ...changeAssignment, consequence: event.target.value })} placeholder="What changes or remains at risk for these baseline records" /></label><footer><button className="ghost-button" disabled={changeAssignmentSaving} onClick={() => setShowChangeAssignment(false)}>Cancel</button><button className="primary-button" disabled={changeAssignmentSaving || !changeAssignment.changeRequestId} onClick={() => void assignSelectedToChangeRequest()}>{changeAssignmentSaving ? "Assigning…" : "Add impact link"}</button></footer></section></div> : null}
 
     {(draft || importError) && <div className="modal-backdrop" role="presentation">
-      <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
+      <section className={`import-modal ${draft ? "governed-import-modal" : ""}`} role="dialog" aria-modal="true" aria-labelledby="import-title">
         <span className="eyebrow">A2O TECH STACK EXCHANGE</span>
         <h2 id="import-title">{importError ? "Contract mismatch" : "Ready to reconcile"}</h2>
         {importError ? <>
@@ -1084,16 +1100,18 @@ export function BaselineManager() {
           <footer><button className="primary-button" onClick={() => setImportError("")}>Return to baseline</button></footer>
         </> : draft && <>
           <p><strong>{draft.fileName}</strong> · {draft.sheetName}</p>
-          <div className="import-stats four">
-            <div><strong>{reconciliation?.added ?? 0}</strong><span>Added</span></div>
-            <div><strong>{reconciliation?.changed ?? 0}</strong><span>Changed</span></div>
-            <div><strong>{reconciliation?.unchanged ?? 0}</strong><span>Unchanged</span></div>
-            <div><strong>{reconciliation?.removedFromWorkingProjection ?? 0}</strong><span>Absent from new projection</span></div>
-          </div>
-          {reconciliation?.conflicts ? <p className="error-copy"><strong>{reconciliation.conflicts} duplicate identity conflict{reconciliation.conflicts === 1 ? "" : "s"}.</strong> Resolve repeated ReleaseName + # identities (or semantic fallback identities) before import.</p> : null}
           <div className="release-list"><span>ReleaseName values</span>{Array.from(new Set(draft.rows.map(releaseOf))).map((release) => <b key={release}>{release} · {draft.rows.filter((row) => releaseOf(row) === release).length} rows</b>)}</div>
-          <p className="modal-note">Each baseline record retains ReleaseName. Records absent from the incoming A2O exchange file leave the active baseline. Each import is retained as an immutable intake package for history and rollback.</p>
-          <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel</button><button className="primary-button" disabled={Boolean(reconciliation?.conflicts)} onClick={acceptImport}>Import and reconcile</button></footer>
+          <p className="modal-note">Each baseline record retains ReleaseName. {reconciliation?.removedFromWorkingProjection ?? 0} current record{reconciliation?.removedFromWorkingProjection === 1 ? " is" : "s are"} absent from this file; absence is reported but does not delete or void the governed baseline. The complete intake package is retained.</p>
+          <GovernedImportReview
+            items={importReviewItems}
+            decisions={importDecisions}
+            busy={false}
+            applyLabel="Apply reviewed records"
+            onDecision={(id, decision) => setImportDecisions((current) => ({ ...current, [id]: decision }))}
+            onBulkDecision={(decision) => setImportDecisions(Object.fromEntries(importReviewItems.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])))}
+            onApply={() => void acceptImport()}
+          />
+          <footer><button className="ghost-button" onClick={() => setDraft(null)}>Cancel import</button></footer>
         </>}
       </section>
     </div>}

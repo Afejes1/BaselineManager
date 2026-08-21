@@ -107,6 +107,16 @@ Synthetic fixtures are in `examples/lockheed-objective-feed/`. Upload
 `02-synthetic-day-two.json` and inspect the preview. They demonstrate
 add/change/remove/no-JPO/multi-JPO/dependency cases and are not program data.
 
+## Governed source imports
+
+The Confluence Change Request export, Lockheed Objective JSON feed, and A2O
+Tech Stack workbook use a common analyst-review control. Preview every row,
+confirm or override the proposed canonical match, skip questionable rows, and
+then apply approved records. Imports retain their source receipts and do not
+overwrite Government analysis. See
+[docs/GOVERNED_IMPORTS.md](docs/GOVERNED_IMPORTS.md). A synthetic Confluence
+fixture is available under `examples/confluence-change-requests/`.
+
 ## Verification
 
 ```powershell

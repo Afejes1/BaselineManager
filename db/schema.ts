@@ -1099,6 +1099,74 @@ export const briefPublications = sqliteTable("brief_publication", {
   index("brief_publication_brief_ix").on(t.briefId, t.createdAt),
 ]);
 
+// Every file import follows one governed lifecycle even when a source-specific
+// adapter owns the final materialization.  Runs and items retain the analyst's
+// review decision, mapping override, source payload, and proposed field delta.
+export const ingestionRuns = sqliteTable("ingestion_run", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  adapterKey: text("adapter_key").notNull(),
+  sourceSystem: text("source_system").notNull(),
+  fileName: text("file_name").notNull(),
+  sheetName: text("sheet_name"),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  contentHash: text("content_hash").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  status: text("status").notNull().default("staged"),
+  recordCount: integer("record_count").notNull().default(0),
+  addedCount: integer("added_count").notNull().default(0),
+  changedCount: integer("changed_count").notNull().default(0),
+  unchangedCount: integer("unchanged_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  blockedCount: integer("blocked_count").notNull().default(0),
+  targetSnapshotKind: text("target_snapshot_kind"),
+  targetSnapshotId: text("target_snapshot_id"),
+  reviewedByUserId: text("reviewed_by_user_id").references(() => appUsers.id),
+  reviewedAt: text("reviewed_at"),
+  appliedByUserId: text("applied_by_user_id").references(() => appUsers.id),
+  appliedAt: text("applied_at"),
+  ...timestamps,
+}, (t) => [
+  check("ingestion_run_status", sql`${t.status} IN ('staged','reviewed','applied','rejected','failed')`),
+  uniqueIndex("ingestion_run_idempotency_uq").on(t.programId, t.idempotencyKey),
+  index("ingestion_run_adapter_ix").on(t.programId, t.adapterKey, t.createdAt),
+]);
+
+export const ingestionItems = sqliteTable("ingestion_item", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => ingestionRuns.id),
+  rowNumber: integer("row_number").notNull(),
+  sourceKey: text("source_key").notNull(),
+  targetKind: text("target_kind"),
+  targetId: text("target_id"),
+  matchMethod: text("match_method").notNull(),
+  decision: text("decision").notNull(),
+  disposition: text("disposition").notNull(),
+  rawPayload: text("raw_payload").notNull(),
+  normalizedPayload: text("normalized_payload").notNull(),
+  changesPayload: text("changes_payload").notNull().default("[]"),
+  issuesPayload: text("issues_payload").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("ingestion_item_decision", sql`${t.decision} IN ('approve','skip')`),
+  check("ingestion_item_disposition", sql`${t.disposition} IN ('add','change','unchanged','blocked')`),
+  uniqueIndex("ingestion_item_run_row_uq").on(t.runId, t.rowNumber),
+  index("ingestion_item_target_ix").on(t.targetKind, t.targetId),
+]);
+
+// Current supplier-controlled Change Request attributes stay separate from
+// Government priority, decisions, effects, and narrative analysis.
+export const externalChangeSourceStates = sqliteTable("external_change_source_state", {
+  changeRequestId: text("change_request_id").primaryKey().references(() => changeRequests.id),
+  latestRunId: text("latest_run_id").notNull().references(() => ingestionRuns.id),
+  externalSystem: text("external_system").notNull(),
+  rawPayload: text("raw_payload").notNull(),
+  normalizedPayload: text("normalized_payload").notNull(),
+  sourceAsOf: text("source_as_of"),
+  updatedAt: text("updated_at").notNull(),
+}, (t) => [index("external_change_source_state_system_ix").on(t.externalSystem, t.sourceAsOf)]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
@@ -1170,5 +1238,8 @@ export const schema = {
   evidenceDocuments,
   executiveBriefs,
   briefPublications,
+  ingestionRuns,
+  ingestionItems,
+  externalChangeSourceStates,
   auditEvents,
 };

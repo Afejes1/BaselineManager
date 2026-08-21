@@ -15,7 +15,9 @@ changing the Working Technical Baseline automatically.
 1. Save the supplied JSON file in an approved local location.
 2. Open **LM Objectives → Import Lockheed feed**.
 3. Select the file and enter the source snapshot date.
-4. Review the preview: new, changed, unchanged, removed, and invalid records.
+4. Review every parsed record: new, changed, unchanged, removed, and invalid.
+   Approve or skip each valid row. When evidence supports it, select an
+   existing governed LM Objective as the explicit canonical mapping.
 5. Inspect reported `blocks` and `blocked_by` references in the interactive
    dependency view. Unresolved references are retained rather than guessed.
 6. Apply the snapshot.

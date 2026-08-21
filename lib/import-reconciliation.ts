@@ -7,6 +7,16 @@ export type ImportReconciliation = {
   removedFromWorkingProjection: number;
   conflicts: number;
   conflictKeys: string[];
+  rows: ImportReconciliationRow[];
+};
+
+export type ImportReconciliationRow = {
+  rowNumber: number;
+  identity: string;
+  row: TechnicalBaselineRow;
+  disposition: "add" | "change" | "unchanged" | "blocked";
+  issues: string[];
+  changes: Array<{ field: string; before: string; after: string }>;
 };
 
 const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
@@ -35,14 +45,19 @@ export function reconcileIntake(current: TechnicalBaselineRow[], incoming: Techn
   let added = 0;
   let changed = 0;
   let unchanged = 0;
+  const rows: ImportReconciliationRow[] = [];
   for (const [key, matches] of incomingByKey) {
-    if (matches.length > 1) continue;
+    if (matches.length > 1) {
+      for (const row of matches) rows.push({ rowNumber: incoming.indexOf(row) + 2, identity: key, row, disposition: "blocked", issues: [`${key} occurs more than once in this workbook.`], changes: [] });
+      continue;
+    }
+    const row = matches[0];
     const currentMatch = currentByKey.get(key);
-    if (!currentMatch?.length) added += 1;
-    else if (currentMatch.length > 1 || signature(currentMatch[0]) !== signature(matches[0])) changed += 1;
-    else unchanged += 1;
+    if (!currentMatch?.length) { added += 1; rows.push({ rowNumber: incoming.indexOf(row) + 2, identity: key, row, disposition: "add", issues: [], changes: TECHNICAL_BASELINE_COLUMNS.filter((column) => String(row[column] ?? "")).map((column) => ({ field: column, before: "", after: String(row[column] ?? "") })) }); }
+    else if (currentMatch.length > 1) rows.push({ rowNumber: incoming.indexOf(row) + 2, identity: key, row, disposition: "blocked", issues: [`${key} matches more than one current baseline record.`], changes: [] });
+    else if (signature(currentMatch[0]) !== signature(row)) { changed += 1; rows.push({ rowNumber: incoming.indexOf(row) + 2, identity: key, row, disposition: "change", issues: [], changes: TECHNICAL_BASELINE_COLUMNS.filter((column) => String(currentMatch[0][column] ?? "") !== String(row[column] ?? "")).map((column) => ({ field: column, before: String(currentMatch[0][column] ?? ""), after: String(row[column] ?? "") })) }); }
+    else { unchanged += 1; rows.push({ rowNumber: incoming.indexOf(row) + 2, identity: key, row, disposition: "unchanged", issues: [], changes: [] }); }
   }
   const removedFromWorkingProjection = [...currentByKey.keys()].filter((key) => !incomingByKey.has(key)).length;
-  return { added, changed, unchanged, removedFromWorkingProjection, conflicts: conflictKeys.length, conflictKeys };
+  return { added, changed, unchanged, removedFromWorkingProjection, conflicts: conflictKeys.length, conflictKeys, rows: rows.sort((left, right) => left.rowNumber - right.rowNumber) };
 }
-

@@ -107,6 +107,9 @@ const tableOrder: TransferTableName[] = [
   "evidenceDocuments",
   "executiveBriefs",
   "briefPublications",
+  "ingestionRuns",
+  "ingestionItems",
+  "externalChangeSourceStates",
   "auditEvents",
 ];
 

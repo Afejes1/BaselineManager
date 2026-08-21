@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "../../../components/app-link";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { GovernedImportReview } from "../../../components/governed-import-review";
+import { importResolutions, type GovernedImportItem, type ImportDecision } from "../../../lib/governed-import";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
 
 type FeedRecord = {
@@ -109,6 +111,8 @@ export default function ObjectiveFeedPage() {
   const [records, setRecords] = useState<FeedRecord[]>([]);
   const [rawPayload, setRawPayload] = useState<unknown>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [reviewDecisions, setReviewDecisions] = useState<Record<string, ImportDecision>>({});
+  const [reviewTargets, setReviewTargets] = useState<Record<string, string>>({});
   const [history, setHistory] = useState<History[]>([]);
   const [subjects, setSubjects] = useState<SourceSubject[]>([]);
   const [dependencies, setDependencies] = useState<SourceDependency[]>([]);
@@ -118,6 +122,25 @@ export default function ObjectiveFeedPage() {
   const [notice, setNotice] = useState("");
   const [selectedKey, setSelectedKey] = useState("");
   const objectiveOptions = useMemo(() => [...(workspace?.objectives || [])].sort((left, right) => `${left.externalIdentifier} ${left.title}`.localeCompare(`${right.externalIdentifier} ${right.title}`)), [workspace?.objectives]);
+  const reviewItems = useMemo<GovernedImportItem[]>(() => (preview?.records || []).map((row, index) => {
+    const id = `lm-feed-${row.externalRecordKey}`;
+    const objective = objectiveOptions.find((item) => item.id === row.mappedObjectiveId);
+    return {
+      id,
+      rowNumber: index + 2,
+      sourceKey: row.externalRecordKey,
+      title: row.externalIdentifier || row.title || `Source record ${row.externalRecordKey}`,
+      detail: [row.title, row.jpoIdentifiers.length ? `JPO / MCP: ${row.jpoIdentifiers.join(", ")}` : "No JPO / MCP reported"].filter(Boolean).join(" · "),
+      disposition: row.disposition,
+      issues: row.issues,
+      changes: row.diffs,
+      proposedTargetId: row.mappedObjectiveId || null,
+      proposedTargetLabel: objective ? `${objective.externalIdentifier} · ${objective.title}` : null,
+      defaultDecision: row.disposition === "blocked" ? "skip" : "approve",
+    };
+  }), [objectiveOptions, preview?.records]);
+  const resolutions = useMemo(() => importResolutions(reviewItems, reviewDecisions, reviewTargets), [reviewDecisions, reviewItems, reviewTargets]);
+  const reviewTargetOptions = useMemo(() => objectiveOptions.map((item) => ({ id: item.id, label: `${item.externalIdentifier} · ${item.title}` })), [objectiveOptions]);
   const persistedRows = useMemo(() => {
     const linksBySource = new Map<string, SourceDependency[]>();
     for (const dependency of dependencies) linksBySource.set(dependency.source_feed_key, [...(linksBySource.get(dependency.source_feed_key) || []), dependency]);
@@ -165,18 +188,30 @@ export default function ObjectiveFeedPage() {
 
   async function selectFile(file: File | undefined) {
     if (!file) return;
-    setNotice(""); setPreview(null); setFileName(file.name);
+    setNotice(""); setPreview(null); setReviewDecisions({}); setReviewTargets({}); setFileName(file.name);
     try { const source = JSON.parse(await file.text()); const parsed = parseFeed(source); if (!parsed.length) throw new Error("The JSON file has no Objective records."); setRawPayload(source); setRecords(parsed); setSelectedKey(parsed[0].externalRecordKey); }
     catch (reason) { setRecords([]); setRawPayload(null); setNotice(reason instanceof Error ? reason.message : "The Lockheed Objective feed could not be read."); }
   }
   async function reconcile(mode: "preview" | "apply") {
     setBusy(true); setNotice("");
     try {
-      const response = await fetch("/api/objectives/feed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, fileName, sourceAsOf, payload: rawPayload }) });
+      const response = await fetch("/api/objectives/feed", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, fileName, sourceAsOf, payload: rawPayload, resolutions: mode === "apply" ? resolutions : undefined }) });
       const payload = await response.json() as { preview?: unknown; history?: unknown[]; error?: string };
       if (!response.ok) throw new Error(payload.error || "The Lockheed Objective feed could not be processed.");
       const normalizedPreview = normalizePreview(payload.preview);
-      if (normalizedPreview) { setPreview(normalizedPreview); setSelectedKey(normalizedPreview.records[0]?.externalRecordKey || ""); }
+      if (normalizedPreview) {
+        setPreview(normalizedPreview); setSelectedKey(normalizedPreview.records[0]?.externalRecordKey || "");
+        if (mode === "preview") {
+          const decisions: Record<string, ImportDecision> = {};
+          const targets: Record<string, string> = {};
+          for (const row of normalizedPreview.records) {
+            const id = `lm-feed-${row.externalRecordKey}`;
+            decisions[id] = row.disposition === "blocked" ? "skip" : "approve";
+            if (row.mappedObjectiveId) targets[id] = row.mappedObjectiveId;
+          }
+          setReviewDecisions(decisions); setReviewTargets(targets);
+        }
+      }
       if (payload.history) setHistory(normalizeHistory(payload.history));
       if (mode === "apply") { setNotice("Lockheed source snapshot applied. Government assessment and decision records were not overwritten."); await loadFeedState(); }
       else setNotice("Preview complete. Review mapping gaps and source changes before applying this snapshot.");
@@ -200,7 +235,19 @@ export default function ObjectiveFeedPage() {
   return <DomainPageShell title="Lockheed Objective Feed" subtitle="Import a daily GitLab Pages JSON snapshot. The feed is retained external evidence, not Government delivery authority." releaseScope={`${history.length} retained snapshots`} actions={<><Link className="ghost-button" href="/objectives">LM Objectives</Link><Link className="ghost-button" href="/objectives/import">Workbook import</Link></>}>
     <section className="decision-principle"><strong>Snapshot rule</strong><span>Each file is retained with its received date and field changes. Jira is a Lockheed identifier. JPO/MCP values are reported source references; blank, multiple, or unresolved values remain visible without creating ownership or funding approval.</span></section>
     <section className="split-layout feed-import-grid"><article className="domain-section"><span className="eyebrow">LOCKHEED GITLAB PAGES EXPORT</span><h3>Load source snapshot</h3><label className="modal-field">JSON file<input type="file" accept="application/json,.json" onChange={(event) => void selectFile(event.target.files?.[0])} /></label><label className="modal-field">Source snapshot date<input type="date" value={sourceAsOf} onChange={(event) => setSourceAsOf(event.target.value)} /></label>{fileName ? <p className="entity-meta">{fileName} · {records.length} Objective records parsed</p> : null}<button className="primary-button" type="button" disabled={!records.length || busy} onClick={() => void reconcile("preview")}>{busy ? "Processing…" : "Preview source snapshot"}</button></article><article className="domain-section"><span className="eyebrow">SOURCE FIELDS RETAINED</span><h3>What is read from Lockheed</h3><p>Jira ID, JPO/MCP references, title, domains, ROM, percent complete, schedule, funding, release, and the blocks / blocked-by lists are retained as source claims.</p><p className="entity-meta">Percent complete and ROM are tracked as daily values. A change in Lockheed’s algorithm is visible as a source change; it is not treated as a Government cost or progress assessment.</p></article></section>
-    {preview ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RECONCILIATION PREVIEW</span><h3>Incoming Lockheed snapshot</h3></div><button className="primary-button" disabled={!preview.canApply || busy} onClick={() => void reconcile("apply")}>{preview.canApply ? "Apply snapshot" : "Resolve duplicate or invalid records"}</button></div><section className="summary"><div className="metric"><span>New</span><strong>{preview.added}</strong><small>New external Objectives</small></div><div className="metric"><span>Changed</span><strong>{preview.changed}</strong><small>Reported fields changed</small></div><div className="metric"><span>Unchanged</span><strong>{preview.unchanged}</strong><small>Source confirmed</small></div><div className="metric"><span>Removed</span><strong>{preview.removed}</strong><small>Absent from this supplied file</small></div><div className="metric"><span>Blocked records</span><strong>{preview.blocked}</strong><small>Duplicate or invalid source records</small></div></section></section> : null}
+    {preview ? <GovernedImportReview
+      items={reviewItems}
+      decisions={reviewDecisions}
+      targets={reviewTargets}
+      targetOptions={reviewTargetOptions}
+      targetLabel="Governed Objective"
+      busy={busy}
+      applyLabel="Apply reviewed snapshot"
+      onDecision={(id, decision) => setReviewDecisions((current) => ({ ...current, [id]: decision }))}
+      onTarget={(id, targetId) => setReviewTargets((current) => ({ ...current, [id]: targetId }))}
+      onBulkDecision={(decision) => setReviewDecisions(Object.fromEntries(reviewItems.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])))}
+      onApply={() => void reconcile("apply")}
+    /> : null}
     {graph.length ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">OBJECTIVE DEPENDENCY MAP</span><h3>Lockheed-reported block relationships</h3></div><span>{preview || records.length ? "Previewed file" : "Latest applied source snapshot"} · Click an Objective to inspect its reported values.</span></div><div className="feed-graph-layout"><div className="feed-graph" role="list" aria-label="Lockheed Objective dependency map">{graph.map(({ row, links }) => <button type="button" key={row.externalRecordKey} className={`feed-node ${selected?.externalRecordKey === row.externalRecordKey ? "feed-node-selected" : ""} status-${row.disposition}`} onClick={() => setSelectedKey(row.externalRecordKey)}><span className="record-type">{row.externalIdentifier || `RECORD ${row.externalRecordKey}`}</span><strong>{row.title || "Untitled Objective"}</strong><small>{row.jpoIdentifiers.length ? `JPO / MCP: ${row.jpoIdentifiers.join(", ")}` : "No JPO / MCP supplied"}</small><span className="feed-node-links">{links.length ? links.map((link) => <i key={`${link.type}:${link.target}`} className={link.known ? "known" : "unresolved"}>{link.type} → {link.target}</i>) : "No reported block relationships"}</span></button>)}</div><aside className="feed-inspector">{selected ? <><span className="eyebrow">SELECTED SOURCE RECORD</span><h3>{selected.externalIdentifier || `Record ${selected.externalRecordKey}`}</h3><p>{selected.title}</p><dl className="record-facts"><div><dt>JPO / MCP</dt><dd>{selected.jpoIdentifiers.join(", ") || "Not supplied"}</dd></div><div><dt>Domains</dt><dd>{selected.domains.join(", ") || "Not supplied"}</dd></div><div><dt>Schedule</dt><dd>{selected.targetStart || "—"} → {selected.targetFinish || "—"}</dd></div><div><dt>ROM / completion</dt><dd>{selected.rom || "—"} / {selected.percentComplete ?? "—"}%</dd></div><div><dt>Release / funding</dt><dd>{selected.release || "—"} / {selected.funding || "—"}</dd></div></dl><h4>Snapshot change</h4>{selected.diffs.length ? <ul className="source-diff-list">{selected.diffs.map((diff) => <li key={diff.field}><strong>{diff.field}</strong><del>{diff.before || "(blank)"}</del><ins>{diff.after || "(blank)"}</ins></li>)}</ul> : <p className="entity-meta">No prior source difference for this record.</p>}{selected.issues.length ? <p className="warning-copy">{selected.issues.join(" ")}</p> : null}{safeExternalUrl(selected.url) ? <a className="text-action" href={safeExternalUrl(selected.url) || undefined} target="_blank" rel="noreferrer">Open Lockheed source record ↗</a> : null}</> : <p>Select an Objective to inspect it.</p>}</aside></div></section> : null}
     <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">CURRENT SOURCE SUBJECTS</span><h3>Trace links and reported Change Request references</h3></div><button className="ghost-button" type="button" onClick={() => void loadFeedState()}>Refresh feed state</button></div><p className="entity-meta">A trace link is an analyst-controlled cross-reference to a governed LM Objective. It does not alter the Objective’s owning Change Request, nor does a reported JPO/MCP reference approve funding or delivery.</p><div className="domain-table-wrap feed-subject-table"><table><thead><tr><th>Lockheed source subject</th><th>Reported JPO / MCP</th><th>Latest source state</th><th>Governed Objective trace link</th></tr></thead><tbody>{subjects.map((subject) => <tr key={subject.id}><td><strong>{subject.jira_identifier || `Record ${subject.feed_key}`}</strong><small>Feed key {subject.feed_key} · {subject.title || "No title supplied"}</small></td><td>{subject.jpoLinks?.length ? subject.jpoLinks.map((link) => link.change_request_id ? <Link key={`${subject.id}:${link.external_identifier}`} href={`/changes/${encodeURIComponent(link.change_request_id)}`}>{link.change_request_external_identifier || link.external_identifier}</Link> : <span className="source-reference" key={`${subject.id}:${link.external_identifier}`}>{link.external_identifier}</span>) : <span className="entity-meta">Not supplied</span>}</td><td><span className={`status-pill ${subject.presentInLatestSnapshot ? "status-accepted" : "status-warning"}`}>{subject.presentInLatestSnapshot ? "PRESENT" : "ABSENT"}</span><small>{subject.presentInLatestSnapshot ? "In latest applied file" : "Not in latest applied file; history retained"}</small></td><td>{subject.canonical_objective_id ? <p className="trace-link-cell"><Link href={`/objectives/${encodeURIComponent(subject.canonical_objective_id)}`}>{subject.canonical_objective_title || "Open linked Objective"}</Link><select aria-label={`Change governed Objective link for ${subject.jira_identifier || subject.feed_key}`} value={linkChoice[subject.id] || ""} onChange={(event) => setLinkChoice({ ...linkChoice, [subject.id]: event.target.value })}><option value="">Change link…</option>{objectiveOptions.map((objective) => <option key={objective.id} value={objective.id}>{objective.externalIdentifier} · {objective.title}</option>)}</select>{linkChoice[subject.id] ? <button className="ghost-button compact-button" type="button" disabled={linkingSubjectId === subject.id} onClick={() => void reconcileSubject(subject.id, linkChoice[subject.id])}>{linkingSubjectId === subject.id ? "Linking…" : "Update link"}</button> : null}</p> : <p className="trace-link-cell"><select aria-label={`Link ${subject.jira_identifier || subject.feed_key} to governed LM Objective`} value={linkChoice[subject.id] || ""} onChange={(event) => setLinkChoice({ ...linkChoice, [subject.id]: event.target.value })}><option value="">Choose governed LM Objective</option>{objectiveOptions.map((objective) => <option key={objective.id} value={objective.id}>{objective.externalIdentifier} · {objective.title}</option>)}</select><button className="ghost-button compact-button" type="button" disabled={!linkChoice[subject.id] || linkingSubjectId === subject.id} onClick={() => void reconcileSubject(subject.id, linkChoice[subject.id])}>{linkingSubjectId === subject.id ? "Linking…" : "Create trace link"}</button></p>}</td></tr>)}{!subjects.length ? <tr><td colSpan={4} className="empty">No Lockheed source subject has been applied.</td></tr> : null}</tbody></table></div></section>
     <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">SNAPSHOT HISTORY</span><h3>Daily Lockheed feed receipts</h3></div><button className="ghost-button" type="button" onClick={() => void loadFeedState()}>Refresh history</button></div><div className="domain-table-wrap"><table><thead><tr><th>Source file</th><th>Source as of</th><th>Received</th><th>Records</th><th>Changes</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}><td>{item.fileName}</td><td>{item.sourceAsOf || "Not supplied"}</td><td>{new Date(item.receivedAt).toLocaleString()}</td><td>{item.rowCount}</td><td>+{item.addedCount} · Δ{item.changedCount} · ={item.unchangedCount} · −{item.removedCount} · !{item.blockedCount}</td></tr>)}{!history.length ? <tr><td colSpan={5} className="empty">No Lockheed source snapshot has been applied.</td></tr> : null}</tbody></table></div></section>

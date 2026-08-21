@@ -1,9 +1,11 @@
 import { env } from "cloudflare:workers";
 import { audit, ensureActor, PROGRAM_ID, requireWriter } from "../../../../lib/governance-server";
+import type { GovernedImportItem, ImportResolution } from "../../../../lib/governed-import";
+import { importIdentity, importRunStatements, priorImportRun } from "../../../../lib/import-run-server";
 import { LM_OBJECTIVE_FEED_SYSTEM, comparableFeedRecord, deltaJson, feedJson, parseLmObjectiveFeed, reconcileLmObjectiveFeedSnapshot, type ExistingLmFeedItem, type LmObjectiveFeedRecord } from "../../../../lib/lm-objective-feed";
 
 type RequestRow = { id: string; external_identifier: string };
-type StateRow = { feed_key: string; subject_id: string };
+type StateRow = { feed_key: string; subject_id: string; canonical_objective_id: string | null };
 type FeedSnapshotRow = { id: string; file_name: string; source_locator: string | null; source_as_of: string | null; observed_at: string; record_count: number; added_count: number; changed_count: number; unchanged_count: number; removed_count: number; blocked_count: number; status: string };
 type FeedSubjectRow = { id: string; feed_key: string; jira_identifier: string | null; url: string | null; canonical_objective_id: string | null; updated_at: string; latest_snapshot_id: string | null; rel_to: string | null; roadmap_parent: string | null; scope: string | null; domains_json: string | null; item_number: number | null; target_start: string | null; target_finish: string | null; rom: string | null; percent_complete: number | null; funding: string | null; release: string | null; overview: string | null; background: string | null; canonical_objective_title: string | null; normalized_payload: string | null };
 type FeedJpoRow = { subject_id: string; external_identifier: string; change_request_id: string | null; change_request_external_identifier: string | null };
@@ -37,7 +39,7 @@ function priorRecord(item: ExistingLmFeedItem | undefined): LmObjectiveFeedRecor
 async function currentContext() {
   const [requests, states, latest] = await Promise.all([
     env.DB.prepare("SELECT id,external_identifier FROM change_request WHERE program_id=?").bind(PROGRAM_ID).all<RequestRow>(),
-    env.DB.prepare("SELECT s.feed_key,s.subject_id FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id WHERE f.program_id=? AND f.external_system=?").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<StateRow>(),
+    env.DB.prepare("SELECT s.feed_key,s.subject_id,f.canonical_objective_id FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id WHERE f.program_id=? AND f.external_system=?").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<StateRow>(),
     env.DB.prepare("SELECT id FROM lm_objective_feed_snapshot WHERE program_id=? AND external_system=? AND status='applied' ORDER BY observed_at DESC,created_at DESC LIMIT 1").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).first<{ id: string }>(),
   ]);
   const prior = latest ? await env.DB.prepare("SELECT feed_key,subject_id AS objective_id,normalized_payload FROM lm_objective_feed_item WHERE snapshot_id=?").bind(latest.id).all<ExistingLmFeedItem>() : { results: [] as ExistingLmFeedItem[] };
@@ -116,7 +118,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await ensureActor(env.DB, request);
-    const body = await request.json() as { mode?: "preview" | "apply" | "link_subject"; action?: "link_subject"; subjectId?: string; canonicalObjectiveId?: string; fileName?: string; sourceLocator?: string; sourceAsOf?: string; observedAt?: string; rawPayload?: string; payload?: unknown; sourcePayload?: unknown };
+    const body = await request.json() as { mode?: "preview" | "apply" | "link_subject"; action?: "link_subject"; subjectId?: string; canonicalObjectiveId?: string; fileName?: string; sourceLocator?: string; sourceAsOf?: string; observedAt?: string; rawPayload?: string; payload?: unknown; sourcePayload?: unknown; resolutions?: ImportResolution[] };
     if (body.mode === "link_subject" || body.action === "link_subject") {
       requireWriter(actor);
       if (!body.subjectId || !body.canonicalObjectiveId) return Response.json({ error: "A feed subject and a governed Objective are required." }, { status: 400 });
@@ -140,16 +142,34 @@ export async function POST(request: Request) {
     const parsed = parseLmObjectiveFeed(payload);
     const context = await currentContext();
     const preview = reconcileLmObjectiveFeedSnapshot(parsed.records, context.prior);
+    const stateBySubject = new Map(context.states.map((item) => [item.subject_id, item]));
     const canApply = preview.canApply && !parsed.validationIssues.some((item) => item.blocking);
     const unresolvedJpoLinks = parsed.records.reduce((count, record) => count + record.jpoIds.filter((identifier) => !context.requests.some((request) => normalize(request.external_identifier) === normalize(identifier))).length, 0);
-    const responsePreview = { ...preview, canApply, sourceIssues: parsed.issues, unresolvedJpoLinks };
+    const responsePreview = { ...preview, items: preview.items.map((item) => ({ ...item, objectiveId: item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null })), canApply, sourceIssues: parsed.issues, unresolvedJpoLinks };
     if (body.mode !== "apply") return Response.json({ preview: responsePreview, previousSnapshotId: context.latestSnapshotId });
     requireWriter(actor);
-    if (!canApply) return Response.json({ error: "Resolve blocking JSON feed issues before applying the snapshot.", preview: responsePreview }, { status: 409 });
+    const resolutionByKey = new Map((body.resolutions || []).map((item) => [item.sourceKey || `row:${item.rowNumber}`, item]));
+    const appliedItems = preview.items.filter((item, index) => {
+      if (item.disposition === "blocked") return false;
+      return (resolutionByKey.get(item.record.sourceKey) || resolutionByKey.get(`row:${index + 2}`))?.decision !== "skip";
+    });
+    const blockedApproved = preview.items.some((item, index) => item.disposition === "blocked" && (resolutionByKey.get(item.record.sourceKey) || resolutionByKey.get(`row:${index + 2}`))?.decision === "approve");
+    if (!canApply || blockedApproved) return Response.json({ error: "Resolve blocking JSON feed issues before applying the snapshot.", preview: responsePreview }, { status: 409 });
+    if (!appliedItems.length) return Response.json({ error: "Approve at least one valid source record before applying the snapshot.", preview: responsePreview }, { status: 409 });
+    const selectedObjectiveIds = [...new Set(appliedItems.map((item) => resolutionByKey.get(item.record.sourceKey)?.targetId).filter((value): value is string => Boolean(value)))];
+    if (selectedObjectiveIds.length) {
+      const placeholders = selectedObjectiveIds.map(() => "?").join(",");
+      const found = await env.DB.prepare(`SELECT id FROM incumbent_objective WHERE program_id=? AND id IN (${placeholders})`).bind(PROGRAM_ID, ...selectedObjectiveIds).all<{ id: string }>();
+      if (found.results.length !== selectedObjectiveIds.length) return Response.json({ error: "One or more selected governed Objectives no longer exist. Preview the file again." }, { status: 409 });
+    }
 
-    const contentHash = await digest(payloadText);
+    const identity = await importIdentity("lockheed_objective_json", body.sourceAsOf || null, payloadText);
+    const duplicate = await priorImportRun(env.DB, identity.idempotencyKey);
+    if (duplicate) return Response.json({ ok: true, duplicate: true, runId: duplicate.id, preview: responsePreview, message: "This source snapshot was already applied. No records were changed." });
+    const contentHash = identity.contentHash;
     const at = timestamp();
     const snapshotId = `lm-feed-${crypto.randomUUID()}`;
+    const runId = `ingestion-run-${crypto.randomUUID()}`;
     const priorByKey = new Map(context.prior.map((item) => [item.sourceKey, item]));
     const stateByKey = new Map(context.states.map((item) => [item.feed_key, item.subject_id]));
     const requestByIdentifier = new Map(context.requests.map((item) => [normalize(item.external_identifier), item]));
@@ -157,14 +177,16 @@ export async function POST(request: Request) {
     const statements: D1PreparedStatement[] = [
       env.DB.prepare("INSERT INTO lm_objective_feed_snapshot (id,program_id,external_system,file_name,source_locator,source_as_of,observed_at,content_hash,snapshot_payload,record_count,added_count,changed_count,unchanged_count,removed_count,blocked_count,status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(snapshotId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM, body.fileName, text(body.sourceLocator || null), text(body.sourceAsOf || null), body.observedAt || at, contentHash, payloadText, parsed.records.length, preview.added, preview.changed, preview.unchanged, preview.removed.length, preview.blocked, "applied", actor.id, at, at),
     ];
-    for (const item of preview.items) {
+    for (const item of appliedItems) {
       const record = item.record;
+      const resolution = resolutionByKey.get(record.sourceKey);
+      const canonicalObjectiveId = resolution?.targetId || null;
       const prior = priorByKey.get(record.sourceKey);
       const matching = stateByKey.get(record.sourceKey) || prior?.objectiveId || null;
       const subjectId = matching || `lm-feed-subject-${crypto.randomUUID()}`;
       objectiveIdByKey.set(record.sourceKey, subjectId);
-      if (!matching) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_subject (id,program_id,external_system,feed_key,jira_identifier,url,canonical_objective_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM, record.sourceKey, record.jira, record.url, null, at, at));
-      else statements.push(env.DB.prepare("UPDATE lm_objective_feed_subject SET feed_key=?,jira_identifier=?,url=?,updated_at=? WHERE id=? AND program_id=? AND external_system=?").bind(record.sourceKey, record.jira, record.url, at, subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM));
+      if (!matching) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_subject (id,program_id,external_system,feed_key,jira_identifier,url,canonical_objective_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM, record.sourceKey, record.jira, record.url, canonicalObjectiveId, at, at));
+      else statements.push(env.DB.prepare("UPDATE lm_objective_feed_subject SET feed_key=?,jira_identifier=?,url=?,canonical_objective_id=COALESCE(?,canonical_objective_id),updated_at=? WHERE id=? AND program_id=? AND external_system=?").bind(record.sourceKey, record.jira, record.url, canonicalObjectiveId, at, subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM));
       const normalizedPayload = feedJson(record);
       statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_item (id,snapshot_id,subject_id,feed_key,jira_identifier,jpo_raw,disposition,normalized_payload,raw_payload,content_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(`lm-feed-item-${crypto.randomUUID()}`, snapshotId, subjectId, record.sourceKey, record.jira, record.jpoRaw, item.disposition, normalizedPayload, JSON.stringify(record.raw), await digest(normalizedPayload), at));
       statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_state (subject_id,latest_snapshot_id,feed_key,url,rel_to,roadmap_parent,scope,domains_json,item_number,target_start,target_finish,rom,percent_complete,funding,release,overview,background,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject_id) DO UPDATE SET latest_snapshot_id=excluded.latest_snapshot_id,feed_key=excluded.feed_key,url=excluded.url,rel_to=excluded.rel_to,roadmap_parent=excluded.roadmap_parent,scope=excluded.scope,domains_json=excluded.domains_json,item_number=excluded.item_number,target_start=excluded.target_start,target_finish=excluded.target_finish,rom=excluded.rom,percent_complete=excluded.percent_complete,funding=excluded.funding,release=excluded.release,overview=excluded.overview,background=excluded.background,updated_at=excluded.updated_at").bind(subjectId, snapshotId, record.sourceKey, record.url, record.relTo, record.roadmapParent, record.scope, JSON.stringify(record.domains), record.itemNumber, record.targetStart, record.targetFinish, record.rom == null ? null : String(record.rom), record.percentComplete, record.funding, record.release, record.overview, record.background, at));
@@ -182,7 +204,15 @@ export async function POST(request: Request) {
       } else statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_delta (id,snapshot_id,subject_id,feed_key,change_kind,field_name,before_value,after_value,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`lm-feed-delta-${crypto.randomUUID()}`, snapshotId, subjectId, record.sourceKey, "unchanged", null, null, null, at));
     }
     for (const removed of preview.removed) { const subjectId = stateByKey.get(removed.sourceKey) || removed.objectiveId; if (subjectId) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_delta (id,snapshot_id,subject_id,feed_key,change_kind,field_name,before_value,after_value,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`lm-feed-delta-${crypto.randomUUID()}`, snapshotId, subjectId, removed.sourceKey, "removed", null, null, null, at)); }
-    for (const record of parsed.records) for (const [direction, targets] of [["blocks", record.blocks], ["blocked_by", record.blockedBy]] as const) for (const target of targets) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_dependency (id,snapshot_id,source_feed_key,source_subject_id,direction,target_reference,target_subject_id,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`lm-feed-dependency-${crypto.randomUUID()}`, snapshotId, record.sourceKey, objectiveIdByKey.get(record.sourceKey) || stateByKey.get(record.sourceKey), direction, target, objectiveIdByKey.get(target) || stateByKey.get(target) || null, at));
+    for (const { record } of appliedItems) for (const [direction, targets] of [["blocks", record.blocks], ["blocked_by", record.blockedBy]] as const) for (const target of targets) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_dependency (id,snapshot_id,source_feed_key,source_subject_id,direction,target_reference,target_subject_id,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`lm-feed-dependency-${crypto.randomUUID()}`, snapshotId, record.sourceKey, objectiveIdByKey.get(record.sourceKey) || stateByKey.get(record.sourceKey), direction, target, objectiveIdByKey.get(target) || stateByKey.get(target) || null, at));
+    const governedItems: GovernedImportItem[] = preview.items.map((item, index) => {
+      const prior = priorRecord(priorByKey.get(item.record.sourceKey));
+      const left = prior ? comparableFeedRecord(prior) as Record<string, unknown> : {};
+      const right = comparableFeedRecord(item.record) as Record<string, unknown>;
+      const canonicalId = item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null;
+      return { id: `lm-feed-${item.record.sourceKey}`, rowNumber: index + 2, sourceKey: item.record.sourceKey, title: item.record.jira || item.record.title || item.record.sourceKey, disposition: item.disposition, issues: item.issues.map((issue) => issue.message), changes: item.changedFields.map((field) => ({ field, before: deltaJson(left[field]).replace(/^"|"$/g, ""), after: deltaJson(right[field]).replace(/^"|"$/g, "") })), proposedTargetId: canonicalId, defaultDecision: item.disposition === "blocked" ? "skip" : "approve" };
+    });
+    statements.push(...importRunStatements(env.DB, { runId, adapterKey: "lockheed_objective_json", sourceSystem: LM_OBJECTIVE_FEED_SYSTEM, fileName: body.fileName, sourceLocator: body.sourceLocator || null, sourceAsOf: body.sourceAsOf || null, contentHash, idempotencyKey: identity.idempotencyKey, items: governedItems, resolutions: body.resolutions || governedItems.map((item) => ({ rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.defaultDecision, targetId: item.proposedTargetId || null })), rawRows: parsed.records.map((record) => record.raw), normalizedRows: parsed.records.map(comparableFeedRecord), targetSnapshotKind: "lm_objective_feed_snapshot", targetSnapshotId: snapshotId, actorId: actor.id, at }));
     statements.push(audit(env.DB, actor, "lm_objective_feed_snapshot_imported", "lm_objective_feed_snapshot", snapshotId, { fileName: body.fileName, sourceLocator: body.sourceLocator || null, sourceAsOf: body.sourceAsOf || null, records: parsed.records.length, added: preview.added, changed: preview.changed, unchanged: preview.unchanged, removed: preview.removed.length, unresolvedJpoLinks }));
     await env.DB.batch(statements);
     return Response.json({ ok: true, snapshotId, preview: responsePreview }, { status: 201 });

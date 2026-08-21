@@ -1,21 +1,107 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import Link from "../../../components/app-link";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { CHANGE_REQUEST_IMPORT_COLUMNS, normalizeChangeRequestImportRow, type ChangeRequestImportPreview, type ChangeRequestImportRow } from "../../../lib/change-import";
+import { GovernedImportReview } from "../../../components/governed-import-review";
+import {
+  CHANGE_REQUEST_IMPORT_COLUMNS,
+  CONFLUENCE_CHANGE_SOURCE_SYSTEM,
+  inferChangeRequestImportMapping,
+  type ChangeRequestImportColumn,
+  type ChangeRequestImportMapping,
+} from "../../../lib/change-import";
+import { importResolutions, type GovernedImportItem, type ImportDecision, type ImportTargetOption } from "../../../lib/governed-import";
+
+type Preview = { items: GovernedImportItem[]; targets: ImportTargetOption[]; canApply: boolean };
+type HistoryRow = { id: string; source_system: string; file_name: string; sheet_name?: string | null; source_as_of?: string | null; status: string; record_count: number; added_count: number; changed_count: number; unchanged_count: number; skipped_count: number; blocked_count: number; applied_at?: string | null };
+
+const today = () => new Date().toISOString().slice(0, 10);
 
 export default function ChangeRequestImportPage() {
-  const [fileName, setFileName] = useState(""); const [sheetName, setSheetName] = useState(""); const [rows, setRows] = useState<ChangeRequestImportRow[]>([]); const [preview, setPreview] = useState<ChangeRequestImportPreview | null>(null); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
-  async function chooseFile(file?: File) { if (!file) return; setMessage(""); setPreview(null); setFileName(file.name); try { const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" }); const first = workbook.SheetNames[0]; if (!first) throw new Error("The workbook has no worksheets."); setSheetName(first); const incoming = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[first], { defval: "", raw: false }).map(normalizeChangeRequestImportRow); if (!incoming.length) throw new Error("The worksheet has no Change Request references."); setRows(incoming); } catch (cause) { setRows([]); setMessage(cause instanceof Error ? cause.message : "The workbook could not be read."); } }
-  async function call(mode: "preview" | "apply") { setBusy(true); setMessage(""); try { const response = await fetch("/api/changes/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, fileName, sheetName, rows }) }); const payload = await response.json() as { preview?: ChangeRequestImportPreview; error?: string }; if (payload.preview) setPreview(payload.preview); if (!response.ok) throw new Error(payload.error || "Import failed."); setMessage(mode === "apply" ? "External Change Request references refreshed. Government decisions and analysis were retained." : "Preview complete. Review changed and blocked rows."); } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Import failed."); } finally { setBusy(false); } }
-  function template() { const workbook = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[...CHANGE_REQUEST_IMPORT_COLUMNS]]), "Change Requests"); XLSX.writeFile(workbook, "Change_Request_Reference_Import.xlsx"); }
-  return <DomainPageShell title="Change Request Reference Import" subtitle="Refresh externally managed request identity and status without overwriting Government analysis." actions={<><Link className="ghost-button" href="/changes">Return to Change Requests</Link><button className="ghost-button" type="button" onClick={template}>Download template</button></>}>
-    <section className="decision-principle"><strong>Import boundary</strong><span>This import updates external identity, status, owner, source locator, source-as-of date, and requested Release only. Government priority, funding decisions, consequences, effects, dependencies, Objectives, and acceptance are retained.</span></section>
-    <section className="split-layout"><article className="domain-section"><span className="eyebrow">EXTERNAL SOURCE</span><h3>Select Change Request workbook</h3><label className="modal-field">Excel workbook<input type="file" accept=".xlsx,.xls" onChange={(event) => void chooseFile(event.target.files?.[0])} /></label>{fileName ? <p className="entity-meta">{fileName} · {sheetName} · {rows.length} records</p> : null}<button className="primary-button" disabled={!rows.length || busy} onClick={() => void call("preview")}>{busy ? "Processing…" : "Preview reconciliation"}</button></article><article className="domain-section"><span className="eyebrow">MATCH RULE</span><h3>External system + external ID</h3><ul><li>New reference: added with pending Government decision.</li><li>Existing reference: supplier-controlled fields refreshed.</li><li>Government analysis: never overwritten.</li><li>Unknown type or Release: blocked before apply.</li></ul></article></section>
-    {preview ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RECONCILIATION</span><h3>Source changes before application</h3></div><button className="primary-button" disabled={!preview.canApply || busy} onClick={() => void call("apply")}>{preview.canApply ? "Apply reference refresh" : "Resolve blocking issues"}</button></div><section className="summary"><div className="metric"><span>Add</span><strong>{preview.added}</strong></div><div className="metric"><span>Change</span><strong>{preview.changed}</strong></div><div className="metric"><span>Unchanged</span><strong>{preview.unchanged}</strong></div><div className="metric"><span>Blocked</span><strong>{preview.blocked}</strong></div></section><div className="domain-table-wrap"><table><thead><tr><th>Row</th><th>Reference</th><th>Source</th><th>Disposition</th><th>Changes / issues</th></tr></thead><tbody>{preview.rows.map((item) => <tr key={`${item.key}:${item.rowNumber}`}><td>{item.rowNumber}</td><td><strong>{item.row.ExternalIdentifier}</strong><small>{item.row.Title}</small></td><td>{item.row.ExternalSystem}<small>{item.row.SourceAsOf}</small></td><td><span className={`status-pill status-${item.disposition}`}>{item.disposition}</span></td><td>{item.issues.length ? item.issues.map((issue) => <small className="error-copy" key={issue}>{issue}</small>) : item.changedFields.length ? item.changedFields.join(", ") : "No source changes"}</td></tr>)}</tbody></table></div></section> : null}
-    {message ? <p className={message.includes("failed") || message.includes("required") ? "toast toast-error" : "toast"}>{message}</p> : null}
+  const [fileName, setFileName] = useState("");
+  const [sheetName, setSheetName] = useState("");
+  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<Record<string, unknown>[]>([]);
+  const [mapping, setMapping] = useState<ChangeRequestImportMapping>(() => inferChangeRequestImportMapping([]));
+  const [sourceSystem, setSourceSystem] = useState(CONFLUENCE_CHANGE_SOURCE_SYSTEM);
+  const [sourceAsOf, setSourceAsOf] = useState(today());
+  const [sourceLocator, setSourceLocator] = useState("");
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [decisions, setDecisions] = useState<Record<string, ImportDecision>>({});
+  const [targets, setTargets] = useState<Record<string, string>>({});
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const loadHistory = useCallback(async () => {
+    const response = await fetch("/api/changes/import", { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json() as { history?: HistoryRow[] };
+    setHistory(payload.history || []);
+  }, []);
+  useEffect(() => { queueMicrotask(() => void loadHistory()); }, [loadHistory]);
+
+  const requiredMappingReady = Boolean(mapping.ExternalIdentifier && mapping.Title && sourceSystem.trim() && sourceAsOf);
+  const resolutions = useMemo(() => preview ? importResolutions(preview.items, decisions, targets) : [], [decisions, preview, targets]);
+
+  async function chooseFile(file?: File) {
+    if (!file) return;
+    setMessage(""); setPreview(null); setDecisions({}); setTargets({}); setFileName(file.name);
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
+      const first = workbook.SheetNames[0];
+      if (!first) throw new Error("The file contains no worksheet or CSV table.");
+      const values = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[first], { defval: "", raw: false });
+      if (!values.length) throw new Error("The selected file contains no Change Request rows.");
+      const discovered = Object.keys(values[0]);
+      setSheetName(first); setHeaders(discovered); setRawRows(values); setMapping(inferChangeRequestImportMapping(discovered));
+      setMessage(`${values.length} rows parsed. Verify the source-column mapping before preview.`);
+    } catch (cause) {
+      setHeaders([]); setRawRows([]); setMessage(cause instanceof Error ? cause.message : "The source file could not be read.");
+    }
+  }
+
+  async function call(mode: "preview" | "apply") {
+    setBusy(true); setMessage("");
+    try {
+      const response = await fetch("/api/changes/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode, adapterKey: "confluence_change_csv", fileName, sheetName, sourceSystem, sourceLocator, sourceAsOf, mapping, rawRows, resolutions }) });
+      const payload = await response.json() as { preview?: Preview; error?: string; duplicate?: boolean; message?: string; applied?: number; skipped?: number };
+      if (payload.preview) {
+        setPreview(payload.preview);
+        if (mode === "preview") {
+          setDecisions(Object.fromEntries(payload.preview.items.map((item) => [item.id, item.defaultDecision])));
+          setTargets(Object.fromEntries(payload.preview.items.filter((item) => item.proposedTargetId).map((item) => [item.id, item.proposedTargetId!])))
+        }
+      }
+      if (!response.ok) throw new Error(payload.error || "The source file was not applied.");
+      if (mode === "apply") {
+        setMessage(payload.duplicate ? payload.message || "This exact source snapshot was already applied. No records were changed." : `${payload.applied || 0} approved records applied; ${payload.skipped || 0} rows skipped. Government analysis was retained.`);
+        await loadHistory();
+      } else setMessage("Preview complete. Review every row, canonical target, and proposed field change before applying.");
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : "The source file was not applied."); }
+    finally { setBusy(false); }
+  }
+
+  function setMappingField(field: ChangeRequestImportColumn, header: string) {
+    setMapping((current) => ({ ...current, [field]: header })); setPreview(null); setDecisions({}); setTargets({});
+  }
+
+  function bulkDecision(decision: ImportDecision) {
+    if (!preview) return;
+    setDecisions(Object.fromEntries(preview.items.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])));
+  }
+
+  return <DomainPageShell title="Change Request Source Import" subtitle="Stage, map, review, and apply the Confluence DSOR/MCP export without overwriting Government analysis." actions={<Link className="ghost-button" href="/changes">Return to Change Requests</Link>}>
+    <section className="decision-principle"><strong>Controlled merge</strong><span>The source file does not write directly to the canonical database. Every row is matched, reviewed, and approved first. Exact source snapshots, analyst overrides, skips, and field changes are retained.</span></section>
+    <section className="split-layout"><article className="domain-section"><span className="eyebrow">CONFLUENCE EXPORT</span><h3>Select the generated CSV or workbook</h3><label className="modal-field">Source file<input type="file" accept=".csv,.xlsx,.xls,text/csv" onChange={(event) => void chooseFile(event.target.files?.[0])} /></label><div className="form-grid"><label className="modal-field">Source snapshot date<input type="date" value={sourceAsOf} onChange={(event) => { setSourceAsOf(event.target.value); setPreview(null); }} /></label><label className="modal-field">Source system<input value={sourceSystem} onChange={(event) => { setSourceSystem(event.target.value); setPreview(null); }} /></label></div><label className="modal-field">Export or Confluence locator<input value={sourceLocator} onChange={(event) => setSourceLocator(event.target.value)} placeholder="Optional export job, Confluence page, or script reference" /></label>{fileName ? <p className="entity-meta">{fileName} · {sheetName} · {rawRows.length} source rows · {headers.length} columns</p> : null}<button className="primary-button" disabled={!rawRows.length || !requiredMappingReady || busy} onClick={() => void call("preview")}>{busy ? "Processing…" : "Preview reconciliation"}</button></article><article className="domain-section"><span className="eyebrow">MERGE AUTHORITY</span><h3>Fields controlled by this import</h3><p>External identity, title, source status, source owner, source locator, source date, request type, and requested Release may be refreshed.</p><p className="entity-meta">Government priority, fund/defer/decline decisions, consequences, affected objects, dependencies, Objectives, requirements, acceptance, and WBS records are never overwritten.</p></article></section>
+
+    {headers.length ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">COLUMN MAPPING</span><h3>Verify how the source columns map to canonical fields</h3></div><span>Required: External ID and Title</span></div><div className="import-column-map">{CHANGE_REQUEST_IMPORT_COLUMNS.map((field) => <label className="modal-field" key={field}>{field}<select value={mapping[field]} onChange={(event) => setMappingField(field, event.target.value)}><option value="">{field === "ExternalSystem" || field === "SourceAsOf" ? "Use import-level value" : "Not mapped"}</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div><p className="entity-meta">Columns not mapped to canonical fields remain in the immutable source snapshot and are compared on later imports. They are not discarded.</p></section> : null}
+
+    {preview ? <GovernedImportReview items={preview.items} decisions={decisions} targets={targets} targetOptions={preview.targets} targetLabel="Canonical Change Request" busy={busy} applyLabel="Apply approved rows" onDecision={(id, decision) => setDecisions((current) => ({ ...current, [id]: decision }))} onTarget={(id, targetId) => setTargets((current) => ({ ...current, [id]: targetId }))} onBulkDecision={bulkDecision} onApply={() => void call("apply")} /> : null}
+
+    <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">IMPORT HISTORY</span><h3>Applied Confluence source snapshots</h3></div><button className="ghost-button" type="button" onClick={() => void loadHistory()}>Refresh history</button></div><div className="domain-table-wrap"><table><thead><tr><th>Snapshot</th><th>Source</th><th>Result</th><th>Applied</th></tr></thead><tbody>{history.map((run) => <tr key={run.id}><td><strong>{run.file_name}</strong><small>{run.source_as_of || "No source date"}</small></td><td>{run.source_system}<small>{run.record_count} rows</small></td><td>{run.added_count} new · {run.changed_count} changed · {run.unchanged_count} unchanged<small>{run.skipped_count} skipped · {run.blocked_count} blocked</small></td><td>{run.applied_at ? new Date(run.applied_at).toLocaleString() : run.status}</td></tr>)}{!history.length ? <tr><td colSpan={4} className="empty">No Confluence Change Request source snapshot has been applied.</td></tr> : null}</tbody></table></div></section>
+    {message ? <p className={/required|could not|failed|invalid|older/i.test(message) ? "toast toast-error" : "toast"}>{message}</p> : null}
   </DomainPageShell>;
 }
-
