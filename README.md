@@ -102,10 +102,8 @@ create Government ownership, funding approval, or an Objective owner. Use an
 explicit analyst link when a source subject is reconciled to a governed LM
 Objective.
 
-Synthetic fixtures are in `examples/lockheed-objective-feed/`. Upload
-`01-synthetic-day-one.json`, apply it, then upload
-`02-synthetic-day-two.json` and inspect the preview. They demonstrate
-add/change/remove/no-JPO/multi-JPO/dependency cases and are not program data.
+Synthetic fixtures and automated tests are maintained on the full development
+branch. They are intentionally excluded from this AWS Workspace package.
 
 ## Daily Lockheed multi-file delivery
 
@@ -115,8 +113,7 @@ dataset classification, row disposition, and optional governed trace link
 before applying. Each accepted source observation is retained by date and
 compared field by field with the preceding observation. Supplier schedule,
 ROM, completion, release, status, and dependency values do not overwrite
-Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md` and the synthetic
-two-day fixtures under `examples/lockheed-daily-delivery/`.
+Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md`.
 
 ## Governed source imports
 
@@ -126,8 +123,7 @@ Tech Stack workbook use a common analyst-review control. Preview every row,
 confirm or override the proposed canonical match, skip questionable rows, and
 then apply approved records. Imports retain their source receipts and do not
 overwrite Government analysis. See
-[docs/GOVERNED_IMPORTS.md](docs/GOVERNED_IMPORTS.md). A synthetic Confluence
-fixture is available under `examples/confluence-change-requests/`.
+[docs/GOVERNED_IMPORTS.md](docs/GOVERNED_IMPORTS.md).
 
 ## Verification
 
@@ -159,3 +155,12 @@ See [docs/LOCAL_OPERATOR_RUNBOOK.md](docs/LOCAL_OPERATOR_RUNBOOK.md) for the
 value-producing analyst workflow and recovery procedures. See
 [docs/AUTHORITATIVE_DATA_MODEL.md](docs/AUTHORITATIVE_DATA_MODEL.md) for the
 implemented ownership, lifecycle, intake, export, and delivery boundaries.
+
+## Hardened AWS Workspace branch
+
+This branch is the compact single-user operator package. It retains the full
+application, checked-in database migrations, local database, backup/restore,
+workspace transfer, XLSX support, and operator documentation. It excludes
+automated tests, synthetic fixtures, lint and schema-generation tooling, and
+unused starter assets. Development and schema changes belong on
+`codex/model-maturity`; this branch is for installation and operation.

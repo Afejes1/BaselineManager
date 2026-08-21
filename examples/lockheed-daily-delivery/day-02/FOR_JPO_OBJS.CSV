@@ -1,3 +1,0 @@
-Key,JIRA ID,Summary,Parent,LM Status,Target Release,Target Start,Target Finish,Funding,JPO ID,% Complete,JPO 1-n,LM 1-n,ROM,Category,Blocks,Blocked By
-120,A2O-401838,Modernized PMA Tablet Platform,arch_plan_17,In Progress,MX-P.03,2026-05,2026-10,RDT&E,MCP-122,28,48,9,52.5,Modernization,"13, arch_plan_44, arch_plan_52",arch_plan_154
-arch_plan_154,A2O-401900,Complete platform acceptance,arch_plan_17,Planning,MX-P.03,2026-08,2027-01,RDT&E,DSOR-083,9,12,3,22,System Test,,120
