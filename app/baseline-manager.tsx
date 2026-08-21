@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import Link from "../components/app-link";
 import { GovernedImportReview } from "../components/governed-import-review";
 import { usePathname, useSearchParams } from "next/navigation";
-import { TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
+import { describeTechnicalBaselineHeaderIssue, TECHNICAL_BASELINE_COLUMNS, type TechnicalBaselineColumn } from "../lib/technical-baseline-contract";
 import { releaseOf, tierOf } from "../lib/baseline-scope";
 import { dataQualityForOccurrence, type DataQuality } from "../lib/baseline-quality";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
@@ -531,8 +531,8 @@ export function BaselineManager() {
       const sheetName = workbook.SheetNames[0];
       const cells = XLSX.utils.sheet_to_json<Cell[]>(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
       const headers = (cells[0] ?? []).map(text);
-      const mismatch = headers.length !== 24 || headers.some((header, index) => header !== TECHNICAL_BASELINE_COLUMNS[index]);
-      if (mismatch) throw new Error("The first worksheet must contain the exact 24 headers in the retained order. No columns were imported.");
+      const headerIssue = describeTechnicalBaselineHeaderIssue(headers);
+      if (headerIssue) throw new Error(headerIssue);
       const importLines = cells.slice(1).filter((line) => line.some((cell) => text(cell).trim()));
       const imported: Record24[] = importLines.map((line) => {
         const row = Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column, index) => [column, line[index] ?? ""]));
@@ -684,7 +684,7 @@ export function BaselineManager() {
         <div><span className="eyebrow">TECHNICAL BASELINE</span><h1>Baseline Records</h1></div>
         <div className="top-actions">
           <WorkspaceContextControl mode="filter" />
-          <button className="primary-button" onClick={() => fileRef.current?.click()}>Import A2O XLSX</button>
+          <Link className="primary-button" href="/intake/a2o">Import A2O XLSX</Link>
         </div>
       </header>
 

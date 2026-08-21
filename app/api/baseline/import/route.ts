@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { TECHNICAL_BASELINE_COLUMNS, reconcileRows, sourceRow24 } from "../../../../lib/technical-baseline-contract";
+import { TECHNICAL_BASELINE_COLUMNS, describeTechnicalBaselineHeaderIssue, reconcileRows, sourceRow24 } from "../../../../lib/technical-baseline-contract";
 import { intakeIdentity, reconcileIntake } from "../../../../lib/import-reconciliation";
 import { BASELINE_PROGRAM_ID, BASELINE_WORKSPACE_ID, asA2ORow, readAssembledBaselineRecords, type A2ORow } from "../../../../lib/a2o-baseline-server";
 import { createBaselineResolver, materializeBaselineRecord, type CurrentBaselineRecord } from "../route";
@@ -16,10 +16,11 @@ function demoEnabled() {
 }
 async function sha256(value: string) { const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(bytes)).map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 
-function exactRow(value: IncomingRow): A2ORow | null {
+function exactRow(value: IncomingRow): { row: A2ORow | null; error?: string } {
   const keys = Object.keys(value);
-  if (keys.length !== TECHNICAL_BASELINE_COLUMNS.length || TECHNICAL_BASELINE_COLUMNS.some((column, index) => keys[index] !== column)) return null;
-  return asA2ORow(value);
+  const error = describeTechnicalBaselineHeaderIssue(keys);
+  if (error) return { row: null, error };
+  return { row: asA2ORow(value) };
 }
 
 export async function GET() {
@@ -38,9 +39,10 @@ export async function POST(request: Request) {
     const actor = await ensureActor(env.DB, request); requireWriter(actor);
     const body = await request.json() as { fileName?: string; sheetName?: string; rows?: IncomingRow[]; resolutions?: ImportResolution[]; replaceActiveBaseline?: boolean };
     if (!body.fileName || !Array.isArray(body.rows)) return Response.json({ error: "fileName and rows are required." }, { status: 400 });
-    const rows = body.rows.map(exactRow);
-    if (rows.some((row) => !row)) return Response.json({ error: "Every imported row must preserve the exact A2O Tech Stack 24-column contract." }, { status: 400 });
-    const incoming = rows as A2ORow[]; const replaceActiveBaseline = body.replaceActiveBaseline === true;
+    const parsedRows = body.rows.map(exactRow);
+    const invalidRow = parsedRows.find((item) => !item.row);
+    if (invalidRow) return Response.json({ error: invalidRow.error || "Every imported row must preserve the exact A2O Tech Stack 24-column contract." }, { status: 400 });
+    const incoming = parsedRows.map((item) => item.row) as A2ORow[]; const replaceActiveBaseline = body.replaceActiveBaseline === true;
     const resolutionByRow = new Map((body.resolutions || []).map((item) => [item.rowNumber, item]));
     const approvedIndexes = new Set(incoming.map((_, index) => index).filter((index) => replaceActiveBaseline || (resolutionByRow.get(index + 2)?.decision || "approve") === "approve"));
     const approvedIncoming = incoming.filter((_, index) => approvedIndexes.has(index));

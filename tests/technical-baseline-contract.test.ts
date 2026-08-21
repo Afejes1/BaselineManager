@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  TECHNICAL_BASELINE_COLUMNS, booleanCell, exactContractValues, normalizeIdentity,
+  TECHNICAL_BASELINE_COLUMNS, booleanCell, describeTechnicalBaselineHeaderIssue, diagnoseTechnicalBaselineHeaders, exactContractValues, normalizeIdentity,
   numericCell, reconcileRows, rowFromCells, rowIdentities, sourceRow24, validateHeaders,
 } from "../lib/technical-baseline-contract.js";
 import { allContractValues, hostOnlyRow, productAcrossTwoReleases, productOnTwoPlatforms } from "./technical-baseline-fixtures.js";
@@ -66,4 +66,13 @@ test("reconciliation is deterministic and reports exact changed columns", () => 
 test("headers require exact order and spelling", () => {
   assert.deepEqual(validateHeaders(TECHNICAL_BASELINE_COLUMNS), []);
   assert.equal(validateHeaders([...TECHNICAL_BASELINE_COLUMNS].reverse())[0].code, "HeaderMismatch");
+});
+
+test("header diagnostics identify a non-contract CSCI column without accepting it silently", () => {
+  const headers = [...TECHNICAL_BASELINE_COLUMNS, "CSCI"];
+  const diagnostic = diagnoseTechnicalBaselineHeaders(headers);
+  assert.equal(diagnostic.valid, false);
+  assert.equal(diagnostic.actualColumnCount, 25);
+  assert.deepEqual(diagnostic.unexpected, [{ name: "CSCI", actualPosition: 25 }]);
+  assert.match(describeTechnicalBaselineHeaderIssue(headers), /Unexpected column: CSCI \(column 25\)/);
 });

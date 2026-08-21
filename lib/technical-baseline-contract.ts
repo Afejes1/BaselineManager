@@ -17,6 +17,15 @@ export type TechnicalBaselineColumn = typeof TECHNICAL_BASELINE_COLUMNS[number];
 export type CellValue = string | number | boolean | null | undefined;
 export type TechnicalBaselineRow = Partial<Record<TechnicalBaselineColumn, CellValue>>;
 
+export type TechnicalBaselineHeaderDiagnostic = {
+  valid: boolean;
+  expectedColumnCount: number;
+  actualColumnCount: number;
+  missing: Array<{ name: TechnicalBaselineColumn; expectedPosition: number }>;
+  unexpected: Array<{ name: string; actualPosition: number }>;
+  mismatches: Array<{ expected: TechnicalBaselineColumn; actual: string; position: number }>;
+};
+
 export type SourceRow24 = {
   readonly rowNumber: number;
   /** Every contract column is present, including columns whose cell is blank. */
@@ -73,10 +82,59 @@ export function rowFromCells(cells: readonly CellValue[], rowNumber: number): So
   return { rowNumber, values, extensions: {} };
 }
 
+/**
+ * The exchange must retain its exact 24-column shape, but an operator needs a
+ * useful explanation when an upstream export adds a field such as CSCI.  Keep
+ * the comparison intentionally exact: aliases and reordered columns are not
+ * silently accepted into a controlled baseline.
+ */
+export function diagnoseTechnicalBaselineHeaders(headers: readonly unknown[]): TechnicalBaselineHeaderDiagnostic {
+  const actual = headers.map((header) => String(header ?? "").trim());
+  const expected = TECHNICAL_BASELINE_COLUMNS as readonly string[];
+  const missing = TECHNICAL_BASELINE_COLUMNS
+    .map((name, index) => ({ name, expectedPosition: index + 1 }))
+    .filter((item) => !actual.includes(item.name));
+  const unexpected = actual
+    .map((name, index) => ({ name, actualPosition: index + 1 }))
+    .filter((item) => !expected.includes(item.name));
+  const mismatches = TECHNICAL_BASELINE_COLUMNS
+    .map((expectedName, index) => ({ expected: expectedName, actual: actual[index] ?? "", position: index + 1 }))
+    .filter((item) => item.actual !== item.expected);
+  return {
+    valid: actual.length === TECHNICAL_BASELINE_COLUMNS.length && mismatches.length === 0,
+    expectedColumnCount: TECHNICAL_BASELINE_COLUMNS.length,
+    actualColumnCount: actual.length,
+    missing,
+    unexpected,
+    mismatches,
+  };
+}
+
+export function describeTechnicalBaselineHeaderIssue(headers: readonly unknown[]): string {
+  const diagnostic = diagnoseTechnicalBaselineHeaders(headers);
+  if (diagnostic.valid) return "";
+  const details: string[] = [];
+  if (diagnostic.actualColumnCount !== diagnostic.expectedColumnCount) {
+    details.push(`Found ${diagnostic.actualColumnCount} columns; the A2O Tech Stack exchange requires ${diagnostic.expectedColumnCount}.`);
+  }
+  if (diagnostic.unexpected.length) {
+    details.push(`Unexpected column${diagnostic.unexpected.length === 1 ? "" : "s"}: ${diagnostic.unexpected.map((item) => `${item.name || "(blank)"} (column ${item.actualPosition})`).join(", ")}.`);
+  }
+  if (diagnostic.missing.length) {
+    details.push(`Missing required column${diagnostic.missing.length === 1 ? "" : "s"}: ${diagnostic.missing.map((item) => `${item.name} (column ${item.expectedPosition})`).join(", ")}.`);
+  }
+  const firstOrderMismatch = diagnostic.mismatches.find((item) => item.actual && !diagnostic.unexpected.some((unexpected) => unexpected.actualPosition === item.position));
+  if (firstOrderMismatch) {
+    details.push(`Column ${firstOrderMismatch.position} is ${firstOrderMismatch.actual}, but must be ${firstOrderMismatch.expected}.`);
+  }
+  return `${details.join(" ")} No data was imported. Use a working copy to restore the exact 24-column exchange order; retain the original supplier or contractor file unchanged.`;
+}
+
 export function validateHeaders(headers: readonly string[]): ContractIssue[] {
-  if (headers.length !== TECHNICAL_BASELINE_COLUMNS.length) return [{ code: "HeaderMismatch", message: `Expected exactly ${TECHNICAL_BASELINE_COLUMNS.length} headers.` }];
-  const mismatch = headers.findIndex((header, index) => header !== TECHNICAL_BASELINE_COLUMNS[index]);
-  return mismatch < 0 ? [] : [{ code: "HeaderMismatch", column: String(mismatch + 1), message: `Header ${mismatch + 1} must be ${TECHNICAL_BASELINE_COLUMNS[mismatch]}.` }];
+  const diagnostic = diagnoseTechnicalBaselineHeaders(headers);
+  if (diagnostic.valid) return [];
+  const mismatch = diagnostic.mismatches[0];
+  return [{ code: "HeaderMismatch", column: mismatch ? String(mismatch.position) : undefined, message: describeTechnicalBaselineHeaderIssue(headers) }];
 }
 
 export function validateRows(rows: readonly SourceRow24[]): ContractIssue[] {

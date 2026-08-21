@@ -20,7 +20,7 @@ HTML-derived CSV files can change names, headings, or formatting.
 
 ## Operating flow
 
-1. Open **Source Intake → Lockheed daily delivery**.
+1. Open **Import Hub & Quality → Import daily delivery**.
 2. Select one or more delivered CSV/XLSX files.
 3. Set the source snapshot date.
 4. Verify every detected dataset classification.
