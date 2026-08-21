@@ -107,9 +107,21 @@ Synthetic fixtures are in `examples/lockheed-objective-feed/`. Upload
 `02-synthetic-day-two.json` and inspect the preview. They demonstrate
 add/change/remove/no-JPO/multi-JPO/dependency cases and are not program data.
 
+## Daily Lockheed multi-file delivery
+
+Open **Source Intake → Lockheed daily delivery** to load the delivered CAPES,
+Jira, MCP/DSOR, and Objective CSV/XLSX files together. The analyst verifies the
+dataset classification, row disposition, and optional governed trace link
+before applying. Each accepted source observation is retained by date and
+compared field by field with the preceding observation. Supplier schedule,
+ROM, completion, release, status, and dependency values do not overwrite
+Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md` and the synthetic
+two-day fixtures under `examples/lockheed-daily-delivery/`.
+
 ## Governed source imports
 
-The Confluence Change Request export, Lockheed Objective JSON feed, and A2O
+The Confluence Change Request export, Lockheed Objective JSON feed, Lockheed
+daily-delivery files, and A2O
 Tech Stack workbook use a common analyst-review control. Preview every row,
 confirm or override the proposed canonical match, skip questionable rows, and
 then apply approved records. Imports retain their source receipts and do not

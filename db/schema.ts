@@ -1167,6 +1167,70 @@ export const externalChangeSourceStates = sqliteTable("external_change_source_st
   updatedAt: text("updated_at").notNull(),
 }, (t) => [index("external_change_source_state_system_ix").on(t.externalSystem, t.sourceAsOf)]);
 
+// Supplier daily files are analytical observations.  A subject is a stable
+// source identity; observations and field deltas preserve what the supplier
+// reported on each delivery date.  Optional canonical links are analyst-made
+// references and never transfer source authority to the supplier feed.
+export const externalSourceSubjects = sqliteTable("external_source_subject", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  sourceSystem: text("source_system").notNull(),
+  datasetKey: text("dataset_key").notNull(),
+  entityKind: text("entity_kind").notNull(),
+  sourceKey: text("source_key").notNull(),
+  title: text("title").notNull(),
+  canonicalEntityKind: text("canonical_entity_kind"),
+  canonicalEntityId: text("canonical_entity_id"),
+  firstSeenAt: text("first_seen_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  ...timestamps,
+}, (t) => [
+  uniqueIndex("external_source_subject_identity_uq").on(t.programId, t.sourceSystem, t.datasetKey, t.sourceKey),
+  index("external_source_subject_canonical_ix").on(t.programId, t.canonicalEntityKind, t.canonicalEntityId),
+  index("external_source_subject_dataset_ix").on(t.programId, t.datasetKey, t.lastSeenAt),
+]);
+
+export const externalSourceObservations = sqliteTable("external_source_observation", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => ingestionRuns.id),
+  subjectId: text("subject_id").notNull().references(() => externalSourceSubjects.id),
+  disposition: text("disposition").notNull(),
+  sourceUpdatedAt: text("source_updated_at"),
+  sourceAsOf: text("source_as_of").notNull(),
+  contentHash: text("content_hash").notNull(),
+  rawPayload: text("raw_payload").notNull(),
+  normalizedPayload: text("normalized_payload").notNull(),
+  observedAt: text("observed_at").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("external_source_observation_disposition", sql`${t.disposition} IN ('add','change','unchanged')`),
+  uniqueIndex("external_source_observation_run_subject_uq").on(t.runId, t.subjectId),
+  index("external_source_observation_subject_ix").on(t.subjectId, t.sourceAsOf, t.observedAt),
+]);
+
+export const externalSourceDeltas = sqliteTable("external_source_delta", {
+  id: text("id").primaryKey(),
+  observationId: text("observation_id").notNull().references(() => externalSourceObservations.id),
+  fieldName: text("field_name").notNull(),
+  beforeValue: text("before_value"),
+  afterValue: text("after_value"),
+  createdAt: text("created_at").notNull(),
+}, (t) => [index("external_source_delta_observation_ix").on(t.observationId, t.fieldName)]);
+
+export const externalSourceRelations = sqliteTable("external_source_relation", {
+  id: text("id").primaryKey(),
+  observationId: text("observation_id").notNull().references(() => externalSourceObservations.id),
+  relationType: text("relation_type").notNull(),
+  targetReference: text("target_reference").notNull(),
+  targetSubjectId: text("target_subject_id").references(() => externalSourceSubjects.id),
+  canonicalTargetKind: text("canonical_target_kind"),
+  canonicalTargetId: text("canonical_target_id"),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  index("external_source_relation_observation_ix").on(t.observationId, t.relationType),
+  index("external_source_relation_target_ix").on(t.targetSubjectId, t.targetReference),
+]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
@@ -1241,5 +1305,9 @@ export const schema = {
   ingestionRuns,
   ingestionItems,
   externalChangeSourceStates,
+  externalSourceSubjects,
+  externalSourceObservations,
+  externalSourceDeltas,
+  externalSourceRelations,
   auditEvents,
 };

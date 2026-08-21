@@ -110,6 +110,10 @@ const tableOrder: TransferTableName[] = [
   "ingestionRuns",
   "ingestionItems",
   "externalChangeSourceStates",
+  "externalSourceSubjects",
+  "externalSourceObservations",
+  "externalSourceDeltas",
+  "externalSourceRelations",
   "auditEvents",
 ];
 

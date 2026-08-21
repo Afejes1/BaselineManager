@@ -26,6 +26,7 @@ snapshot is a no-op.
 | --- | --- | --- | --- |
 | Confluence Change Request dashboard | CSV or XLSX | Change Request | `jpo code` / external identifier under the Confluence source system. The analyst may override a proposed match. Approved rows update external-source fields only. Government priority, funding decision, effects, dependencies, estimates, and analysis are retained. |
 | Lockheed Objective feed | JSON | External LM feed subject, optionally reconciled to a governed LM Objective | Root JSON key is the supplier dependency identity. Jira is an additional supplier identifier. A governed Objective link is explicit; JPO references do not establish ownership. Daily snapshots and field deltas are retained. |
+| Lockheed daily delivery | Multi-file CSV or XLSX (`CAPES`, `JIRA`, `MCPS`, `OBJS`) | Stable external source subject with an optional Capability, Change Request, or Objective trace link | Source system + dataset + source key. Every applied delivery retains raw/normalized observations and per-field deltas. Supplier values never overwrite governed analysis. Missing rows are not deletions. |
 | A2O Tech Stack exchange | Exact 24-column XLSX | Baseline record and normalized baseline relationships | `ReleaseName + #`; when `#` is blank, a release-scoped product/placement identity is used. Approved rows materialize the baseline. Skipped rows remain in the intake receipt. Missing rows are reported and are not deleted or voided. |
 
 ## Confluence column mapping

@@ -50,7 +50,7 @@ export function importRunStatements(db: Database, input: {
     const decision = item.disposition === "blocked" ? "skip" : resolution?.decision || item.defaultDecision;
     const targetId = resolution?.targetId || item.proposedTargetId || null;
     statements.push(db.prepare("INSERT INTO ingestion_item (id,run_id,row_number,source_key,target_kind,target_id,match_method,decision,disposition,raw_payload,normalized_payload,changes_payload,issues_payload,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(`ingestion-item-${crypto.randomUUID()}`, input.runId, item.rowNumber, item.sourceKey, targetId ? "canonical_record" : null, targetId, item.proposedTargetId && resolution?.targetId && resolution.targetId !== item.proposedTargetId ? "analyst_override" : item.proposedTargetId ? "deterministic_key" : "new_record", decision, item.disposition, JSON.stringify(input.rawRows[index] ?? null), JSON.stringify(input.normalizedRows[index] ?? null), JSON.stringify(item.changes), JSON.stringify(item.issues), input.at));
+      .bind(`ingestion-item-${crypto.randomUUID()}`, input.runId, item.rowNumber, item.sourceKey, targetId ? item.targetKind || "canonical_record" : null, targetId, item.proposedTargetId && resolution?.targetId && resolution.targetId !== item.proposedTargetId ? "analyst_override" : item.proposedTargetId ? "deterministic_key" : "new_record", decision, item.disposition, JSON.stringify(input.rawRows[index] ?? null), JSON.stringify(input.normalizedRows[index] ?? null), JSON.stringify(item.changes), JSON.stringify(item.issues), input.at));
   });
   return statements;
 }

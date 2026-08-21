@@ -1,0 +1,3 @@
+MCP/DSOR,Title,Action,Objectives,Blocks,Blocked By
+MCP-122,Modernized PMA Tablet Platform,TECHNICAL REVIEW BOARD,"120, arch_plan_44, arch_plan_52","MCP-048, MCP-051",
+DSOR-083,Verify Java modernization,TECHNICAL REVIEW BOARD,arch_plan_154,,MCP-122

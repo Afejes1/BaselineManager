@@ -136,6 +136,7 @@ export default function ObjectiveFeedPage() {
       changes: row.diffs,
       proposedTargetId: row.mappedObjectiveId || null,
       proposedTargetLabel: objective ? `${objective.externalIdentifier} · ${objective.title}` : null,
+      targetKind: "objective",
       defaultDecision: row.disposition === "blocked" ? "skip" : "approve",
     };
   }), [objectiveOptions, preview?.records]);

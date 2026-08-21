@@ -11,6 +11,7 @@ export type ImportTargetOption = {
   id: string;
   label: string;
   detail?: string;
+  kind?: string;
 };
 
 export type GovernedImportItem = {
@@ -24,6 +25,8 @@ export type GovernedImportItem = {
   changes: ImportFieldChange[];
   proposedTargetId?: string | null;
   proposedTargetLabel?: string | null;
+  targetKind?: string | null;
+  targetRequired?: boolean;
   defaultDecision: ImportDecision;
 };
 
@@ -63,6 +66,6 @@ export function importResolutions(items: GovernedImportItem[], decisions: Record
     rowNumber: item.rowNumber,
     sourceKey: item.sourceKey,
     decision: item.disposition === "blocked" ? "skip" : importDecision(item, decisions),
-    targetId: targets[item.id] || item.proposedTargetId || null,
+    targetId: Object.prototype.hasOwnProperty.call(targets, item.id) ? targets[item.id] || null : item.proposedTargetId || null,
   }));
 }
