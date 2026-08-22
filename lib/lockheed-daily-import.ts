@@ -29,6 +29,9 @@ export type LockheedDailyRecord = {
   fields: Record<string, string>;
   relations: LockheedDailyRelation[];
   raw: Record<string, unknown>;
+  /** Advisory source-quality findings. They never prevent a keyed record from being retained. */
+  warnings: string[];
+  /** Identity conflicts that cannot safely be materialized without review. */
   issues: string[];
 };
 
@@ -108,10 +111,11 @@ export function normalizeLockheedDailyRow(file: Pick<LockheedDailyFile, "fileId"
   for (const target of list(valueOf(raw, "Blocked By"))) relations.push({ relationType: "blocked_by", targetReference: target });
 
   const issues: string[] = [];
+  const warnings: string[] = [];
   if (!sourceKey) issues.push("A source key is required.");
-  if (!title) issues.push("A title or summary is required.");
-  if (file.dataset === "mcps" && !/^(MCP|DSOR)-\d+$/i.test(sourceKey)) issues.push("The MCP/DSOR value does not contain a recognized MCP or DSOR identifier.");
-  return { ...file, rowNumber, entityKind, sourceKey, title, status, sourceUpdatedAt, canonicalTargetKind, fields, relations, raw, issues };
+  if (!title) warnings.push("Warning: Title or summary is blank; a source-key label will be used until Lockheed supplies one.");
+  if (file.dataset === "mcps" && sourceKey && !/^(MCP|DSOR)-\d+$/i.test(sourceKey)) warnings.push("Warning: The reported Change Request key is not a recognized MCP or DSOR. It will be retained as an external Change Request reference.");
+  return { ...file, rowNumber, entityKind, sourceKey, title, status, sourceUpdatedAt, canonicalTargetKind, fields, relations, raw, warnings, issues };
 }
 
 export function parseLockheedDailyFiles(files: LockheedDailyFile[]) {

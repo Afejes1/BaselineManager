@@ -47,6 +47,9 @@ export type ObjectiveImportPreview = {
   canApply: boolean;
 };
 
+/** Default for the structured Lockheed workbook when that cosmetic column is blank. */
+export const DEFAULT_OBJECTIVE_IMPORT_EXTERNAL_SYSTEM = "Lockheed Martin Jira";
+
 type ExistingObjective = {
   id: string;
   changeRequestId: string | null;
@@ -69,16 +72,25 @@ type OwningRequest = { id: string; externalIdentifier: string };
 
 const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
 const normalized = (value: unknown) => clean(value).toLocaleLowerCase("en-US");
+const normalizedRequest = (value: unknown) => {
+  const source = clean(value);
+  const match = source.match(/\b(MCP|DSOR)\s*[-_ ]?\s*(\d+)\b/i);
+  return normalized(match ? `${match[1].toUpperCase()}-${match[2]}` : source);
+};
 const validStatuses = new Set<ObjectiveStatus>(["proposed", "planned", "in_progress", "blocked", "verification", "complete", "cancelled"]);
 const dateColumns: ObjectiveImportColumn[] = ["PlannedStart", "PlannedFinish", "ActualStart", "ActualFinish", "SourceAsOf"];
-// A supplier can report an Objective before it reports any MCP/DSOR.  The
-// column remains for backwards-compatible workbook exchange, but it is a
-// reported relationship rather than a required ownership assertion.
-const requiredColumns: ObjectiveImportColumn[] = ["ExternalSystem", "ExternalIdentifier", "ExternalItemType", "Title", "Status", "SourceAsOf"];
+// A supplier can report an Objective before it has a title, a normalised
+// status, a JPO/MCP, or a source date. Those values are retained as a source
+// observation and can be completed later. A stable external identifier is the
+// only fact required to safely create a canonical Objective.
+const requiredColumns: ObjectiveImportColumn[] = ["ExternalIdentifier"];
+const SOURCE_CONTROLLED_OBJECTIVE_FIELDS: ObjectiveImportColumn[] = ["OwningChangeRequest", "Title", "Status", "TechnicalOwner", "PlannedStart", "PlannedFinish", "ActualStart", "ActualFinish", "SourceLocator", "SourceAsOf", "Summary"];
 
 export function objectiveImportKey(row: Pick<ObjectiveImportRow, "ExternalSystem" | "ExternalIdentifier">) {
   return `${normalized(row.ExternalSystem)}|${normalized(row.ExternalIdentifier)}`;
 }
+
+function objectiveExternalIdentity(value: unknown) { return normalized(value); }
 
 function validDate(value: string) {
   if (!value) return true;
@@ -105,29 +117,43 @@ function rowFromExisting(item: ExistingObjective, ownerIdentifier: string | null
 }
 
 export function normalizeObjectiveImportRow(input: Partial<Record<ObjectiveImportColumn, unknown>>): ObjectiveImportRow {
-  return Object.fromEntries(OBJECTIVE_IMPORT_COLUMNS.map((column) => [column, clean(input[column])])) as ObjectiveImportRow;
+  return Object.fromEntries(OBJECTIVE_IMPORT_COLUMNS.map((column) => {
+    if (column === "ExternalSystem") return [column, clean(input[column]) || DEFAULT_OBJECTIVE_IMPORT_EXTERNAL_SYSTEM];
+    if (column === "ExternalItemType") return [column, clean(input[column]) || "Objective"];
+    return [column, clean(input[column])];
+  })) as ObjectiveImportRow;
 }
 
 export function reconcileObjectiveImport(incoming: ObjectiveImportRow[], existing: ExistingObjective[], requests: OwningRequest[]): ObjectiveImportPreview {
-  const requestByIdentifier = new Map(requests.map((request) => [normalized(request.externalIdentifier), request]));
+  const requestByIdentifier = new Map(requests.map((request) => [normalizedRequest(request.externalIdentifier), request]));
   const existingByKey = new Map(existing.map((item) => [objectiveImportKey({ ExternalSystem: item.externalSystem, ExternalIdentifier: item.externalIdentifier }), item]));
+  const existingByExternalIdentity = new Map<string, ExistingObjective[]>();
+  for (const item of existing) {
+    const identity = objectiveExternalIdentity(item.externalIdentifier);
+    existingByExternalIdentity.set(identity, [...(existingByExternalIdentity.get(identity) || []), item]);
+  }
   const keyCounts = new Map<string, number>();
   for (const row of incoming) keyCounts.set(objectiveImportKey(row), (keyCounts.get(objectiveImportKey(row)) || 0) + 1);
 
   const rows = incoming.map((rawRow, index): ObjectiveImportPreviewRow => {
     const row = normalizeObjectiveImportRow(rawRow);
     const key = objectiveImportKey(row);
-    const current = existingByKey.get(key);
-    const owner = requestByIdentifier.get(normalized(row.OwningChangeRequest));
+    const canonicalMatches = existingByExternalIdentity.get(objectiveExternalIdentity(row.ExternalIdentifier)) || [];
+    // A Jira key is an external identity, not a value local to one delivery
+    // feed. Prefer an exact system match but reuse one unambiguous canonical
+    // Objective reported by another Lockheed source automatically.
+    const current = existingByKey.get(key) || (canonicalMatches.length === 1 ? canonicalMatches[0] : undefined);
+    const owner = requestByIdentifier.get(normalizedRequest(row.OwningChangeRequest));
     const issues: ObjectiveImportIssue[] = [];
     for (const column of requiredColumns) if (!row[column]) issues.push({ code: "missing_required", message: `${column} is required.`, blocking: true });
-    if (row.Status && !validStatuses.has(row.Status as ObjectiveStatus)) issues.push({ code: "invalid_status", message: `Status '${row.Status}' is not supported.`, blocking: true });
-    for (const column of dateColumns) if (!validDate(row[column])) issues.push({ code: "invalid_date", message: `${column} must use YYYY-MM-DD.`, blocking: true });
+    if (row.Status && !validStatuses.has(row.Status as ObjectiveStatus)) issues.push({ code: "invalid_status", message: `Status '${row.Status}' is retained as reported text and is normalized to the closest supported state.`, blocking: false });
+    for (const column of dateColumns) if (!validDate(row[column])) issues.push({ code: "invalid_date", message: `${column} is retained in the source receipt but cannot populate a canonical date until corrected.`, blocking: false });
     if ((keyCounts.get(key) || 0) > 1) issues.push({ code: "duplicate_key", message: "External system and identifier occur more than once in this import.", blocking: true });
+    if (canonicalMatches.length > 1) issues.push({ code: "duplicate_key", message: `External identifier '${row.ExternalIdentifier}' matches ${canonicalMatches.length} canonical Objectives.`, blocking: true });
     if (row.OwningChangeRequest && !owner) issues.push({ code: "reported_reference", message: `Reported Change Request '${row.OwningChangeRequest}' is new and will be added as an external reference.`, blocking: false });
 
     const baseline = current ? rowFromExisting(current, current.changeRequestId ? requests.find((request) => request.id === current.changeRequestId)?.externalIdentifier || current.changeRequestId : null) : null;
-    const changedFields = baseline ? OBJECTIVE_IMPORT_COLUMNS.filter((column) => normalized(baseline[column]) !== normalized(row[column])) : [...OBJECTIVE_IMPORT_COLUMNS];
+    const changedFields = baseline ? SOURCE_CONTROLLED_OBJECTIVE_FIELDS.filter((column) => normalized(baseline[column]) !== normalized(row[column])) : [...OBJECTIVE_IMPORT_COLUMNS];
     const disposition: ObjectiveImportDisposition = issues.some((issue) => issue.blocking) ? "blocked" : !current ? "add" : changedFields.length ? "change" : "unchanged";
     return { rowNumber: index + 2, key, disposition, existingObjectiveId: current?.id || null, owningChangeRequestId: owner?.id || null, changedFields, issues, row };
   });
