@@ -131,7 +131,10 @@ in a new working revision; they do not rewrite the approved position.
 
 ## Deliberate exclusions
 
-This model does not add a generic entity-attribute-value store, a full CMDB,
-an official DoD WBS, or an internal Product Breakdown Structure without source
-BOM/SBOM data. Those structures would create apparent precision that the
-current evidence cannot support.
+This model does not add a generic entity-attribute-value store, an enterprise
+CMDB, an official DoD WBS, or an internal Product Breakdown Structure without
+source BOM/SBOM data. It does include the bounded, release-aware infrastructure
+configuration needed for the program technical baseline; it does not claim
+automated discovery, asset custody, procurement, IP address management, or
+real-time monitoring. The governing requirements and acceptance matrix are in
+`docs/INFRASTRUCTURE_CONFIGURATION_MODEL.md`.

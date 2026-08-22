@@ -6,7 +6,8 @@ import { schema } from "../db/schema";
 import type { DocumentBucket } from "./governance-server";
 
 export const WORKSPACE_PACKAGE_TYPE = "a2o.workspace-transfer";
-export const WORKSPACE_PACKAGE_VERSION = "2.0.0";
+export const WORKSPACE_PACKAGE_VERSION = "3.0.0";
+const PREVIOUS_WORKSPACE_PACKAGE_VERSION = "2.0.0";
 const LEGACY_WORKSPACE_PACKAGE_VERSION = "1.0.0";
 export const MAX_WORKSPACE_PACKAGE_BYTES = 100 * 1024 * 1024;
 
@@ -71,6 +72,7 @@ const tableOrder: TransferTableName[] = [
   "platformOrganizations",
   "platformBaselineAssignments",
   "infrastructureNodes",
+  "infrastructureReferenceValues",
   "releaseInfrastructureNodes",
   "infrastructureProductInstallations",
   "infrastructureConnections",
@@ -237,7 +239,7 @@ export async function exportWorkspacePackage(db: Database, bucket: DocumentBucke
 function isManifest(value: unknown): value is WorkspacePackageManifest {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<WorkspacePackageManifest>;
-  return candidate.packageType === WORKSPACE_PACKAGE_TYPE && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) && Array.isArray(candidate.tables) && Array.isArray(candidate.documents);
+  return candidate.packageType === WORKSPACE_PACKAGE_TYPE && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) && Array.isArray(candidate.tables) && Array.isArray(candidate.documents);
 }
 
 export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedPackage> {
@@ -252,8 +254,10 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedP
   catch { throw new Error("The package manifest is not valid JSON."); }
   if (!isManifest(manifestValue)) throw new Error("The package type or version is not supported by this application.");
   const manifest = manifestValue;
-  const legacyLogicalNames = new Set<TransferTableName>(["infrastructureNodes", "releaseInfrastructureNodes", "infrastructureProductInstallations", "infrastructureConnections"]);
-  const packageSpecs = manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION ? tableSpecs.filter((spec) => !legacyLogicalNames.has(spec.logicalName)) : tableSpecs;
+  const legacyLogicalNames = new Set<TransferTableName>(["infrastructureNodes", "infrastructureReferenceValues", "releaseInfrastructureNodes", "infrastructureProductInstallations", "infrastructureConnections"]);
+  const previousLogicalNames = new Set<TransferTableName>(["infrastructureReferenceValues"]);
+  const omittedLogicalNames = manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION ? legacyLogicalNames : manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION ? previousLogicalNames : new Set<TransferTableName>();
+  const packageSpecs = tableSpecs.filter((spec) => !omittedLogicalNames.has(spec.logicalName));
   const expectedNames = new Set(packageSpecs.map((spec) => spec.name));
   if (manifest.tables.length !== packageSpecs.length || manifest.tables.some((entry) => !expectedNames.has(entry.name))) throw new Error(`The package does not contain the complete version ${manifest.packageVersion} application dataset.`);
   const rowsByTable = new Map<string, TransferRow[]>();
@@ -277,9 +281,13 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedP
     }
     rowsByTable.set(entry.name, rows as TransferRow[]);
   }
+  if (omittedLogicalNames.size) {
+    for (const spec of tableSpecs.filter((item) => omittedLogicalNames.has(item.logicalName))) rowsByTable.set(spec.name, []);
+  }
   if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) {
-    for (const spec of tableSpecs.filter((item) => legacyLogicalNames.has(item.logicalName))) rowsByTable.set(spec.name, []);
     warnings.push("This version 1 package predates governed infrastructure. Existing baseline data will load; infrastructure can be added after import.");
+  } else if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) {
+    warnings.push("This version 2 package predates governed infrastructure vocabularies. Existing infrastructure will load; storage and file-system classifications can be reviewed after import.");
   }
 
   const documentBytes = new Map<string, Uint8Array>();

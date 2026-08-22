@@ -81,16 +81,44 @@ const installationRoles = new Set<InstallationRole>(["operating_system", "hyperv
 const installationStatuses = new Set<InstallationStatus>(["planned", "installed", "retired", "absent"]);
 const connectionTypes = new Set<ConnectionType>(["network", "power", "storage", "cluster", "management", "other"]);
 
+const standardInfrastructureReferences = [
+  ["infra-storage-hdd", "storage_medium", "HDD", "Hard disk drive", "Magnetic disk storage"],
+  ["infra-storage-ssd", "storage_medium", "SSD", "Solid-state drive", "Solid-state block storage"],
+  ["infra-storage-nvme", "storage_medium", "NVME", "NVMe", "NVMe solid-state storage"],
+  ["infra-storage-san", "storage_medium", "SAN", "Storage area network", "SAN-provided storage"],
+  ["infra-storage-nas", "storage_medium", "NAS", "Network-attached storage", "NAS-provided storage"],
+  ["infra-storage-flash", "storage_medium", "FLASH", "Flash array", "Shared flash storage"],
+  ["infra-storage-optical", "storage_medium", "OPTICAL", "Optical media", "Optical storage media"],
+  ["infra-storage-tape", "storage_medium", "TAPE", "Tape", "Tape storage"],
+  ["infra-storage-ephemeral", "storage_medium", "EPHEMERAL", "Ephemeral storage", "Non-persistent runtime storage"],
+  ["infra-storage-other", "storage_medium", "OTHER", "Other governed medium", "Reviewed storage medium not represented by a standard value"],
+  ["infra-fs-ntfs", "file_system", "NTFS", "NTFS", "Windows NT File System"],
+  ["infra-fs-refs", "file_system", "REFS", "ReFS", "Resilient File System"],
+  ["infra-fs-ext4", "file_system", "EXT4", "ext4", "Fourth extended file system"],
+  ["infra-fs-xfs", "file_system", "XFS", "XFS", "XFS file system"],
+  ["infra-fs-zfs", "file_system", "ZFS", "ZFS", "ZFS file system"],
+  ["infra-fs-nfs", "file_system", "NFS", "NFS", "Network File System"],
+  ["infra-fs-vmfs", "file_system", "VMFS", "VMFS", "VMware Virtual Machine File System"],
+  ["infra-fs-other", "file_system", "OTHER", "Other governed file system", "Reviewed file system not represented by a standard value"],
+] as const;
+
+async function ensureInfrastructureReferences(db: Database) {
+  const at = now();
+  await db.batch(standardInfrastructureReferences.map(([referenceId, category, code, name, description]) => db.prepare("INSERT INTO infrastructure_reference_value (id,program_id,category,code,normalized_code,name,description,lifecycle_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,description=excluded.description,updated_at=excluded.updated_at").bind(referenceId, PROGRAM_ID, category, code, normalize(code), name, description, "active", at, at)));
+}
+
 export async function infrastructurePortfolio(db: Database, releaseId?: string) {
+  await ensureInfrastructureReferences(db);
   const whereState = releaseId ? " AND rs.release_id=?" : "";
   const whereInstall = releaseId ? " AND i.release_id=?" : "";
   const whereConnection = releaseId ? " AND c.release_id=?" : "";
   const bind = <T>(sqlText: string, value?: string) => value ? db.prepare(sqlText).bind(PROGRAM_ID, value).all<T>() : db.prepare(sqlText).bind(PROGRAM_ID).all<T>();
-  const [nodes, states, installations, connections, platforms, releases, products, organizations, occurrences] = await Promise.all([
+  const [nodes, states, installations, connections, references, platforms, releases, products, organizations, occurrences] = await Promise.all([
     db.prepare(`SELECT n.id,n.platform_id,n.node_type,n.code,n.name,n.manufacturer_organization_id,o.name AS manufacturer_name,n.hardware_product_id,p.canonical_name AS hardware_product_name,n.asset_tag,n.serial_number,n.lifecycle_status,n.description,n.updated_at FROM infrastructure_node n LEFT JOIN organization o ON o.id=n.manufacturer_organization_id LEFT JOIN product p ON p.id=n.hardware_product_id WHERE n.program_id=? ORDER BY n.platform_id,n.node_type,n.code`).bind(PROGRAM_ID).all<Record<string, unknown>>(),
-    bind<Record<string, unknown>>(`SELECT rs.id,rs.release_id,r.name AS release_name,rs.platform_id,rs.infrastructure_node_id,rs.parent_state_id,rs.lifecycle_status,rs.operating_state,rs.cpu_cores,rs.memory_gb,rs.storage_gb,rs.storage_type,rs.drive_letter,rs.file_system,rs.source_reference,rs.source_as_of,rs.notes,rs.updated_at FROM release_infrastructure_node rs JOIN release r ON r.id=rs.release_id WHERE rs.program_id=?${whereState} ORDER BY r.name,rs.platform_id,rs.parent_state_id,rs.id`, releaseId),
+    bind<Record<string, unknown>>(`SELECT rs.id,rs.release_id,r.name AS release_name,rs.platform_id,rs.infrastructure_node_id,rs.parent_state_id,rs.lifecycle_status,rs.operating_state,rs.cpu_cores,rs.memory_gb,rs.storage_gb,rs.storage_medium_id,COALESCE(sm.code,rs.storage_type) AS storage_type,rs.drive_letter,rs.file_system_value_id,COALESCE(fs.code,rs.file_system) AS file_system,rs.source_reference,rs.source_as_of,rs.notes,rs.updated_at FROM release_infrastructure_node rs JOIN release r ON r.id=rs.release_id LEFT JOIN infrastructure_reference_value sm ON sm.id=rs.storage_medium_id LEFT JOIN infrastructure_reference_value fs ON fs.id=rs.file_system_value_id WHERE rs.program_id=?${whereState} ORDER BY r.name,rs.platform_id,rs.parent_state_id,rs.id`, releaseId),
     bind<Record<string, unknown>>(`SELECT i.id,i.release_id,i.platform_id,i.node_state_id,i.product_id,p.canonical_name AS product_name,p.product_type,i.baseline_occurrence_id,COALESCE(ext.source_key,sr.source_key) AS source_key,i.installation_role,i.instance_name,i.version,i.deployment_status,i.source_reference,i.source_as_of,i.notes,i.updated_at FROM infrastructure_product_installation i JOIN product p ON p.id=i.product_id LEFT JOIN baseline_occurrence bo ON bo.id=i.baseline_occurrence_id LEFT JOIN baseline_record_extension ext ON ext.baseline_occurrence_id=bo.id LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id WHERE i.program_id=?${whereInstall} ORDER BY p.canonical_name,i.instance_name`, releaseId),
     bind<Record<string, unknown>>(`SELECT c.id,c.release_id,c.platform_id,c.source_node_state_id,c.target_node_state_id,c.connection_type,c.label,c.status,c.capacity_mbps,c.source_reference,c.source_as_of,c.notes FROM infrastructure_connection c WHERE c.program_id=?${whereConnection} ORDER BY c.connection_type,c.label,c.id`, releaseId),
+    db.prepare("SELECT id,category,code,name,description FROM infrastructure_reference_value WHERE program_id=? AND lifecycle_status='active' ORDER BY category,name").bind(PROGRAM_ID).all<Record<string, unknown>>(),
     db.prepare("SELECT id,code,name,platform_type,parent_id FROM platform WHERE program_id=? AND status<>'retired' ORDER BY code").bind(PROGRAM_ID).all<Record<string, unknown>>(),
     db.prepare("SELECT id,name FROM release WHERE program_id=? ORDER BY COALESCE(actual_date,target_date,name)").bind(PROGRAM_ID).all<Record<string, unknown>>(),
     db.prepare("SELECT id,canonical_name AS name,short_name,product_type FROM product WHERE program_id=? AND lifecycle_status='active' ORDER BY canonical_name").bind(PROGRAM_ID).all<Record<string, unknown>>(),
@@ -99,9 +127,10 @@ export async function infrastructurePortfolio(db: Database, releaseId?: string) 
   ]);
   return {
     nodes: nodes.results.map((row) => ({ id: String(row.id), platformId: String(row.platform_id), nodeType: row.node_type as InfrastructureNodeType, code: String(row.code), name: String(row.name), manufacturerOrganizationId: row.manufacturer_organization_id as string | null, manufacturerName: row.manufacturer_name as string | null, hardwareProductId: row.hardware_product_id as string | null, hardwareProductName: row.hardware_product_name as string | null, assetTag: row.asset_tag as string | null, serialNumber: row.serial_number as string | null, lifecycleStatus: row.lifecycle_status as InfrastructureLifecycle, description: row.description as string | null, updatedAt: String(row.updated_at) })),
-    states: states.results.map((row) => ({ id: String(row.id), releaseId: String(row.release_id), releaseName: String(row.release_name), platformId: String(row.platform_id), infrastructureNodeId: String(row.infrastructure_node_id), parentStateId: row.parent_state_id as string | null, lifecycleStatus: row.lifecycle_status as ReleaseNodeLifecycle, operatingState: row.operating_state as InfrastructureOperatingState, cpuCores: row.cpu_cores == null ? null : Number(row.cpu_cores), memoryGb: row.memory_gb == null ? null : Number(row.memory_gb), storageGb: row.storage_gb == null ? null : Number(row.storage_gb), storageType: row.storage_type as string | null, driveLetter: row.drive_letter as string | null, fileSystem: row.file_system as string | null, sourceReference: row.source_reference as string | null, sourceAsOf: row.source_as_of as string | null, notes: row.notes as string | null, updatedAt: String(row.updated_at) })),
+    states: states.results.map((row) => ({ id: String(row.id), releaseId: String(row.release_id), releaseName: String(row.release_name), platformId: String(row.platform_id), infrastructureNodeId: String(row.infrastructure_node_id), parentStateId: row.parent_state_id as string | null, lifecycleStatus: row.lifecycle_status as ReleaseNodeLifecycle, operatingState: row.operating_state as InfrastructureOperatingState, cpuCores: row.cpu_cores == null ? null : Number(row.cpu_cores), memoryGb: row.memory_gb == null ? null : Number(row.memory_gb), storageGb: row.storage_gb == null ? null : Number(row.storage_gb), storageMediumId: row.storage_medium_id as string | null, storageType: row.storage_type as string | null, driveLetter: row.drive_letter as string | null, fileSystemValueId: row.file_system_value_id as string | null, fileSystem: row.file_system as string | null, sourceReference: row.source_reference as string | null, sourceAsOf: row.source_as_of as string | null, notes: row.notes as string | null, updatedAt: String(row.updated_at) })),
     installations: installations.results.map((row) => ({ id: String(row.id), releaseId: String(row.release_id), platformId: String(row.platform_id), nodeStateId: String(row.node_state_id), productId: String(row.product_id), productName: String(row.product_name), productType: row.product_type as string | null, baselineOccurrenceId: row.baseline_occurrence_id as string | null, sourceKey: row.source_key as string | null, installationRole: row.installation_role as InstallationRole, instanceName: row.instance_name as string | null, version: row.version as string | null, deploymentStatus: row.deployment_status as InstallationStatus, sourceReference: row.source_reference as string | null, sourceAsOf: row.source_as_of as string | null, notes: row.notes as string | null, updatedAt: String(row.updated_at) })),
     connections: connections.results.map((row) => ({ id: String(row.id), releaseId: String(row.release_id), platformId: String(row.platform_id), sourceNodeStateId: String(row.source_node_state_id), targetNodeStateId: String(row.target_node_state_id), connectionType: row.connection_type as ConnectionType, label: row.label as string | null, status: row.status as InfrastructureLifecycle, capacityMbps: row.capacity_mbps == null ? null : Number(row.capacity_mbps), sourceReference: row.source_reference as string | null, sourceAsOf: row.source_as_of as string | null, notes: row.notes as string | null })),
+    referenceValues: references.results.map((row) => ({ id: String(row.id), category: row.category as "storage_medium" | "file_system", code: String(row.code), name: String(row.name), description: row.description as string | null })),
     platforms: platforms.results.map((row) => ({ id: String(row.id), code: String(row.code), name: String(row.name), platformType: String(row.platform_type), parentId: row.parent_id as string | null })),
     releases: releases.results.map((row) => ({ id: String(row.id), name: String(row.name) })),
     products: products.results.map((row) => ({ id: String(row.id), name: String(row.name), shortName: row.short_name as string | null, productType: row.product_type as string | null })),
@@ -170,12 +199,24 @@ export async function saveReleaseInfrastructureNode(db: Database, actor: Actor, 
   const values = { cpuCores: numberOrNull(body.cpuCores), memoryGb: numberOrNull(body.memoryGb), storageGb: numberOrNull(body.storageGb) };
   if ([values.cpuCores, values.memoryGb, values.storageGb].some((value) => value != null && value < 0)) throw new Error("Capacity values cannot be negative.");
   const parentStateId = nullable(body.parentStateId);
+  await ensureInfrastructureReferences(db);
+  async function reference(category: "storage_medium" | "file_system", requestedId: unknown, legacyValue: unknown) {
+    const referenceId = nullable(requestedId);
+    const legacyCode = normalize(legacyValue);
+    const row = referenceId
+      ? await db.prepare("SELECT id,code FROM infrastructure_reference_value WHERE id=? AND program_id=? AND category=? AND lifecycle_status='active'").bind(referenceId, PROGRAM_ID, category).first<{ id: string; code: string }>()
+      : legacyCode ? await db.prepare("SELECT id,code FROM infrastructure_reference_value WHERE program_id=? AND category=? AND normalized_code=? AND lifecycle_status='active'").bind(PROGRAM_ID, category, legacyCode).first<{ id: string; code: string }>() : null;
+    if ((referenceId || legacyCode) && !row) throw new Error(`Choose a governed ${category.replaceAll("_", " ")} value.`);
+    return row || null;
+  }
+  const storageMedium = await reference("storage_medium", body.storageMediumId, body.storageType);
+  const fileSystem = await reference("file_system", body.fileSystemValueId, body.fileSystem);
   await assertStateParent(db, stateId, releaseId, node.platform_id, parentStateId);
   const current = await db.prepare("SELECT * FROM release_infrastructure_node WHERE id=? AND program_id=?").bind(stateId, PROGRAM_ID).first<Record<string, unknown>>();
   const at = now();
   await db.batch([
-    db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_type,drive_letter,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_state_id=excluded.parent_state_id,lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
-      .bind(stateId, PROGRAM_ID, releaseId, node.platform_id, infrastructureNodeId, parentStateId, lifecycleStatus, operatingState, values.cpuCores, values.memoryGb, values.storageGb, nullable(body.storageType), nullable(body.driveLetter), nullable(body.fileSystem), nullable(body.sourceReference), nullable(body.sourceAsOf), nullable(body.notes), actor.id, current?.created_at || at, at),
+    db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_medium_id,storage_type,drive_letter,file_system_value_id,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_state_id=excluded.parent_state_id,lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_medium_id=excluded.storage_medium_id,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system_value_id=excluded.file_system_value_id,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(stateId, PROGRAM_ID, releaseId, node.platform_id, infrastructureNodeId, parentStateId, lifecycleStatus, operatingState, values.cpuCores, values.memoryGb, values.storageGb, storageMedium?.id || null, storageMedium?.code || null, nullable(body.driveLetter), fileSystem?.id || null, fileSystem?.code || null, nullable(body.sourceReference), nullable(body.sourceAsOf), nullable(body.notes), actor.id, current?.created_at || at, at),
     audit(db, actor, current ? "release_infrastructure_updated" : "release_infrastructure_created", "release_infrastructure_node", stateId, { releaseId, infrastructureNodeId, parentStateId, lifecycleStatus, operatingState, ...values }, current || undefined),
   ]);
   return stateId;

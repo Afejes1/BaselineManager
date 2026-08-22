@@ -73,7 +73,7 @@ type WorkPackageObjectiveRow = { work_package_id: string; objective_id: string; 
 type WorkPackageDependencyRow = { id: string; predecessor_work_package_id: string; successor_work_package_id: string; relationship: "FS" | "SS" | "FF" | "SF"; lag_days: number; status: "proposed" | "accepted" | "rejected" | "retired"; rationale: string; source_reference: string | null; updated_at: string };
 type ScopeRow = { id: string; initiative_id: string; scope_kind: "product" | "release" | "capability" | "occurrence" | "configuration_node"; scope_id: string; display_label: string | null };
 type RecordRow = { id: string; record_type: GovernanceRecordType; external_reference: string | null; title: string; status: GovernanceRecordStatus; owner: string | null; occurred_at: string | null; participants: string | null; due_date: string | null; summary: string | null; decision_ask: string | null; action_items: string | null; impact: string | null; created_at: string; updated_at: string };
-type LinkRow = { id: string; governance_record_id: string; entity_kind: GovernanceEntityKind; entity_id: string; relationship: string; display_label: string | null };
+type LinkRow = { id: string; governance_record_id: string; entity_kind: GovernanceEntityKind; entity_id: string; relationship: string; display_label: string | null; infrastructure_platform_id: string | null; infrastructure_release_name: string | null };
 type DocumentRow = { id: string; governance_record_id: string | null; initiative_id: string | null; file_name: string; content_type: string | null; byte_size: number; description: string | null; created_at: string };
 type BriefRow = { id: string; initiative_id: string | null; initiative_title: string | null; title: string; status: BriefStatus; notes: string | null; snapshot_payload: string; body_markdown: string; published_at: string | null; created_at: string; updated_at: string };
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
@@ -86,7 +86,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT l.work_package_id,l.objective_id,l.relationship,l.rationale FROM work_package_objective l JOIN work_package w ON w.id=l.work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY l.created_at").bind(PROGRAM_ID).all<WorkPackageObjectiveRow>(),
     db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID).all<WorkPackageDependencyRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
-    db.prepare("SELECT l.*, COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,pl.code || ' · ' || pl.name,org.name,cr.external_identifier || ' · ' || cr.title,obj.external_identifier || ' · ' || obj.title,w.wbs_code || ' · ' || w.title,CASE WHEN bo.id IS NOT NULL THEN 'Baseline record' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN work_package w ON l.entity_kind='work_package' AND w.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence bo ON l.entity_kind='occurrence' AND bo.id=l.entity_id LEFT JOIN platform pl ON l.entity_kind='platform' AND pl.id=l.entity_id LEFT JOIN organization org ON l.entity_kind='organization' AND org.id=l.entity_id LEFT JOIN change_request cr ON l.entity_kind='change_request' AND cr.id=l.entity_id LEFT JOIN incumbent_objective obj ON l.entity_kind='objective' AND obj.id=l.entity_id").all<LinkRow>(),
+    db.prepare("SELECT l.*, COALESCE(infn.platform_id,infs.platform_id,infi.platform_id,infc.platform_id) AS infrastructure_platform_id,COALESCE(infsr.name,infir.name,infcr.name) AS infrastructure_release_name,COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,pl.code || ' · ' || pl.name,org.name,cr.external_identifier || ' · ' || cr.title,obj.external_identifier || ' · ' || obj.title,w.wbs_code || ' · ' || w.title,infn.code || ' · ' || infn.name,infsn.code || ' · ' || infsr.name,infip.canonical_name || ' on ' || infin.code,infcsn.code || ' → ' || infctn.code,CASE WHEN bo.id IS NOT NULL THEN 'Baseline record' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN work_package w ON l.entity_kind='work_package' AND w.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence bo ON l.entity_kind='occurrence' AND bo.id=l.entity_id LEFT JOIN platform pl ON l.entity_kind='platform' AND pl.id=l.entity_id LEFT JOIN organization org ON l.entity_kind='organization' AND org.id=l.entity_id LEFT JOIN change_request cr ON l.entity_kind='change_request' AND cr.id=l.entity_id LEFT JOIN incumbent_objective obj ON l.entity_kind='objective' AND obj.id=l.entity_id LEFT JOIN infrastructure_node infn ON l.entity_kind='infrastructure_node' AND infn.id=l.entity_id LEFT JOIN release_infrastructure_node infs ON l.entity_kind='infrastructure_state' AND infs.id=l.entity_id LEFT JOIN infrastructure_node infsn ON infsn.id=infs.infrastructure_node_id LEFT JOIN release infsr ON infsr.id=infs.release_id LEFT JOIN infrastructure_product_installation infi ON l.entity_kind='infrastructure_installation' AND infi.id=l.entity_id LEFT JOIN product infip ON infip.id=infi.product_id LEFT JOIN release_infrastructure_node infirs ON infirs.id=infi.node_state_id LEFT JOIN infrastructure_node infin ON infin.id=infirs.infrastructure_node_id LEFT JOIN release infir ON infir.id=infi.release_id LEFT JOIN infrastructure_connection infc ON l.entity_kind='infrastructure_connection' AND infc.id=l.entity_id LEFT JOIN release_infrastructure_node infcss ON infcss.id=infc.source_node_state_id LEFT JOIN infrastructure_node infcsn ON infcsn.id=infcss.infrastructure_node_id LEFT JOIN release_infrastructure_node infcts ON infcts.id=infc.target_node_state_id LEFT JOIN infrastructure_node infctn ON infctn.id=infcts.infrastructure_node_id LEFT JOIN release infcr ON infcr.id=infc.release_id").all<LinkRow>(),
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
@@ -118,7 +118,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     workPackageDependencies: workDependencyResult.results.map((entry) => ({ id: entry.id, predecessorWorkPackageId: entry.predecessor_work_package_id, successorWorkPackageId: entry.successor_work_package_id, relationship: entry.relationship, lagDays: entry.lag_days, status: entry.status, rationale: entry.rationale, sourceReference: entry.source_reference, updatedAt: entry.updated_at })),
     records: recordResult.results.map((entry) => ({
       id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, participants: entry.participants, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, actionItems: entry.action_items, impact: entry.impact,
-      links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label, href: governanceLinkHref(link.entity_kind, link.entity_id, link.display_label) })),
+      links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label, href: governanceLinkHref(link.entity_kind, link.entity_id, link.display_label, link.infrastructure_platform_id, link.infrastructure_release_name) })),
       documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
       createdAt: entry.created_at, updatedAt: entry.updated_at,
     })),
@@ -130,10 +130,18 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
   };
 }
 
-type CatalogRow = { kind: GovernanceEntityKind; id: string; label: string; detail: string | null };
+type CatalogRow = { kind: GovernanceEntityKind; id: string; label: string; detail: string | null; platform_id?: string | null; release_name?: string | null };
 
 function routeSlug(value: string) {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "unassigned";
+}
+
+function infrastructureHref(kind: GovernanceEntityKind, id: string, platformId?: string | null, releaseName?: string | null) {
+  if (!platformId) return `/topology?focus=${encodeURIComponent(`${kind}:${id}`)}`;
+  const query = new URLSearchParams();
+  if (releaseName) query.set("release", releaseName);
+  query.set("focus", `${kind}:${id}`);
+  return `/platforms/${encodeURIComponent(platformId)}?${query.toString()}`;
 }
 
 function catalogHref(item: CatalogRow) {
@@ -147,10 +155,11 @@ function catalogHref(item: CatalogRow) {
   if (item.kind === "initiative") return `/initiatives/${encodeURIComponent(item.id)}`;
   if (item.kind === "work_package") return `/delivery/${encodeURIComponent(item.id)}`;
   if (item.kind === "occurrence") return `/occurrences/${encodeURIComponent(item.id)}`;
+  if (item.kind.startsWith("infrastructure_")) return infrastructureHref(item.kind, item.id, item.platform_id, item.release_name);
   return null;
 }
 
-function governanceLinkHref(kind: GovernanceEntityKind, id: string, displayLabel: string | null) {
+function governanceLinkHref(kind: GovernanceEntityKind, id: string, displayLabel: string | null, infrastructurePlatformId?: string | null, infrastructureReleaseName?: string | null) {
   const label = displayLabel || id;
   if (kind === "product") return `/products/${encodeURIComponent(routeSlug(label))}`;
   if (kind === "organization") return `/organizations/${encodeURIComponent(routeSlug(label))}`;
@@ -163,6 +172,7 @@ function governanceLinkHref(kind: GovernanceEntityKind, id: string, displayLabel
   if (kind === "initiative") return `/initiatives/${encodeURIComponent(id)}`;
   if (kind === "work_package") return `/delivery/${encodeURIComponent(id)}`;
   if (kind === "occurrence") return `/occurrences/${encodeURIComponent(id)}`;
+  if (kind.startsWith("infrastructure_")) return infrastructureHref(kind, id, infrastructurePlatformId, infrastructureReleaseName);
   return null;
 }
 
@@ -181,6 +191,10 @@ export async function objectCatalog(db: Database): Promise<ObjectCatalogItem[]> 
     db.prepare("SELECT 'initiative' AS kind,id,title AS label,'Initiative · ' || status AS detail FROM initiative WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'work_package' AS kind,w.id,w.wbs_code || ' · ' || w.title AS label,'Government work package · ' || w.status AS detail FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'occurrence' AS kind,bo.id,COALESCE(p.canonical_name,p.short_name,ext.source_key,'Baseline record') AS label,COALESCE(r.name,'Release unassigned') || ' · Baseline Record' AS detail FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN baseline_record_extension ext ON ext.baseline_occurrence_id=bo.id WHERE bo.program_id=? AND bo.lifecycle_status='active'").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'infrastructure_node' AS kind,n.id,n.code || ' · ' || n.name AS label,REPLACE(n.node_type,'_',' ') || ' · ' || pl.code AS detail,n.platform_id,NULL AS release_name FROM infrastructure_node n JOIN platform pl ON pl.id=n.platform_id WHERE n.program_id=? AND n.lifecycle_status<>'retired'").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'infrastructure_state' AS kind,rs.id,n.code || ' · ' || n.name AS label,r.name || ' · ' || pl.code || ' · Release configuration' AS detail,rs.platform_id,r.name AS release_name FROM release_infrastructure_node rs JOIN infrastructure_node n ON n.id=rs.infrastructure_node_id JOIN release r ON r.id=rs.release_id JOIN platform pl ON pl.id=rs.platform_id WHERE rs.program_id=? AND rs.lifecycle_status<>'absent'").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'infrastructure_installation' AS kind,i.id,p.canonical_name || ' on ' || n.code AS label,r.name || ' · ' || REPLACE(i.installation_role,'_',' ') AS detail,i.platform_id,r.name AS release_name FROM infrastructure_product_installation i JOIN product p ON p.id=i.product_id JOIN release_infrastructure_node rs ON rs.id=i.node_state_id JOIN infrastructure_node n ON n.id=rs.infrastructure_node_id JOIN release r ON r.id=i.release_id WHERE i.program_id=? AND i.deployment_status<>'absent'").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'infrastructure_connection' AS kind,c.id,sn.code || ' → ' || tn.code AS label,r.name || ' · ' || REPLACE(c.connection_type,'_',' ') || ' connection' AS detail,c.platform_id,r.name AS release_name FROM infrastructure_connection c JOIN release_infrastructure_node ss ON ss.id=c.source_node_state_id JOIN infrastructure_node sn ON sn.id=ss.infrastructure_node_id JOIN release_infrastructure_node ts ON ts.id=c.target_node_state_id JOIN infrastructure_node tn ON tn.id=ts.infrastructure_node_id JOIN release r ON r.id=c.release_id WHERE c.program_id=? AND c.status<>'retired'").bind(PROGRAM_ID).all<CatalogRow>(),
   ]);
   return results.flatMap((result) => result.results).sort((left, right) => `${left.kind}:${left.label}`.localeCompare(`${right.kind}:${right.label}`)).map((item) => ({ kind: item.kind, id: item.id, label: item.label, detail: item.detail || "", href: catalogHref(item) }));
 }
@@ -342,7 +356,7 @@ export async function saveWorkPackageDependency(db: Database, actor: Actor, body
 }
 
 function governanceLinks(value: unknown) {
-  const validKinds = new Set(["initiative", "work_package", "release", "product", "capability", "occurrence", "configuration_node", "platform", "organization", "change_request", "objective"]);
+  const validKinds = new Set(["initiative", "work_package", "release", "product", "capability", "occurrence", "configuration_node", "platform", "organization", "change_request", "objective", "infrastructure_node", "infrastructure_state", "infrastructure_installation", "infrastructure_connection"]);
   const unique = new Map<string, { kind: string; id: string; relationship: string }>();
   for (const entry of asArray<Record<string, unknown>>(value)) {
     const kind = clean(entry.kind);
@@ -366,6 +380,10 @@ async function assertGovernanceLinkTargets(db: Database, links: Array<{ kind: st
     organization: "SELECT id FROM organization WHERE id=? AND program_id=?",
     change_request: "SELECT id FROM change_request WHERE id=? AND program_id=?",
     objective: "SELECT id FROM incumbent_objective WHERE id=? AND program_id=?",
+    infrastructure_node: "SELECT id FROM infrastructure_node WHERE id=? AND program_id=?",
+    infrastructure_state: "SELECT id FROM release_infrastructure_node WHERE id=? AND program_id=?",
+    infrastructure_installation: "SELECT id FROM infrastructure_product_installation WHERE id=? AND program_id=?",
+    infrastructure_connection: "SELECT id FROM infrastructure_connection WHERE id=? AND program_id=?",
   };
   for (const link of links) {
     const statement = targetSql[link.kind];

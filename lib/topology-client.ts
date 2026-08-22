@@ -12,7 +12,7 @@ export async function fetchTopologyExtensions(releaseId?: string) {
 }
 
 export function useTopologyExtensions(releaseId?: string) {
-  const [extensions, setExtensions] = useState<TopologyExtensions>({ hostProfiles: [], deploymentProfiles: [], infrastructure: { nodes: [], states: [], installations: [], connections: [], platforms: [], releases: [], products: [], organizations: [], occurrenceOptions: [] } });
+  const [extensions, setExtensions] = useState<TopologyExtensions>({ hostProfiles: [], deploymentProfiles: [], infrastructure: { nodes: [], states: [], installations: [], connections: [], referenceValues: [], platforms: [], releases: [], products: [], organizations: [], occurrenceOptions: [] } });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const reload = useCallback(async () => {

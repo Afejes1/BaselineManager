@@ -115,7 +115,11 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   if (!Number(isDemoPackage?.count)) throw new Error("The active workspace is not the synthetic demonstration baseline.");
 
   const at = now();
-  const statements: D1PreparedStatement[] = [];
+  // Demonstration enrichment is intentionally repeatable. Several governed
+  // graphs are replaced in one D1 batch; defer FK evaluation until the batch
+  // has restored every child and parent so a previously enriched workspace
+  // can be refreshed without temporarily violating an immediate constraint.
+  const statements: D1PreparedStatement[] = [db.prepare("PRAGMA defer_foreign_keys=ON")];
   const seenHosts = new Set<string>();
   for (const row of rows) {
     const hostKey = `${row.releaseId}:${row.configurationNodeId}`;
@@ -201,30 +205,43 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   // three Releases; parent placement, capacity, connections, and installed
   // Product versions are recorded per Release.  The same Windows Server
   // Product is deliberately installed once on bare metal and again on VMs.
+  const infrastructureManufacturers = [
+    ["demo-org-apc", "APC by Schneider Electric", "supplier"],
+    ["demo-org-cisco", "Cisco Systems", "supplier"],
+    ["demo-org-dell", "Dell Technologies", "supplier"],
+  ] as const;
+  for (const organization of infrastructureManufacturers) statements.push(db.prepare("INSERT INTO organization (id,program_id,name,normalized_name,organization_type,description,lifecycle_status,source_reference,source_as_of,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,normalized_name=excluded.normalized_name,organization_type=excluded.organization_type,description=excluded.description,lifecycle_status=excluded.lifecycle_status,updated_at=excluded.updated_at")
+    .bind(organization[0], PROGRAM_ID, organization[1], organization[1].toLowerCase(), organization[2], "Synthetic manufacturer Organization used by the governed infrastructure demonstration.", "active", "DEMO://INFRASTRUCTURE/MANUFACTURER", "2026-08-22", at, at));
+
   const infrastructureProducts = [
     ["demo-product-windows-server-2019", "Windows Server 2019", "WS2019", "Operating system", "COTS"],
     ["demo-product-windows-11-enterprise", "Windows 11 Enterprise", "Windows 11", "Operating system", "COTS"],
     ["demo-product-rhel-9", "Red Hat Enterprise Linux 9", "RHEL9", "Operating system", "COTS"],
     ["demo-product-vsphere-8", "VMware vSphere Hypervisor 8", "vSphere 8", "Hypervisor", "COTS"],
+    ["demo-product-smart-ups-srt", "APC Smart-UPS SRT", "Smart-UPS SRT", "Hardware model", "COTS"],
+    ["demo-product-catalyst-9300", "Cisco Catalyst 9300", "Catalyst 9300", "Hardware model", "COTS"],
+    ["demo-product-poweredge-mx7000", "Dell PowerEdge MX7000", "PowerEdge MX7000", "Hardware model", "COTS"],
+    ["demo-product-poweredge-mx740c", "Dell PowerEdge MX740c", "PowerEdge MX740c", "Hardware model", "COTS"],
+    ["demo-product-latitude-5430-rugged", "Dell Latitude 5430 Rugged", "Latitude 5430", "Hardware model", "COTS"],
   ] as const;
   for (const product of infrastructureProducts) statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,description,lifecycle_status,source_reference,source_as_of,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,normalized_name=excluded.normalized_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,description=excluded.description,lifecycle_status=excluded.lifecycle_status,updated_at=excluded.updated_at")
     .bind(product[0], PROGRAM_ID, product[1], product[1].toLowerCase(), product[2], product[3], product[4], null, "Synthetic catalog Product used by the governed infrastructure demonstration.", "active", "DEMO://INFRASTRUCTURE/CATALOG", "2026-08-22", at, at));
 
   const infrastructureNodes = [
-    ["demo-infra-ups-va", "demo-platform-obk-va", "ups", "UPS-VA-01", "Mission systems UPS"],
-    ["demo-infra-switch-va", "demo-platform-obk-va", "network_switch", "SW-VA-CORE-01", "Mission systems core switch"],
-    ["demo-infra-chassis-va", "demo-platform-obk-va", "chassis", "CH-VA-01", "Mission systems compute chassis"],
-    ["demo-infra-blade-baremetal", "demo-platform-obk-va", "blade", "BLD-VA-01", "Bare-metal services blade"],
-    ["demo-infra-blade-virtual", "demo-platform-obk-va", "blade", "BLD-VA-02", "Virtual services blade"],
-    ["demo-infra-vm-mps", "demo-platform-obk-va", "virtual_machine", "VM-MPS", "Mission Planning Service VM"],
-    ["demo-infra-vm-tls", "demo-platform-obk-va", "virtual_machine", "VM-TLS", "Threat Library Service VM"],
-    ["demo-infra-drive-mps", "demo-platform-obk-va", "logical_drive", "DRV-MPS-D", "Mission Planning data drive"],
-    ["demo-infra-drive-tls", "demo-platform-obk-va", "logical_drive", "DRV-TLS-D", "Threat Library data drive"],
-    ["demo-infra-pma-mps", "demo-platform-pma-mps", "physical_server", "PMA-PLN-01-HW", "Mission planning laptop"],
-    ["demo-infra-pma-ops", "demo-platform-pma-ops", "physical_server", "PMA-OPS-04-HW", "Operations console laptop"],
+    ["demo-infra-ups-va", "demo-platform-obk-va", "ups", "UPS-VA-01", "Mission systems UPS", "demo-org-apc", "demo-product-smart-ups-srt"],
+    ["demo-infra-switch-va", "demo-platform-obk-va", "network_switch", "SW-VA-CORE-01", "Mission systems core switch", "demo-org-cisco", "demo-product-catalyst-9300"],
+    ["demo-infra-chassis-va", "demo-platform-obk-va", "chassis", "CH-VA-01", "Mission systems compute chassis", "demo-org-dell", "demo-product-poweredge-mx7000"],
+    ["demo-infra-blade-baremetal", "demo-platform-obk-va", "blade", "BLD-VA-01", "Bare-metal services blade", "demo-org-dell", "demo-product-poweredge-mx740c"],
+    ["demo-infra-blade-virtual", "demo-platform-obk-va", "blade", "BLD-VA-02", "Virtual services blade", "demo-org-dell", "demo-product-poweredge-mx740c"],
+    ["demo-infra-vm-mps", "demo-platform-obk-va", "virtual_machine", "VM-MPS", "Mission Planning Service VM", null, null],
+    ["demo-infra-vm-tls", "demo-platform-obk-va", "virtual_machine", "VM-TLS", "Threat Library Service VM", null, null],
+    ["demo-infra-drive-mps", "demo-platform-obk-va", "logical_drive", "DRV-MPS-D", "Mission Planning data drive", null, null],
+    ["demo-infra-drive-tls", "demo-platform-obk-va", "logical_drive", "DRV-TLS-D", "Threat Library data drive", null, null],
+    ["demo-infra-pma-mps", "demo-platform-pma-mps", "physical_server", "PMA-PLN-01-HW", "Mission planning laptop", "demo-org-dell", "demo-product-latitude-5430-rugged"],
+    ["demo-infra-pma-ops", "demo-platform-pma-ops", "physical_server", "PMA-OPS-04-HW", "Operations console laptop", "demo-org-dell", "demo-product-latitude-5430-rugged"],
   ] as const;
-  for (const node of infrastructureNodes) statements.push(db.prepare("INSERT INTO infrastructure_node (id,program_id,platform_id,node_type,code,normalized_code,name,normalized_name,manufacturer_organization_id,hardware_product_id,asset_tag,serial_number,lifecycle_status,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_type=excluded.node_type,code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,normalized_name=excluded.normalized_name,lifecycle_status=excluded.lifecycle_status,description=excluded.description,updated_at=excluded.updated_at")
-    .bind(node[0], PROGRAM_ID, node[1], node[2], node[3], node[3].toLowerCase(), node[4], node[4].toLowerCase(), null, null, `DEMO-${node[3]}`, null, "active", "Synthetic infrastructure identity. Not program data.", actor.id, at, at));
+  for (const node of infrastructureNodes) statements.push(db.prepare("INSERT INTO infrastructure_node (id,program_id,platform_id,node_type,code,normalized_code,name,normalized_name,manufacturer_organization_id,hardware_product_id,asset_tag,serial_number,lifecycle_status,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_type=excluded.node_type,code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,normalized_name=excluded.normalized_name,manufacturer_organization_id=excluded.manufacturer_organization_id,hardware_product_id=excluded.hardware_product_id,asset_tag=excluded.asset_tag,lifecycle_status=excluded.lifecycle_status,description=excluded.description,updated_at=excluded.updated_at")
+    .bind(node[0], PROGRAM_ID, node[1], node[2], node[3], node[3].toLowerCase(), node[4], node[4].toLowerCase(), node[5], node[6], `DEMO-${node[3]}`, null, "active", "Synthetic infrastructure identity. Not program data.", actor.id, at, at));
 
   const releaseConfigurations = [
     { releaseId: r5, suffix: "r5", status: "operational", bladeCpu: 16, bladeRam: 64, mpsCpu: 8, mpsRam: 32, mpsStorage: 180, tlsCpu: 4, tlsRam: 16, tlsStorage: 120, hypervisor: "7.0", windows: "2019", linux: "9.1" },
@@ -245,8 +262,8 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
       ["drive-mps", "demo-infra-drive-mps", "vm-mps", null, null, release.mpsStorage, "SSD", "D:", "NTFS"],
       ["drive-tls", "demo-infra-drive-tls", "vm-tls", null, null, release.tlsStorage, "SSD", "/data", "XFS"],
     ] as const;
-    for (const state of statePlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_type,drive_letter,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_state_id=excluded.parent_state_id,lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
-      .bind(stateId(release.suffix, state[0]), PROGRAM_ID, release.releaseId, "demo-platform-obk-va", state[1], state[2] ? stateId(release.suffix, state[2]) : null, "active", release.status, state[3], state[4], state[5], state[6], state[7], state[8], "DEMO://INFRASTRUCTURE/CONFIGURATION", "2026-08-22", "Synthetic complete Release configuration.", actor.id, at, at));
+    for (const state of statePlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_medium_id,storage_type,drive_letter,file_system_value_id,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_state_id=excluded.parent_state_id,lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_medium_id=excluded.storage_medium_id,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system_value_id=excluded.file_system_value_id,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(stateId(release.suffix, state[0]), PROGRAM_ID, release.releaseId, "demo-platform-obk-va", state[1], state[2] ? stateId(release.suffix, state[2]) : null, "active", release.status, state[3], state[4], state[5], state[6] ? `infra-storage-${state[6].toLowerCase()}` : null, state[6], state[7], state[8] ? `infra-fs-${state[8].toLowerCase()}` : null, state[8], "DEMO://INFRASTRUCTURE/CONFIGURATION", "2026-08-22", "Synthetic complete Release configuration.", actor.id, at, at));
     const installationPlan = [
       ["bare-os", "bare", "demo-product-windows-server-2019", "operating_system", release.windows, null],
       ["hypervisor", "virtual", "demo-product-vsphere-8", "hypervisor", release.hypervisor, null],
@@ -278,8 +295,8 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
       ["pma-mps", "demo-platform-pma-mps", "demo-infra-pma-mps", "Mission planning analyst endpoint", 8, 32, 512],
       ["pma-ops", "demo-platform-pma-ops", "demo-infra-pma-ops", "Operations console analyst endpoint", 8, 32, 512],
     ] as const;
-    for (const endpoint of endpointPlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_type,drive_letter,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_type=excluded.storage_type,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
-      .bind(stateId("r7", endpoint[0]), PROGRAM_ID, r7, endpoint[1], endpoint[2], null, "active", "operational", endpoint[4], endpoint[5], endpoint[6], "NVMe", "C:", "NTFS", "DEMO://INFRASTRUCTURE/ENDPOINT", "2026-08-22", endpoint[3], actor.id, at, at));
+    for (const endpoint of endpointPlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_medium_id,storage_type,drive_letter,file_system_value_id,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_medium_id=excluded.storage_medium_id,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system_value_id=excluded.file_system_value_id,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(stateId("r7", endpoint[0]), PROGRAM_ID, r7, endpoint[1], endpoint[2], null, "active", "operational", endpoint[4], endpoint[5], endpoint[6], "infra-storage-nvme", "NVME", "C:", "infra-fs-ntfs", "NTFS", "DEMO://INFRASTRUCTURE/ENDPOINT", "2026-08-22", endpoint[3], actor.id, at, at));
     const mpsProductId = rows.find((row) => row.releaseId === r7 && row.shortName === "MPS")?.productId;
     const operationsProductId = rows.find((row) => row.releaseId === r7 && row.shortName === "OC")?.productId;
     const endpointInstallations = [

@@ -41,6 +41,15 @@ export type InfrastructureOperatingState = "unknown" | "operational" | "degraded
 export type InstallationRole = "operating_system" | "hypervisor" | "application" | "middleware" | "database" | "runtime" | "firmware" | "agent" | "other";
 export type InstallationStatus = "planned" | "installed" | "retired" | "absent";
 export type ConnectionType = "network" | "power" | "storage" | "cluster" | "management" | "other";
+export type InfrastructureReferenceCategory = "storage_medium" | "file_system";
+
+export type InfrastructureReferenceValue = {
+  id: string;
+  category: InfrastructureReferenceCategory;
+  code: string;
+  name: string;
+  description: string | null;
+};
 
 export type InfrastructureNode = {
   id: string;
@@ -71,8 +80,10 @@ export type ReleaseInfrastructureNode = {
   cpuCores: number | null;
   memoryGb: number | null;
   storageGb: number | null;
+  storageMediumId: string | null;
   storageType: string | null;
   driveLetter: string | null;
+  fileSystemValueId: string | null;
   fileSystem: string | null;
   sourceReference: string | null;
   sourceAsOf: string | null;
@@ -120,6 +131,7 @@ export type InfrastructurePortfolio = {
   states: ReleaseInfrastructureNode[];
   installations: InfrastructureProductInstallation[];
   connections: InfrastructureConnection[];
+  referenceValues: InfrastructureReferenceValue[];
   platforms: Array<{ id: string; code: string; name: string; platformType: string; parentId: string | null }>;
   releases: Array<{ id: string; name: string }>;
   products: Array<{ id: string; name: string; shortName: string | null; productType: string | null }>;

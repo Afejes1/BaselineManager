@@ -9,22 +9,41 @@ export async function GET(request: Request) {
   try {
     await ensureActor(env.DB, request);
     const checks: OperatorDiagnostic[] = [];
-    const [baseline, changes, objectives, initiatives, evidence, columns, foreignKeys, lastExport, evidenceRows] = await Promise.all([
+    const [baseline, changes, objectives, initiatives, evidence, dependencyColumns, infrastructureStateColumns, infrastructureTables, foreignKeys, lastExport, evidenceRows] = await Promise.all([
       env.DB.prepare("SELECT COUNT(*) AS count FROM baseline_occurrence WHERE workspace_id='workspace-jsf-current' AND lifecycle_status='active'").first<CountRow>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM change_request WHERE program_id='program-jsf'").first<CountRow>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM incumbent_objective WHERE program_id='program-jsf'").first<CountRow>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM initiative WHERE program_id='program-jsf'").first<CountRow>(),
       env.DB.prepare("SELECT COUNT(*) AS count FROM evidence_document WHERE program_id='program-jsf'").first<CountRow>(),
       env.DB.prepare("PRAGMA table_info('change_dependency')").all<{ name: string }>(),
+      env.DB.prepare("PRAGMA table_info('release_infrastructure_node')").all<{ name: string }>(),
+      env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('infrastructure_node','infrastructure_reference_value','release_infrastructure_node','infrastructure_product_installation','infrastructure_connection')").all<{ name: string }>(),
       env.DB.prepare("PRAGMA foreign_key_check").all<Record<string, unknown>>(),
       env.DB.prepare("SELECT created_at FROM audit_event WHERE program_id='program-jsf' AND action IN ('workspace_package_exported','workspace_package_imported') ORDER BY created_at DESC LIMIT 1").first<{ created_at: string }>(),
       env.DB.prepare("SELECT id,file_name,r2_key FROM evidence_document WHERE program_id='program-jsf'").all<{ id: string; file_name: string; r2_key: string }>(),
     ]);
-    const requiredColumns = ["consequence_if_unmet", "confidence", "source_reference", "source_as_of"];
-    const columnNames = new Set(columns.results.map((item) => item.name));
-    const missingColumns = requiredColumns.filter((item) => !columnNames.has(item));
+    const requiredDependencyColumns = ["consequence_if_unmet", "confidence", "source_reference", "source_as_of"];
+    const dependencyColumnNames = new Set(dependencyColumns.results.map((item) => item.name));
+    const missingDependencyColumns = requiredDependencyColumns.filter((item) => !dependencyColumnNames.has(item));
+    const requiredInfrastructureTables = ["infrastructure_node", "infrastructure_reference_value", "release_infrastructure_node", "infrastructure_product_installation", "infrastructure_connection"];
+    const infrastructureTableNames = new Set(infrastructureTables.results.map((item) => item.name));
+    const missingInfrastructureTables = requiredInfrastructureTables.filter((item) => !infrastructureTableNames.has(item));
+    const referenceCounts = infrastructureTableNames.has("infrastructure_reference_value")
+      ? await env.DB.prepare("SELECT category,COUNT(*) AS count FROM infrastructure_reference_value WHERE program_id='program-jsf' AND lifecycle_status='active' GROUP BY category").all<{ category: string; count: number }>()
+      : { results: [] as Array<{ category: string; count: number }> };
+    const requiredInfrastructureStateColumns = ["storage_medium_id", "file_system_value_id"];
+    const infrastructureStateColumnNames = new Set(infrastructureStateColumns.results.map((item) => item.name));
+    const missingInfrastructureStateColumns = requiredInfrastructureStateColumns.filter((item) => !infrastructureStateColumnNames.has(item));
+    const referenceCountByCategory = new Map(referenceCounts.results.map((item) => [item.category, Number(item.count)]));
+    const missingReferenceCategories = ["storage_medium", "file_system"].filter((item) => !referenceCountByCategory.get(item));
+    const schemaProblems = [
+      ...missingDependencyColumns.map((item) => `change_dependency.${item}`),
+      ...missingInfrastructureTables.map((item) => `table:${item}`),
+      ...missingInfrastructureStateColumns.map((item) => `release_infrastructure_node.${item}`),
+      ...missingReferenceCategories.map((item) => `reference:${item}`),
+    ];
     checks.push({ id: "database", label: "Application database", status: "pass", detail: "Database query completed." });
-    checks.push({ id: "schema", label: "Schema compatibility", status: missingColumns.length ? "fail" : "pass", detail: missingColumns.length ? `Missing columns: ${missingColumns.join(", ")}. Apply database migrations.` : "Required version 1 dependency and transfer fields are present." });
+    checks.push({ id: "schema", label: "Schema compatibility", status: schemaProblems.length ? "fail" : "pass", detail: schemaProblems.length ? `Missing governed schema elements: ${schemaProblems.join(", ")}. Apply database migrations.` : "Decision, infrastructure, controlled-reference, and transfer fields are present." });
     checks.push({ id: "foreign-keys", label: "Referential integrity", status: foreignKeys.results.length ? "fail" : "pass", detail: foreignKeys.results.length ? `${foreignKeys.results.length} foreign-key violations detected.` : "No foreign-key violations detected." });
     const bucket = documentsBucket();
     let missingEvidence = 0;

@@ -13,7 +13,7 @@ export type WorkPackageStatus = typeof workPackageStatuses[number];
 export type GovernanceRecordType = typeof governanceRecordTypes[number];
 export type GovernanceRecordStatus = typeof governanceRecordStatuses[number];
 export type BriefStatus = typeof briefStatuses[number];
-export type GovernanceEntityKind = "initiative" | "work_package" | "release" | "product" | "capability" | "occurrence" | "configuration_node" | "platform" | "organization" | "change_request" | "objective";
+export type GovernanceEntityKind = "initiative" | "work_package" | "release" | "product" | "capability" | "occurrence" | "configuration_node" | "platform" | "organization" | "change_request" | "objective" | "infrastructure_node" | "infrastructure_state" | "infrastructure_installation" | "infrastructure_connection";
 
 export type ScopeLink = {
   id: string;

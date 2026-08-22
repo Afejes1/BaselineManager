@@ -426,6 +426,27 @@ export const infrastructureNodes = sqliteTable("infrastructure_node", {
   index("infrastructure_node_hardware_product_ix").on(t.hardwareProductId),
 ]);
 
+// Small governed vocabularies prevent storage and file-system classifications
+// from fragmenting into spelling variants while still allowing the program to
+// add an explicitly reviewed value when a standard option is insufficient.
+export const infrastructureReferenceValues = sqliteTable("infrastructure_reference_value", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  category: text("category").notNull(),
+  code: text("code").notNull(),
+  normalizedCode: text("normalized_code").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("infrastructure_reference_category", sql`${t.category} IN ('storage_medium','file_system')`),
+  check("infrastructure_reference_lifecycle", sql`${t.lifecycleStatus} IN ('active','retired')`),
+  uniqueIndex("infrastructure_reference_code_uq").on(t.programId, t.category, t.normalizedCode),
+  index("infrastructure_reference_category_ix").on(t.programId, t.category, t.lifecycleStatus, t.name),
+]);
+
 // This table is the release-specific configuration of an infrastructure node.
 // parent_state_id creates the containment hierarchy for that Release: Platform
 // -> chassis/server -> drive or VM.  A node can move or be resized in a later
@@ -442,8 +463,10 @@ export const releaseInfrastructureNodes = sqliteTable("release_infrastructure_no
   cpuCores: real("cpu_cores"),
   memoryGb: real("memory_gb"),
   storageGb: real("storage_gb"),
+  storageMediumId: text("storage_medium_id").references(() => infrastructureReferenceValues.id),
   storageType: text("storage_type"),
   driveLetter: text("drive_letter"),
+  fileSystemValueId: text("file_system_value_id").references(() => infrastructureReferenceValues.id),
   fileSystem: text("file_system"),
   sourceReference: text("source_reference"),
   sourceAsOf: text("source_as_of"),
@@ -458,6 +481,8 @@ export const releaseInfrastructureNodes = sqliteTable("release_infrastructure_no
   uniqueIndex("release_infrastructure_node_uq").on(t.releaseId, t.infrastructureNodeId),
   index("release_infrastructure_platform_ix").on(t.platformId, t.releaseId, t.parentStateId),
   index("release_infrastructure_release_type_ix").on(t.releaseId, t.lifecycleStatus),
+  index("release_infrastructure_storage_medium_ix").on(t.storageMediumId),
+  index("release_infrastructure_file_system_ix").on(t.fileSystemValueId),
 ]);
 
 // Operating systems are Products, just like applications.  Installation role
@@ -1185,7 +1210,7 @@ export const governanceRecordLinks = sqliteTable("governance_record_link", {
   relationship: text("relationship").notNull().default("affects"),
   ...timestamps,
 }, (t) => [
-  check("governance_record_link_kind", sql`${t.entityKind} IN ('initiative','work_package','release','product','capability','occurrence','configuration_node','platform','organization','change_request','objective')`),
+  check("governance_record_link_kind", sql`${t.entityKind} IN ('initiative','work_package','release','product','capability','occurrence','configuration_node','platform','organization','change_request','objective','infrastructure_node','infrastructure_state','infrastructure_installation','infrastructure_connection')`),
   uniqueIndex("governance_record_link_uq").on(t.governanceRecordId, t.entityKind, t.entityId, t.relationship),
   index("governance_record_link_target_ix").on(t.entityKind, t.entityId),
 ]);
@@ -1402,6 +1427,11 @@ export const schema = {
   platforms,
   platformOrganizations,
   platformBaselineAssignments,
+  infrastructureNodes,
+  infrastructureReferenceValues,
+  releaseInfrastructureNodes,
+  infrastructureProductInstallations,
+  infrastructureConnections,
   organizations,
   productSuppliers,
   capabilities,
