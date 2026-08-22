@@ -509,6 +509,66 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 .governed-dependency>div{display:grid;grid-template-columns:minmax(120px,1fr) auto minmax(120px,1fr);align-items:center;gap:10px;}
 .governed-dependency>strong{color:#294d3c;font-size:12px;}
 .governed-dependency>small{color:#718078;font-size:9px;}
+
+/* High-cardinality record selectors: search first, then make a deliberate link. */
+.search-picker{min-width:0;display:grid;gap:7px;align-content:start;}
+.search-picker .modal-field{margin:9px 0 0;}
+.search-picker .search{width:100%;min-width:0;margin-top:6px;background:#fff;}
+.search-picker-selection{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;border:1px solid #b9d5c6;border-left:4px solid #337456;background:#f3faf6;padding:10px 11px;}
+.search-picker-selection>div{display:grid;gap:2px;min-width:0;}
+.search-picker-selection span{color:#5c7568;font-size:9px;font-weight:820;letter-spacing:.08em;text-transform:uppercase;}
+.search-picker-selection strong{color:#234b38;font-size:12px;line-height:1.35;overflow-wrap:anywhere;}
+.search-picker-selection small{color:#63766d;font-size:10px;line-height:1.35;}
+.search-picker-selection .text-action{flex:0 0 auto;margin:0;}
+.search-picker-help{margin:0;color:#6a7b72;font-size:10px;line-height:1.45;}
+.search-picker-results{display:grid;gap:5px;max-height:268px;overflow:auto;border:1px solid #d6e2db;background:#f7faf8;padding:6px;}
+.search-picker-results button{display:grid;gap:2px;width:100%;border:1px solid #d8e2dc;background:#fff;color:#254a39;padding:9px 10px;text-align:left;}
+.search-picker-results button:hover,.search-picker-results button:focus-visible{border-color:#468067;background:#edf6f1;outline:0;}
+.search-picker-results button strong{font-size:12px;line-height:1.35;overflow-wrap:anywhere;}
+.search-picker-results button small{color:#65786e;font-size:10px;line-height:1.35;overflow-wrap:anywhere;}
+.search-picker-results p{margin:3px 4px;color:#697a72;font-size:10px;line-height:1.4;}
+
+.dependency-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.dependency-tools .search{min-width:270px;}
+.dependency-tools select,.dependency-editor-grid select{min-height:38px;border:1px solid #becbc4;border-radius:4px;background:#fff;color:#21352b;padding:8px 10px;font-size:12px;}
+.dependency-summary-strip{display:flex;gap:0;margin:12px 0;border:1px solid #d9e3de;background:#f7faf8;}
+.dependency-summary-strip span{display:block;flex:1;min-width:0;padding:9px 12px;border-right:1px solid #d9e3de;color:#65776d;font-size:10px;}
+.dependency-summary-strip span:last-child{border-right:0;}
+.dependency-summary-strip strong{display:inline-block;margin-right:5px;color:#245841;font:800 14px var(--font-geist-mono);}
+.dependency-chain article.governed-dependency{position:relative;padding:13px 14px;border-left:4px solid #4f806a;background:#fff;}
+.dependency-chain article.dependency-blocks{border-left-color:#aa5047;background:#fff9f8;}
+.dependency-chain article.dependency-conflicts{border-left-color:#a36c28;background:#fffaf3;}
+.dependency-chain article.dependency-overlaps{border-left-color:#755e91;background:#fcfaff;}
+.dependency-route{display:grid!important;grid-template-columns:auto minmax(145px,1fr) auto minmax(145px,1fr)!important;align-items:center!important;gap:9px!important;}
+.dependency-route .dependency-direction{grid-column:1/-1;justify-self:start;border:1px solid #b8d3c3;border-radius:12px;background:#edf7f1;color:#266047;padding:3px 7px;font:800 8px var(--font-geist-mono);letter-spacing:.07em;}
+.dependency-route .dependency-direction.dependency-downstream{border-color:#c8d8e0;background:#f2f7fa;color:#386b84;}
+.dependency-route a{display:grid;gap:2px;min-width:0;padding:7px 8px;border:1px solid #d8e2dc;background:#f8fbf9;color:#214e39;text-decoration:none;}
+.dependency-route a:hover{border-color:#5d8b73;background:#f0f8f3;}
+.dependency-route a strong{font:750 11px var(--font-geist-mono);overflow-wrap:anywhere;}
+.dependency-route a small{color:#667970;font-size:9px;line-height:1.35;overflow-wrap:anywhere;}
+.dependency-route>b{color:#7e684f;font-size:10px;text-align:center;text-transform:uppercase;}
+.dependency-detail-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;}
+.dependency-detail-grid span{padding:7px 9px;border:1px solid #e0e7e3;background:#f8faf9;color:#52655b;font-size:10px;line-height:1.45;}
+.dependency-detail-grid b{color:#335646;font-size:9px;text-transform:uppercase;letter-spacing:.05em;}
+.dependency-counterpart{margin-top:2px;}
+.dependency-editor-card{grid-column:1/-1;}
+.dependency-editor-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 14px;align-items:start;}
+.dependency-editor-grid>.search-picker{grid-column:1/-1;}
+.dependency-meaning{display:grid;gap:4px;margin:14px 0;border-left:4px solid #3b7c5c;background:#f3f8f5;padding:10px 12px;}
+.dependency-meaning strong{color:#1e4b36;font:750 12px var(--font-geist-mono);overflow-wrap:anywhere;}
+.dependency-meaning span{color:#596d62;font-size:11px;line-height:1.45;}
+
+@media(max-width:900px){
+  .dependency-tools{width:100%;}
+  .dependency-tools .search{flex:1 1 240px;min-width:0;}
+  .dependency-tools select{flex:1 1 220px;min-width:0;}
+  .dependency-summary-strip{display:grid;grid-template-columns:1fr;}
+  .dependency-summary-strip span{border-right:0;border-bottom:1px solid #d9e3de;}
+  .dependency-summary-strip span:last-child{border-bottom:0;}
+  .dependency-route{grid-template-columns:minmax(0,1fr)!important;}
+  .dependency-route>b{justify-self:start;padding-left:7px;}
+  .dependency-detail-grid,.dependency-editor-grid{grid-template-columns:1fr!important;}
+}
 @media(max-width:900px){.workspace-transfer-grid{grid-template-columns:1fr;}.transfer-preview{grid-template-columns:1fr;}.transfer-preview>p,.transfer-preview>label,.transfer-preview>button{grid-column:1;}}
 
 /* The Lockheed feed is a retained external snapshot. This map intentionally
