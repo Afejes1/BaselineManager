@@ -66,7 +66,13 @@ export type ObjectiveEstimate = {
 
 export type IncumbentObjective = {
   id: string;
-  changeRequestId: string;
+  /**
+   * Legacy/direct accountable Change Request.  Lockheed source items may be
+   * reported before an analyst can establish a single accountable package.
+   * Those references live in ObjectiveChangeRequestLink instead of forcing a
+   * fabricated owner.
+   */
+  changeRequestId: string | null;
   externalSystem: string;
   externalIdentifier: string;
   externalItemType?: string;
@@ -81,6 +87,18 @@ export type IncumbentObjective = {
   sourceLocator: string | null;
   sourceAsOf: string | null;
   estimates: ObjectiveEstimate[];
+  updatedAt: string;
+};
+
+/** A hard, traceable Change Request reference on an Objective. */
+export type ObjectiveChangeRequestLink = {
+  id: string;
+  objectiveId: string;
+  changeRequestId: string;
+  relationship: "primary" | "reported" | "related";
+  sourceSystem: string | null;
+  sourceLocator: string | null;
+  sourceAsOf: string | null;
   updatedAt: string;
 };
 
@@ -200,6 +218,8 @@ export type InitiativeDecisionWorkspace = {
   initiatives: InitiativeDecisionProfile[];
   links: InitiativeChangeLink[];
   objectives: IncumbentObjective[];
+  /** Reported and analyst-confirmed Objective ↔ Change Request references. */
+  objectiveChangeRequestLinks?: ObjectiveChangeRequestLink[];
   /** Optional for backwards-compatible consumers of the decision bundle. */
   objectiveDependencies?: ChangeRequestObjectiveDependency[];
   objectiveEffectAttributions?: ObjectiveEffectAttributionRecord[];
@@ -215,6 +235,7 @@ export type InitiativeDecisionBundle = {
   links: InitiativeChangeLink[];
   changeRequests: ChangeRequest[];
   objectives: IncumbentObjective[];
+  objectiveChangeRequestLinks?: ObjectiveChangeRequestLink[];
   objectiveDependencies?: ChangeRequestObjectiveDependency[];
   objectiveEffectAttributions?: ObjectiveEffectAttributionRecord[];
   requirements: RequirementTrace[];
@@ -226,12 +247,34 @@ export type InitiativeDecisionBundle = {
 export const tierLabel = (value: AcceptanceTier) => value === "tier_3" ? "Tier 3" : value === "tier_4" ? "Tier 4" : "Other";
 export const readable = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 
+/**
+ * Returns every governed Change Request relationship for an external Objective.
+ * The direct field is retained for an explicitly established accountable owner;
+ * source-reported JPO/MCP values are hard links and must participate in
+ * traceability without silently becoming Government ownership.
+ */
+export function objectiveRelatedChangeRequestIds(
+  objective: Pick<IncumbentObjective, "id" | "changeRequestId">,
+  links: readonly Pick<ObjectiveChangeRequestLink, "objectiveId" | "changeRequestId">[] = [],
+) {
+  return [...new Set([objective.changeRequestId, ...links.filter((link) => link.objectiveId === objective.id).map((link) => link.changeRequestId)].filter((value): value is string => Boolean(value)))];
+}
+
+export function objectiveIsRelatedToChangeRequest(
+  objective: Pick<IncumbentObjective, "id" | "changeRequestId">,
+  changeRequestId: string,
+  links: readonly Pick<ObjectiveChangeRequestLink, "objectiveId" | "changeRequestId">[] = [],
+) {
+  return objectiveRelatedChangeRequestIds(objective, links).includes(changeRequestId);
+}
+
 export function selectInitiativeBundle(workspace: InitiativeDecisionWorkspace, initiativeId: string): InitiativeDecisionBundle | null {
   const initiative = workspace.initiatives.find((item) => item.id === initiativeId);
   if (!initiative) return null;
   const links = workspace.links.filter((item) => item.initiativeId === initiativeId);
   const requestIds = new Set(links.map((item) => item.changeRequestId));
-  const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId));
+  const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
+  const objectives = workspace.objectives.filter((item) => objectiveRelatedChangeRequestIds(item, objectiveChangeRequestLinks).some((requestId) => requestIds.has(requestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }

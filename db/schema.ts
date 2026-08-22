@@ -568,13 +568,14 @@ export const initiativeChangeRequests = sqliteTable("initiative_change_request",
   index("initiative_change_request_request_ix").on(t.changeRequestId, t.initiativeId),
 ]);
 
-// Incumbent Objectives are externally governed technical work units beneath a
-// Change Request. Their dates and status support analysis here but never
-// replace the incumbent system of record.
+// Incumbent Objectives are externally governed technical work units. A
+// supplier may report the Objective before it reports an MCP/DSOR association;
+// reported associations are held in objectiveChangeRequestLinks. The optional
+// direct field remains a compatibility / analyst-designated primary link.
 export const incumbentObjectives = sqliteTable("incumbent_objective", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
-  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  changeRequestId: text("change_request_id").references(() => changeRequests.id),
   externalSystem: text("external_system").notNull(),
   externalIdentifier: text("external_identifier").notNull(),
   externalItemType: text("external_item_type").notNull().default("Objective"),
@@ -596,9 +597,27 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   index("incumbent_objective_request_ix").on(t.changeRequestId, t.status, t.plannedFinish),
 ]);
 
-// A feed may report one Objective against several MCP/JPO identifiers. The
-// legacy change_request_id remains an analyst-designated compatibility field;
-// this table holds every reported association without implying ownership.
+// Every source-reported Objective ↔ Change Request relationship is explicit.
+// A primary link is analyst-designated; a reported link is retained as source
+// evidence and does not imply ownership, funding, or delivery approval.
+export const objectiveChangeRequestLinks = sqliteTable("objective_change_request_link", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  relationship: text("relationship").notNull().default("reported"),
+  sourceSystem: text("source_system"),
+  sourceLocator: text("source_locator"),
+  sourceAsOf: text("source_as_of"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("objective_change_request_link_relationship", sql`${t.relationship} IN ('primary','reported','related')`),
+  uniqueIndex("objective_change_request_link_uq").on(t.objectiveId, t.changeRequestId, t.relationship),
+  index("objective_change_request_link_request_ix").on(t.changeRequestId, t.relationship, t.objectiveId),
+  index("objective_change_request_link_objective_ix").on(t.objectiveId, t.relationship, t.changeRequestId),
+]);
+
 // A Change Request may depend on a specific Objective owned by another
 // Change Request. This is deliberately separate from change_dependency so the
 // dependency remains precise without implying that the entire owning request
@@ -1275,6 +1294,7 @@ export const schema = {
   initiatives,
   initiativeChangeRequests,
   incumbentObjectives,
+  objectiveChangeRequestLinks,
   changeRequestObjectiveDependencies,
   objectiveEffectAttributions,
   objectiveSourcePackages,

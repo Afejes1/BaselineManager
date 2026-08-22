@@ -12,9 +12,9 @@ import {
   type ChangeRequestImportColumn,
   type ChangeRequestImportMapping,
 } from "../../../lib/change-import";
-import { importResolutions, type GovernedImportItem, type ImportDecision, type ImportTargetOption } from "../../../lib/governed-import";
+import { importResolutions, type GovernedImportItem, type ImportDecision } from "../../../lib/governed-import";
 
-type Preview = { items: GovernedImportItem[]; targets: ImportTargetOption[]; canApply: boolean };
+type Preview = { items: GovernedImportItem[]; canApply: boolean };
 type HistoryRow = { id: string; source_system: string; file_name: string; sheet_name?: string | null; source_as_of?: string | null; status: string; record_count: number; added_count: number; changed_count: number; unchanged_count: number; skipped_count: number; blocked_count: number; applied_at?: string | null };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -30,7 +30,6 @@ export default function ChangeRequestImportPage() {
   const [sourceLocator, setSourceLocator] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ImportDecision>>({});
-  const [targets, setTargets] = useState<Record<string, string>>({});
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -44,11 +43,11 @@ export default function ChangeRequestImportPage() {
   useEffect(() => { queueMicrotask(() => void loadHistory()); }, [loadHistory]);
 
   const requiredMappingReady = Boolean(mapping.ExternalIdentifier && mapping.Title && sourceSystem.trim() && sourceAsOf);
-  const resolutions = useMemo(() => preview ? importResolutions(preview.items, decisions, targets) : [], [decisions, preview, targets]);
+  const resolutions = useMemo(() => preview ? importResolutions(preview.items, decisions, {}) : [], [decisions, preview]);
 
   async function chooseFile(file?: File) {
     if (!file) return;
-    setMessage(""); setPreview(null); setDecisions({}); setTargets({}); setFileName(file.name);
+    setMessage(""); setPreview(null); setDecisions({}); setFileName(file.name);
     try {
       const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", raw: false });
       const first = workbook.SheetNames[0];
@@ -72,20 +71,19 @@ export default function ChangeRequestImportPage() {
         setPreview(payload.preview);
         if (mode === "preview") {
           setDecisions(Object.fromEntries(payload.preview.items.map((item) => [item.id, item.defaultDecision])));
-          setTargets(Object.fromEntries(payload.preview.items.filter((item) => item.proposedTargetId).map((item) => [item.id, item.proposedTargetId!])))
         }
       }
       if (!response.ok) throw new Error(payload.error || "The source file was not applied.");
       if (mode === "apply") {
         setMessage(payload.duplicate ? payload.message || "This exact source snapshot was already applied. No records were changed." : `${payload.applied || 0} approved records applied; ${payload.skipped || 0} rows skipped. Government analysis was retained.`);
         await loadHistory();
-      } else setMessage("Preview complete. Review every row, canonical target, and proposed field change before applying.");
+      } else setMessage("Preview complete. Valid external identifiers will create or refresh canonical Change Requests automatically. Review the proposed field changes before applying.");
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : "The source file was not applied."); }
     finally { setBusy(false); }
   }
 
   function setMappingField(field: ChangeRequestImportColumn, header: string) {
-    setMapping((current) => ({ ...current, [field]: header })); setPreview(null); setDecisions({}); setTargets({});
+    setMapping((current) => ({ ...current, [field]: header })); setPreview(null); setDecisions({});
   }
 
   function bulkDecision(decision: ImportDecision) {
@@ -93,13 +91,13 @@ export default function ChangeRequestImportPage() {
     setDecisions(Object.fromEntries(preview.items.map((item) => [item.id, item.disposition === "blocked" ? "skip" : decision])));
   }
 
-  return <DomainPageShell title="Change Request Source Import" subtitle="Stage, map, review, and apply the Confluence DSOR/MCP export without overwriting Government analysis." actions={<><Link className="ghost-button" href="/intake">Import Hub</Link><Link className="ghost-button" href="/changes">Return to Change Requests</Link></>}>
-    <section className="decision-principle"><strong>Controlled merge</strong><span>The source file does not write directly to the canonical database. Every row is matched, reviewed, and approved first. Exact source snapshots, analyst overrides, skips, and field changes are retained.</span></section>
+  return <DomainPageShell title="Change Request Source Import" subtitle="Stage, review, and apply the Confluence DSOR/MCP export without overwriting Government analysis." actions={<><Link className="ghost-button" href="/intake">Import Hub</Link><Link className="ghost-button" href="/changes">Return to Change Requests</Link></>}>
+    <section className="decision-principle"><strong>Controlled merge</strong><span>Valid MCP/DSOR identifiers create or refresh canonical Change Requests automatically. The source file retains its receipt and field changes; Government analysis and decisions remain separate. Review is needed only to approve, skip, or correct an invalid or duplicate source identity.</span></section>
     <section className="split-layout"><article className="domain-section"><span className="eyebrow">CONFLUENCE EXPORT</span><h3>Select the generated CSV or workbook</h3><label className="modal-field">Source file<input type="file" accept=".csv,.xlsx,.xls,text/csv" onChange={(event) => void chooseFile(event.target.files?.[0])} /></label><div className="form-grid"><label className="modal-field">Source snapshot date<input type="date" value={sourceAsOf} onChange={(event) => { setSourceAsOf(event.target.value); setPreview(null); }} /></label><label className="modal-field">Source system<input value={sourceSystem} onChange={(event) => { setSourceSystem(event.target.value); setPreview(null); }} /></label></div><label className="modal-field">Export or Confluence locator<input value={sourceLocator} onChange={(event) => setSourceLocator(event.target.value)} placeholder="Optional export job, Confluence page, or script reference" /></label>{fileName ? <p className="entity-meta">{fileName} · {sheetName} · {rawRows.length} source rows · {headers.length} columns</p> : null}<button className="primary-button" disabled={!rawRows.length || !requiredMappingReady || busy} onClick={() => void call("preview")}>{busy ? "Processing…" : "Preview reconciliation"}</button></article><article className="domain-section"><span className="eyebrow">MERGE AUTHORITY</span><h3>Fields controlled by this import</h3><p>External identity, title, source status, source owner, source locator, source date, request type, and requested Release may be refreshed.</p><p className="entity-meta">Government priority, fund/defer/decline decisions, consequences, affected objects, dependencies, Objectives, requirements, acceptance, and WBS records are never overwritten.</p></article></section>
 
     {headers.length ? <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">COLUMN MAPPING</span><h3>Verify how the source columns map to canonical fields</h3></div><span>Required: External ID and Title</span></div><div className="import-column-map">{CHANGE_REQUEST_IMPORT_COLUMNS.map((field) => <label className="modal-field" key={field}>{field}<select value={mapping[field]} onChange={(event) => setMappingField(field, event.target.value)}><option value="">{field === "ExternalSystem" || field === "SourceAsOf" ? "Use import-level value" : "Not mapped"}</option>{headers.map((header) => <option value={header} key={header}>{header}</option>)}</select></label>)}</div><p className="entity-meta">Columns not mapped to canonical fields remain in the immutable source snapshot and are compared on later imports. They are not discarded.</p></section> : null}
 
-    {preview ? <GovernedImportReview items={preview.items} decisions={decisions} targets={targets} targetOptions={preview.targets} targetLabel="Canonical Change Request" busy={busy} applyLabel="Apply approved rows" onDecision={(id, decision) => setDecisions((current) => ({ ...current, [id]: decision }))} onTarget={(id, targetId) => setTargets((current) => ({ ...current, [id]: targetId }))} onBulkDecision={bulkDecision} onApply={() => void call("apply")} /> : null}
+    {preview ? <GovernedImportReview items={preview.items} decisions={decisions} busy={busy} applyLabel="Apply approved rows" onDecision={(id, decision) => setDecisions((current) => ({ ...current, [id]: decision }))} onBulkDecision={bulkDecision} onApply={() => void call("apply")} /> : null}
 
     <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">IMPORT HISTORY</span><h3>Applied Confluence source snapshots</h3></div><button className="ghost-button" type="button" onClick={() => void loadHistory()}>Refresh history</button></div><div className="domain-table-wrap"><table><thead><tr><th>Snapshot</th><th>Source</th><th>Result</th><th>Applied</th></tr></thead><tbody>{history.map((run) => <tr key={run.id}><td><strong>{run.file_name}</strong><small>{run.source_as_of || "No source date"}</small></td><td>{run.source_system}<small>{run.record_count} rows</small></td><td>{run.added_count} new · {run.changed_count} changed · {run.unchanged_count} unchanged<small>{run.skipped_count} skipped · {run.blocked_count} blocked</small></td><td>{run.applied_at ? new Date(run.applied_at).toLocaleString() : run.status}</td></tr>)}{!history.length ? <tr><td colSpan={4} className="empty">No Confluence Change Request source snapshot has been applied.</td></tr> : null}</tbody></table></div></section>
     {message ? <p className={/required|could not|failed|invalid|older/i.test(message) ? "toast toast-error" : "toast"}>{message}</p> : null}

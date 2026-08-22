@@ -49,16 +49,19 @@ test("objective reconciliation distinguishes unchanged and changed source rows",
   assert.deepEqual(changed.rows[0].changedFields, ["Status"]);
 });
 
-test("objective reconciliation blocks duplicates, missing owners, and silent reparenting", () => {
+test("objective reconciliation blocks duplicate identities but retains reported request references", () => {
   const duplicate = reconcileObjectiveImport([row(), row()], [current], [request]);
   assert.equal(duplicate.blocked, 2);
   assert.equal(duplicate.canApply, false);
 
   const missingOwner = reconcileObjectiveImport([row({ OwningChangeRequest: "MCP-404" })], [current], [request]);
-  assert.equal(missingOwner.rows[0].issues.some((issue) => issue.code === "owner_not_found"), true);
+  assert.equal(missingOwner.rows[0].issues.some((issue) => issue.code === "reported_reference"), true);
+  assert.equal(missingOwner.rows[0].disposition, "change");
+  assert.equal(missingOwner.canApply, true);
 
   const other = { id: "change-21", externalIdentifier: "MCP-21" };
   const reparent = reconcileObjectiveImport([row({ OwningChangeRequest: "MCP-21" })], [current], [request, other]);
-  assert.equal(reparent.rows[0].issues.some((issue) => issue.code === "owner_change"), true);
+  assert.equal(reparent.rows[0].issues.some((issue) => issue.blocking), false);
+  assert.equal(reparent.canApply, true);
 });
 

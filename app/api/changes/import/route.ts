@@ -14,6 +14,7 @@ import {
 } from "../../../../lib/change-import";
 import { importIdentity, importRunStatements, priorImportRun } from "../../../../lib/import-run-server";
 import type { GovernedImportItem, ImportFieldChange, ImportResolution } from "../../../../lib/governed-import";
+import { CanonicalImportMaterializer } from "../../../../lib/canonical-import-materializer";
 
 type IncomingBody = {
   mode?: "preview" | "apply";
@@ -69,8 +70,9 @@ function review(body: IncomingBody, incoming: ReturnType<typeof makeIncoming>, d
   const existingById = new Map(data.existingRows.map((item) => [item.id, item]));
   const rawByRow = new Map(incoming.map((item) => [item.rowNumber, item.raw]));
   const items: GovernedImportItem[] = preview.rows.map((item) => {
-    const resolution = resolutions.get(item.rowNumber);
-    const selected = resolution?.targetId ? existingById.get(resolution.targetId) : item.existingId ? existingById.get(item.existingId) : null;
+    // The external identifier is the deterministic identity. Analysts do not
+    // have to select a pre-existing Change Request for every imported row.
+    const selected = item.existingId ? existingById.get(item.existingId) : null;
     const canonicalBefore = selected ? existingChangeRequestImportRow(selected) : null;
     const canonicalChanges = canonicalBefore
       ? CHANGE_REQUEST_IMPORT_COLUMNS.filter((field) => normalizedChangeImportValue(canonicalBefore[field]) !== normalizedChangeImportValue(item.row[field])).map((field) => ({ field, before: canonicalBefore[field], after: item.row[field] }))
@@ -78,16 +80,11 @@ function review(body: IncomingBody, incoming: ReturnType<typeof makeIncoming>, d
     const sourceState = selected ? data.sourceStateByRequest.get(selected.id) : null;
     const sourceChanges = objectDiff(parseJsonRecord(sourceState?.normalized_payload), parseJsonRecord(sourceJson(rawByRow.get(item.rowNumber) || {}))).filter((change) => !canonicalChanges.some((candidate) => candidate.field === change.field));
     const issues = [...item.issues];
-    if (resolution?.targetId && !selected) issues.push("The selected canonical Change Request does not exist in this program.");
     if (selected?.sourceAsOf && item.row.SourceAsOf && selected.sourceAsOf > item.row.SourceAsOf) issues.push(`Source date ${item.row.SourceAsOf} is older than the current ${selected.sourceAsOf} observation.`);
     const disposition = issues.length ? "blocked" as const : !selected ? "add" as const : canonicalChanges.length || sourceChanges.length ? "change" as const : "unchanged" as const;
-    return { id: `change-import-row-${item.rowNumber}`, rowNumber: item.rowNumber, sourceKey: item.row.ExternalIdentifier, title: item.row.Title || "Untitled Change Request", detail: `${item.row.ExternalSystem} · ${item.row.SourceAsOf || "source date not supplied"}`, disposition, issues, changes: [...canonicalChanges, ...sourceChanges], proposedTargetId: selected?.id || null, proposedTargetLabel: selected ? `${selected.externalIdentifier} · ${selected.title}` : null, targetKind: "change_request", targetRequired: disposition !== "add", defaultDecision: disposition === "blocked" ? "skip" as const : "approve" as const };
+    return { id: `change-import-row-${item.rowNumber}`, rowNumber: item.rowNumber, sourceKey: item.row.ExternalIdentifier, title: item.row.Title || "Untitled Change Request", detail: `${item.row.ExternalSystem} · ${item.row.SourceAsOf || "source date not supplied"}`, disposition, issues, changes: [...canonicalChanges, ...sourceChanges], proposedTargetId: selected?.id || null, proposedTargetLabel: selected ? `${selected.externalIdentifier} · ${selected.title}` : null, defaultDecision: disposition === "blocked" ? "skip" as const : "approve" as const };
   });
-  const approved = items.filter((item) => item.disposition !== "blocked" && (resolutions.get(item.rowNumber)?.decision || item.defaultDecision) === "approve");
-  const selectedTargets = approved.map((item) => resolutions.get(item.rowNumber)?.targetId || item.proposedTargetId).filter((item): item is string => Boolean(item));
-  const duplicateTargets = selectedTargets.filter((target, index) => selectedTargets.indexOf(target) !== index);
-  if (duplicateTargets.length) for (const item of items) if (duplicateTargets.includes(resolutions.get(item.rowNumber)?.targetId || item.proposedTargetId || "")) { item.disposition = "blocked"; item.issues.push("More than one source row maps to this canonical Change Request."); item.defaultDecision = "skip"; }
-  return { preview, items, targets: data.existingRows.map((item) => ({ id: item.id, label: `${item.externalIdentifier} · ${item.title}`, detail: item.externalSystem || undefined })) };
+  return { preview, items };
 }
 
 export async function GET(request: Request) {
@@ -109,7 +106,7 @@ export async function POST(request: Request) {
     if (!body.sourceAsOf || !validDate(body.sourceAsOf)) return Response.json({ error: "Source snapshot date is required and must use YYYY-MM-DD." }, { status: 400 });
     const data = await context();
     const result = review(body, incoming, data);
-    const responsePreview = { ...result.preview, rows: result.preview.rows, items: result.items, targets: result.targets, canApply: result.items.some((item) => item.disposition !== "blocked" && (body.resolutions?.find((entry) => entry.rowNumber === item.rowNumber)?.decision || item.defaultDecision) === "approve") };
+    const responsePreview = { ...result.preview, rows: result.preview.rows, items: result.items, canApply: result.items.some((item) => item.disposition !== "blocked" && (body.resolutions?.find((entry) => entry.rowNumber === item.rowNumber)?.decision || item.defaultDecision) === "approve") };
     if (body.mode !== "apply") return Response.json({ preview: responsePreview });
     requireWriter(actor);
 
@@ -126,33 +123,41 @@ export async function POST(request: Request) {
 
     const at = new Date().toISOString();
     const runId = `ingestion-${crypto.randomUUID()}`;
-    const existingById = new Map(data.existingRows.map((item) => [item.id, item]));
     const canonicalByRow = new Map(incoming.map((item) => [item.rowNumber, item]));
+    const materializer = await CanonicalImportMaterializer.load(env.DB, actor.id, at);
+    const resolvedByRow = new Map<number, { id: string; created: boolean }>();
+    for (const item of approved) {
+      const source = canonicalByRow.get(item.rowNumber)!.canonical;
+      const result = materializer.ensureChangeRequest({
+        identifier: source.ExternalIdentifier,
+        title: source.Title,
+        externalStatus: source.ExternalStatus,
+        externalOwner: source.ExternalOwner,
+        sourceSystem: source.ExternalSystem || body.sourceSystem || CONFLUENCE_CHANGE_SOURCE_SYSTEM,
+        sourceLocator: source.SourceLocator || body.sourceLocator || null,
+        sourceAsOf: source.SourceAsOf || body.sourceAsOf || null,
+        requestedRelease: source.RequestedRelease || null,
+        updateSourceFields: true,
+      });
+      if (result.id) resolvedByRow.set(item.rowNumber, { id: result.id, created: result.created });
+    }
+    if (materializer.issues.length) return Response.json({ error: "One or more source identities match multiple canonical Change Requests. Review the identity exceptions before applying.", identityExceptions: materializer.issues, preview: responsePreview }, { status: 409 });
     const finalResolutions: ImportResolution[] = result.items.map((item) => {
       const resolution = resolutionByRow.get(item.rowNumber);
-      return { rowNumber: item.rowNumber, decision: item.disposition === "blocked" ? "skip" : resolution?.decision || item.defaultDecision, targetId: resolution?.targetId || item.proposedTargetId || null };
+      return { rowNumber: item.rowNumber, decision: item.disposition === "blocked" ? "skip" : resolution?.decision || item.defaultDecision, targetId: resolvedByRow.get(item.rowNumber)?.id || null };
     });
-    for (const item of approved) {
-      const resolution = finalResolutions.find((entry) => entry.rowNumber === item.rowNumber)!;
-      if (!resolution.targetId) resolution.targetId = `change-${crypto.randomUUID()}`;
-    }
-    const statements = importRunStatements(env.DB, { runId, adapterKey, sourceSystem: body.sourceSystem || CONFLUENCE_CHANGE_SOURCE_SYSTEM, fileName: body.fileName, sheetName: body.sheetName, sourceLocator: body.sourceLocator, sourceAsOf: body.sourceAsOf, ...identity, items: result.items, resolutions: finalResolutions, rawRows: incoming.map((item) => item.raw), normalizedRows: incoming.map((item) => item.canonical), targetSnapshotKind: "change_request_source", targetSnapshotId: runId, actorId: actor.id, at });
+    const statements = [...materializer.statements, ...importRunStatements(env.DB, { runId, adapterKey, sourceSystem: body.sourceSystem || CONFLUENCE_CHANGE_SOURCE_SYSTEM, fileName: body.fileName, sheetName: body.sheetName, sourceLocator: body.sourceLocator, sourceAsOf: body.sourceAsOf, ...identity, items: result.items, resolutions: finalResolutions, rawRows: incoming.map((item) => item.raw), normalizedRows: incoming.map((item) => item.canonical), targetSnapshotKind: "change_request_source", targetSnapshotId: runId, actorId: actor.id, at })];
 
     for (const item of approved) {
       const incomingItem = canonicalByRow.get(item.rowNumber)!;
       const row = incomingItem.canonical;
-      const resolution = finalResolutions.find((entry) => entry.rowNumber === item.rowNumber)!;
-      const existing = resolution.targetId ? existingById.get(resolution.targetId) : null;
-      const changeRequestId = existing?.id || resolution.targetId!;
-      const previewRow = result.preview.rows.find((candidate) => candidate.rowNumber === item.rowNumber)!;
-      if (existing) statements.push(env.DB.prepare("UPDATE change_request SET type_id=?,external_system=?,external_identifier=?,title=?,external_status=?,external_owner=?,source_locator=?,source_as_of=?,requested_release_id=?,updated_at=? WHERE id=? AND program_id=?")
-        .bind(previewRow.typeId, row.ExternalSystem, row.ExternalIdentifier, row.Title, row.ExternalStatus || null, row.ExternalOwner || null, row.SourceLocator || null, row.SourceAsOf, previewRow.releaseId, at, existing.id, PROGRAM_ID));
-      else statements.push(env.DB.prepare("INSERT INTO change_request (id,program_id,type_id,external_system,external_identifier,title,external_status,external_owner,source_locator,source_as_of,requested_release_id,government_priority,decision_status,reference_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(changeRequestId, PROGRAM_ID, previewRow.typeId, row.ExternalSystem, row.ExternalIdentifier, row.Title, row.ExternalStatus || null, row.ExternalOwner || null, row.SourceLocator || null, row.SourceAsOf, previewRow.releaseId, "unranked", "pending", "active", actor.id, at, at));
+      const materialized = resolvedByRow.get(item.rowNumber);
+      if (!materialized) continue;
+      const changeRequestId = materialized.id;
       const normalizedPayload = sourceJson(incomingItem.raw);
       statements.push(env.DB.prepare("INSERT INTO external_change_source_state (change_request_id,latest_run_id,external_system,raw_payload,normalized_payload,source_as_of,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(change_request_id) DO UPDATE SET latest_run_id=excluded.latest_run_id,external_system=excluded.external_system,raw_payload=excluded.raw_payload,normalized_payload=excluded.normalized_payload,source_as_of=excluded.source_as_of,updated_at=excluded.updated_at")
         .bind(changeRequestId, runId, row.ExternalSystem, JSON.stringify(incomingItem.raw), normalizedPayload, row.SourceAsOf, at));
-      statements.push(audit(env.DB, actor, existing ? "change_request_source_refreshed" : "change_request_source_imported", "change_request", changeRequestId, { ingestionRunId: runId, sourceFile: body.fileName, rowNumber: item.rowNumber, changedFields: item.changes.map((change) => change.field) }, existing || undefined));
+      statements.push(audit(env.DB, actor, materialized.created ? "change_request_source_imported" : "change_request_source_refreshed", "change_request", changeRequestId, { ingestionRunId: runId, sourceFile: body.fileName, rowNumber: item.rowNumber, changedFields: item.changes.map((change) => change.field) }));
     }
     statements.push(audit(env.DB, actor, "governed_import_applied", "ingestion_run", runId, { adapterKey, fileName: body.fileName, sourceAsOf: body.sourceAsOf, approved: approved.length, skipped: result.items.length - approved.length }));
     await env.DB.batch(statements);

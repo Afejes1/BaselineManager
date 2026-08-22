@@ -1,4 +1,4 @@
-import type { InitiativeAssessment, InitiativeDecisionBundle, ReadinessFinding } from "./initiative-decision-model.js";
+import { objectiveIsRelatedToChangeRequest, type InitiativeAssessment, type InitiativeDecisionBundle, type ReadinessFinding } from "./initiative-decision-model.js";
 
 function finding(input: Omit<ReadinessFinding, "id">): ReadinessFinding {
   return { id: `${input.subjectKind}:${input.subjectId}:${input.category}:${input.title}`, ...input };
@@ -23,7 +23,7 @@ export function assessInitiative(bundle: InitiativeDecisionBundle, asOf = new Da
     if (request.decisionStatus === "pending") add({ severity: "information", category: "decision", title: `${request.externalIdentifier} awaits a Government decision`, detail: request.consequenceIfDeferred || "The deferral consequence has not been stated.", subjectKind: "change_request", subjectId: request.id });
     if (!request.sourceLocator || !request.sourceAsOf) add({ severity: "warning", category: "evidence", title: `${request.externalIdentifier} source reference is incomplete`, detail: "Record both the incumbent source locator and the date its status was checked.", subjectKind: "change_request", subjectId: request.id });
     if (!request.impactSummary || !request.consequenceIfDeferred || !effectCounts.get(request.id)) add({ severity: "blocker", category: "traceability", title: `${request.externalIdentifier} impact analysis is incomplete`, detail: "A funding decision needs a consequence plus explicit links to the affected baseline objects.", subjectKind: "change_request", subjectId: request.id });
-    if (!bundle.objectives.some((objective) => objective.changeRequestId === request.id)) add({ severity: "blocker", category: "traceability", title: `${request.externalIdentifier} has no incumbent Objective`, detail: "Link at least one externally governed technical work objective before claiming how the request will be delivered.", subjectKind: "change_request", subjectId: request.id });
+    if (!bundle.objectives.some((objective) => objectiveIsRelatedToChangeRequest(objective, request.id, bundle.objectiveChangeRequestLinks))) add({ severity: "blocker", category: "traceability", title: `${request.externalIdentifier} has no incumbent Objective`, detail: "Link at least one externally governed technical work objective before claiming how the request will be delivered.", subjectKind: "change_request", subjectId: request.id });
   }
 
   const initiativeRequestIds = new Set(bundle.changeRequests.map((request) => request.id));

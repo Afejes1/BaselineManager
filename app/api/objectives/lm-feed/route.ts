@@ -3,6 +3,7 @@ import { audit, ensureActor, PROGRAM_ID, requireWriter } from "../../../../lib/g
 import type { GovernedImportItem, ImportResolution } from "../../../../lib/governed-import";
 import { importIdentity, importRunStatements, priorImportRun } from "../../../../lib/import-run-server";
 import { LM_OBJECTIVE_FEED_SYSTEM, comparableFeedRecord, deltaJson, feedJson, parseLmObjectiveFeed, reconcileLmObjectiveFeedSnapshot, type ExistingLmFeedItem, type LmObjectiveFeedRecord } from "../../../../lib/lm-objective-feed";
+import { CanonicalImportMaterializer, LM_JIRA_SYSTEM } from "../../../../lib/canonical-import-materializer";
 
 type RequestRow = { id: string; external_identifier: string };
 type StateRow = { feed_key: string; subject_id: string; canonical_objective_id: string | null };
@@ -144,8 +145,11 @@ export async function POST(request: Request) {
     const preview = reconcileLmObjectiveFeedSnapshot(parsed.records, context.prior);
     const stateBySubject = new Map(context.states.map((item) => [item.subject_id, item]));
     const canApply = preview.canApply && !parsed.validationIssues.some((item) => item.blocking);
-    const unresolvedJpoLinks = parsed.records.reduce((count, record) => count + record.jpoIds.filter((identifier) => !context.requests.some((request) => normalize(request.external_identifier) === normalize(identifier))).length, 0);
-    const responsePreview = { ...preview, items: preview.items.map((item) => ({ ...item, objectiveId: item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null })), canApply, sourceIssues: parsed.issues, unresolvedJpoLinks };
+    const newReferencedChangeRequests = parsed.records.reduce((count, record) => count + record.jpoIds.filter((identifier) => !context.requests.some((request) => normalize(request.external_identifier) === normalize(identifier))).length, 0);
+    // An accepted source record always materializes a canonical Objective. A
+    // JPO that is not already present will materialize a reference Change
+    // Request too; it is not a missing mapping or a reason to block the file.
+    const responsePreview = { ...preview, items: preview.items.map((item) => ({ ...item, objectiveId: item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null, automaticMaterialization: true })), canApply, sourceIssues: parsed.issues, newReferencedChangeRequests };
     if (body.mode !== "apply") return Response.json({ preview: responsePreview, previousSnapshotId: context.latestSnapshotId });
     requireWriter(actor);
     const resolutionByKey = new Map((body.resolutions || []).map((item) => [item.sourceKey || `row:${item.rowNumber}`, item]));
@@ -156,13 +160,6 @@ export async function POST(request: Request) {
     const blockedApproved = preview.items.some((item, index) => item.disposition === "blocked" && (resolutionByKey.get(item.record.sourceKey) || resolutionByKey.get(`row:${index + 2}`))?.decision === "approve");
     if (!canApply || blockedApproved) return Response.json({ error: "Resolve blocking JSON feed issues before applying the snapshot.", preview: responsePreview }, { status: 409 });
     if (!appliedItems.length) return Response.json({ error: "Approve at least one valid source record before applying the snapshot.", preview: responsePreview }, { status: 409 });
-    const selectedObjectiveIds = [...new Set(appliedItems.map((item) => resolutionByKey.get(item.record.sourceKey)?.targetId).filter((value): value is string => Boolean(value)))];
-    if (selectedObjectiveIds.length) {
-      const placeholders = selectedObjectiveIds.map(() => "?").join(",");
-      const found = await env.DB.prepare(`SELECT id FROM incumbent_objective WHERE program_id=? AND id IN (${placeholders})`).bind(PROGRAM_ID, ...selectedObjectiveIds).all<{ id: string }>();
-      if (found.results.length !== selectedObjectiveIds.length) return Response.json({ error: "One or more selected governed Objectives no longer exist. Preview the file again." }, { status: 409 });
-    }
-
     const identity = await importIdentity("lockheed_objective_json", body.sourceAsOf || null, payloadText);
     const duplicate = await priorImportRun(env.DB, identity.idempotencyKey);
     if (duplicate) return Response.json({ ok: true, duplicate: true, runId: duplicate.id, preview: responsePreview, message: "This source snapshot was already applied. No records were changed." });
@@ -172,28 +169,62 @@ export async function POST(request: Request) {
     const runId = `ingestion-run-${crypto.randomUUID()}`;
     const priorByKey = new Map(context.prior.map((item) => [item.sourceKey, item]));
     const stateByKey = new Map(context.states.map((item) => [item.feed_key, item.subject_id]));
-    const requestByIdentifier = new Map(context.requests.map((item) => [normalize(item.external_identifier), item]));
-    const objectiveIdByKey = new Map<string, string>();
+    const materializer = await CanonicalImportMaterializer.load(env.DB, actor.id, at);
+    const canonicalObjectiveIdByKey = new Map<string, string>();
+    const resolvedJpoByKey = new Map<string, Map<string, string>>();
+    for (const item of appliedItems) {
+      const record = item.record;
+      const existingSubjectId = stateByKey.get(record.sourceKey) || priorByKey.get(record.sourceKey)?.objectiveId || null;
+      const existingCanonicalId = existingSubjectId ? stateBySubject.get(existingSubjectId)?.canonical_objective_id || null : null;
+      const objective = existingCanonicalId
+        ? { id: existingCanonicalId, created: false }
+        : materializer.ensureObjective({
+          externalSystem: record.jira ? LM_JIRA_SYSTEM : LM_OBJECTIVE_FEED_SYSTEM,
+          externalIdentifier: record.jira || `feed-key:${record.sourceKey}`,
+          title: record.title,
+          summary: record.overview || record.background,
+          status: record.raw.status || record.raw.Status,
+          plannedStart: record.targetStart,
+          plannedFinish: record.targetFinish,
+          sourceLocator: safeExternalUrl(record.url) || null,
+          sourceAsOf: body.sourceAsOf || null,
+          // The feed's JPO list is a reported many-to-many relationship, not
+          // an assertion that one MCP owns the Objective.
+          primaryChangeRequestId: null,
+        });
+      if (!objective.id) continue;
+      canonicalObjectiveIdByKey.set(record.sourceKey, objective.id);
+      const jpoIds = new Map<string, string>();
+      for (const jpo of record.jpoIds) {
+        const request = materializer.ensureChangeRequest({ identifier: jpo, sourceSystem: LM_OBJECTIVE_FEED_SYSTEM, sourceLocator: safeExternalUrl(record.url) || null, sourceAsOf: body.sourceAsOf || null, updateSourceFields: false });
+        if (!request.id) continue;
+        jpoIds.set(jpo, request.id);
+        materializer.ensureObjectiveChangeRequestLink({ objectiveId: objective.id, changeRequestId: request.id, relationship: "reported", sourceSystem: LM_OBJECTIVE_FEED_SYSTEM, sourceLocator: safeExternalUrl(record.url) || null, sourceAsOf: body.sourceAsOf || null });
+      }
+      resolvedJpoByKey.set(record.sourceKey, jpoIds);
+    }
+    if (materializer.issues.length) return Response.json({ error: "One or more source identities match multiple canonical records. Review those exceptions before applying.", identityExceptions: materializer.issues, preview: responsePreview }, { status: 409 });
+    const subjectIdByKey = new Map<string, string>();
     const statements: D1PreparedStatement[] = [
       env.DB.prepare("INSERT INTO lm_objective_feed_snapshot (id,program_id,external_system,file_name,source_locator,source_as_of,observed_at,content_hash,snapshot_payload,record_count,added_count,changed_count,unchanged_count,removed_count,blocked_count,status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(snapshotId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM, body.fileName, text(body.sourceLocator || null), text(body.sourceAsOf || null), body.observedAt || at, contentHash, payloadText, parsed.records.length, preview.added, preview.changed, preview.unchanged, preview.removed.length, preview.blocked, "applied", actor.id, at, at),
+      ...materializer.statements,
     ];
     for (const item of appliedItems) {
       const record = item.record;
-      const resolution = resolutionByKey.get(record.sourceKey);
-      const canonicalObjectiveId = resolution?.targetId || null;
       const prior = priorByKey.get(record.sourceKey);
       const matching = stateByKey.get(record.sourceKey) || prior?.objectiveId || null;
       const subjectId = matching || `lm-feed-subject-${crypto.randomUUID()}`;
-      objectiveIdByKey.set(record.sourceKey, subjectId);
+      const canonicalObjectiveId = canonicalObjectiveIdByKey.get(record.sourceKey) || null;
+      subjectIdByKey.set(record.sourceKey, subjectId);
       if (!matching) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_subject (id,program_id,external_system,feed_key,jira_identifier,url,canonical_objective_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM, record.sourceKey, record.jira, record.url, canonicalObjectiveId, at, at));
-      else statements.push(env.DB.prepare("UPDATE lm_objective_feed_subject SET feed_key=?,jira_identifier=?,url=?,canonical_objective_id=COALESCE(?,canonical_objective_id),updated_at=? WHERE id=? AND program_id=? AND external_system=?").bind(record.sourceKey, record.jira, record.url, canonicalObjectiveId, at, subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM));
+      else statements.push(env.DB.prepare("UPDATE lm_objective_feed_subject SET feed_key=?,jira_identifier=?,url=?,canonical_objective_id=?,updated_at=? WHERE id=? AND program_id=? AND external_system=?").bind(record.sourceKey, record.jira, record.url, canonicalObjectiveId, at, subjectId, PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM));
       const normalizedPayload = feedJson(record);
       statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_item (id,snapshot_id,subject_id,feed_key,jira_identifier,jpo_raw,disposition,normalized_payload,raw_payload,content_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(`lm-feed-item-${crypto.randomUUID()}`, snapshotId, subjectId, record.sourceKey, record.jira, record.jpoRaw, item.disposition, normalizedPayload, JSON.stringify(record.raw), await digest(normalizedPayload), at));
       statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_state (subject_id,latest_snapshot_id,feed_key,url,rel_to,roadmap_parent,scope,domains_json,item_number,target_start,target_finish,rom,percent_complete,funding,release,overview,background,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(subject_id) DO UPDATE SET latest_snapshot_id=excluded.latest_snapshot_id,feed_key=excluded.feed_key,url=excluded.url,rel_to=excluded.rel_to,roadmap_parent=excluded.roadmap_parent,scope=excluded.scope,domains_json=excluded.domains_json,item_number=excluded.item_number,target_start=excluded.target_start,target_finish=excluded.target_finish,rom=excluded.rom,percent_complete=excluded.percent_complete,funding=excluded.funding,release=excluded.release,overview=excluded.overview,background=excluded.background,updated_at=excluded.updated_at").bind(subjectId, snapshotId, record.sourceKey, record.url, record.relTo, record.roadmapParent, record.scope, JSON.stringify(record.domains), record.itemNumber, record.targetStart, record.targetFinish, record.rom == null ? null : String(record.rom), record.percentComplete, record.funding, record.release, record.overview, record.background, at));
       statements.push(env.DB.prepare("DELETE FROM lm_objective_feed_jpo_link WHERE subject_id=?").bind(subjectId));
       for (const jpo of record.jpoIds) {
-        const resolved = requestByIdentifier.get(normalize(jpo));
-        statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_jpo_link (id,subject_id,latest_snapshot_id,external_identifier,change_request_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(`lm-feed-jpo-${crypto.randomUUID()}`, subjectId, snapshotId, jpo, resolved?.id || null, at, at));
+        const resolved = resolvedJpoByKey.get(record.sourceKey)?.get(jpo) || null;
+        statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_jpo_link (id,subject_id,latest_snapshot_id,external_identifier,change_request_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(`lm-feed-jpo-${crypto.randomUUID()}`, subjectId, snapshotId, jpo, resolved, at, at));
       }
       const before = priorRecord(prior);
       if (item.disposition === "add") statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_delta (id,snapshot_id,subject_id,feed_key,change_kind,field_name,before_value,after_value,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`lm-feed-delta-${crypto.randomUUID()}`, snapshotId, subjectId, record.sourceKey, "added", null, null, normalizedPayload, at));
@@ -204,16 +235,16 @@ export async function POST(request: Request) {
       } else statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_delta (id,snapshot_id,subject_id,feed_key,change_kind,field_name,before_value,after_value,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`lm-feed-delta-${crypto.randomUUID()}`, snapshotId, subjectId, record.sourceKey, "unchanged", null, null, null, at));
     }
     for (const removed of preview.removed) { const subjectId = stateByKey.get(removed.sourceKey) || removed.objectiveId; if (subjectId) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_delta (id,snapshot_id,subject_id,feed_key,change_kind,field_name,before_value,after_value,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(`lm-feed-delta-${crypto.randomUUID()}`, snapshotId, subjectId, removed.sourceKey, "removed", null, null, null, at)); }
-    for (const { record } of appliedItems) for (const [direction, targets] of [["blocks", record.blocks], ["blocked_by", record.blockedBy]] as const) for (const target of targets) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_dependency (id,snapshot_id,source_feed_key,source_subject_id,direction,target_reference,target_subject_id,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`lm-feed-dependency-${crypto.randomUUID()}`, snapshotId, record.sourceKey, objectiveIdByKey.get(record.sourceKey) || stateByKey.get(record.sourceKey), direction, target, objectiveIdByKey.get(target) || stateByKey.get(target) || null, at));
+    for (const { record } of appliedItems) for (const [direction, targets] of [["blocks", record.blocks], ["blocked_by", record.blockedBy]] as const) for (const target of targets) statements.push(env.DB.prepare("INSERT INTO lm_objective_feed_dependency (id,snapshot_id,source_feed_key,source_subject_id,direction,target_reference,target_subject_id,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`lm-feed-dependency-${crypto.randomUUID()}`, snapshotId, record.sourceKey, subjectIdByKey.get(record.sourceKey) || stateByKey.get(record.sourceKey), direction, target, subjectIdByKey.get(target) || stateByKey.get(target) || null, at));
     const governedItems: GovernedImportItem[] = preview.items.map((item, index) => {
       const prior = priorRecord(priorByKey.get(item.record.sourceKey));
       const left = prior ? comparableFeedRecord(prior) as Record<string, unknown> : {};
       const right = comparableFeedRecord(item.record) as Record<string, unknown>;
-      const canonicalId = item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null;
+      const canonicalId = canonicalObjectiveIdByKey.get(item.record.sourceKey) || (item.objectiveId ? stateBySubject.get(item.objectiveId)?.canonical_objective_id || null : null);
       return { id: `lm-feed-${item.record.sourceKey}`, rowNumber: index + 2, sourceKey: item.record.sourceKey, title: item.record.jira || item.record.title || item.record.sourceKey, disposition: item.disposition, issues: item.issues.map((issue) => issue.message), changes: item.changedFields.map((field) => ({ field, before: deltaJson(left[field]).replace(/^"|"$/g, ""), after: deltaJson(right[field]).replace(/^"|"$/g, "") })), proposedTargetId: canonicalId, defaultDecision: item.disposition === "blocked" ? "skip" : "approve" };
     });
     statements.push(...importRunStatements(env.DB, { runId, adapterKey: "lockheed_objective_json", sourceSystem: LM_OBJECTIVE_FEED_SYSTEM, fileName: body.fileName, sourceLocator: body.sourceLocator || null, sourceAsOf: body.sourceAsOf || null, contentHash, idempotencyKey: identity.idempotencyKey, items: governedItems, resolutions: body.resolutions || governedItems.map((item) => ({ rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.defaultDecision, targetId: item.proposedTargetId || null })), rawRows: parsed.records.map((record) => record.raw), normalizedRows: parsed.records.map(comparableFeedRecord), targetSnapshotKind: "lm_objective_feed_snapshot", targetSnapshotId: snapshotId, actorId: actor.id, at }));
-    statements.push(audit(env.DB, actor, "lm_objective_feed_snapshot_imported", "lm_objective_feed_snapshot", snapshotId, { fileName: body.fileName, sourceLocator: body.sourceLocator || null, sourceAsOf: body.sourceAsOf || null, records: parsed.records.length, added: preview.added, changed: preview.changed, unchanged: preview.unchanged, removed: preview.removed.length, unresolvedJpoLinks }));
+    statements.push(audit(env.DB, actor, "lm_objective_feed_snapshot_imported", "lm_objective_feed_snapshot", snapshotId, { fileName: body.fileName, sourceLocator: body.sourceLocator || null, sourceAsOf: body.sourceAsOf || null, records: parsed.records.length, added: preview.added, changed: preview.changed, unchanged: preview.unchanged, removed: preview.removed.length, newReferencedChangeRequests }));
     await env.DB.batch(statements);
     return Response.json({ ok: true, snapshotId, preview: responsePreview }, { status: 201 });
   } catch (error) {

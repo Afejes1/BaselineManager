@@ -78,6 +78,7 @@ const tableOrder: TransferTableName[] = [
   "initiativeScopes",
   "initiativeChangeRequests",
   "incumbentObjectives",
+  "objectiveChangeRequestLinks",
   "changeRequestObjectiveDependencies",
   "objectiveEffectAttributions",
   "objectiveSourcePackages",

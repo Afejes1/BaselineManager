@@ -97,14 +97,19 @@ export function reconcileChangeRequestImport(incoming: ChangeRequestImportRow[],
     const type = typeByCode.get(normalized(row.Type));
     const release = row.RequestedRelease ? releaseByName.get(normalized(row.RequestedRelease)) : null;
     const issues: string[] = [];
-    for (const column of ["Type", "ExternalSystem", "ExternalIdentifier", "Title", "SourceLocator", "SourceAsOf"] as ChangeRequestImportColumn[]) if (!row[column]) issues.push(`${column} is required.`);
+    // External type, locator, release, and title vary by source delivery.
+    // The canonical importer supplies a neutral reference type/title when a
+    // source omits them.  Only a missing identity or invalid date blocks a
+    // row from being safely materialized.
+    if (!row.ExternalIdentifier) issues.push("ExternalIdentifier is required.");
     if (row.SourceAsOf && !validDate(row.SourceAsOf)) issues.push("SourceAsOf must use YYYY-MM-DD.");
-    if (!type) issues.push(`Change Request type '${row.Type || "blank"}' is not configured.`);
-    if (row.RequestedRelease && !release) issues.push(`Requested Release '${row.RequestedRelease}' was not found.`);
+    if (!type) issues.push(`Change Request type '${row.Type || "blank"}' will be created as an external reference type.`);
+    if (row.RequestedRelease && !release) issues.push(`Requested Release '${row.RequestedRelease}' will be retained as a source claim; a recognized Release label is added automatically.`);
     if ((counts.get(key) || 0) > 1) issues.push("External system and identifier occur more than once in this file.");
     const before = current ? existingChangeRequestImportRow(current) : null;
     const changedFields = before ? CHANGE_REQUEST_IMPORT_COLUMNS.filter((column) => normalized(before[column]) !== normalized(row[column])) : [...CHANGE_REQUEST_IMPORT_COLUMNS];
-    const disposition: ChangeRequestImportDisposition = issues.length ? "blocked" : !current ? "add" : changedFields.length ? "change" : "unchanged";
+    const blocking = issues.filter((issue) => !issue.includes("will be ")).length > 0;
+    const disposition: ChangeRequestImportDisposition = blocking ? "blocked" : !current ? "add" : changedFields.length ? "change" : "unchanged";
     return { rowNumber: index + 2, key, disposition, existingId: current?.id || null, typeId: type?.id || null, releaseId: release?.id || null, changedFields, issues, row };
   });
   return { rows, added: rows.filter((row) => row.disposition === "add").length, changed: rows.filter((row) => row.disposition === "change").length, unchanged: rows.filter((row) => row.disposition === "unchanged").length, blocked: rows.filter((row) => row.disposition === "blocked").length, canApply: rows.length > 0 && rows.every((row) => row.disposition !== "blocked") };

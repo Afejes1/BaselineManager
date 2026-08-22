@@ -134,6 +134,13 @@
       "when": 1787619600000,
       "tag": "0018_external_source_observations",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787706000000,
+      "tag": "0019_import_canonicalization",
+      "breakpoints": true
     }
   ]
 }

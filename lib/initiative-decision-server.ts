@@ -7,7 +7,7 @@ import type {
   AcceptanceCriterion, AcceptanceSignoff, AcceptanceStatus, AcceptanceTier, EstimateConfidence, EstimateSource,
   ChangeRequestObjectiveDependency, IncumbentObjective, InitiativeChangeLink, InitiativeChangeRelationship, InitiativeDecisionBundle, InitiativeDecisionProfile,
   InitiativeDecisionWorkspace, InitiativeMilestone, MilestoneStatus, MilestoneType, ObjectiveEstimate, ObjectiveStatus,
-  ObjectiveAttribution, ObjectiveAttributionConfidence, ObjectiveEffectAttributionRecord, ObjectiveDependencyRelationship, ObjectiveDependencyStatus,
+  ObjectiveAttribution, ObjectiveAttributionConfidence, ObjectiveChangeRequestLink, ObjectiveEffectAttributionRecord, ObjectiveDependencyRelationship, ObjectiveDependencyStatus,
   RequirementAction, RequirementTrace, RequirementTraceStatus, SignoffDecision, VerificationMethod,
 } from "./initiative-decision-model";
 
@@ -22,7 +22,8 @@ const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback
 
 type InitiativeRow = { id: string; title: string; status: string; priority: string; owner: string | null; target_date: string | null; consequence: string | null; desired_outcome: string | null; decision_ask: string | null; as_is_statement: string | null; to_be_statement: string | null; success_measures: string | null; briefing_audience: string | null; decision_needed_by: string | null; primary_release_id: string | null; primary_release_name: string | null; updated_at: string };
 type LinkRow = { id: string; initiative_id: string; change_request_id: string; relationship: InitiativeChangeRelationship; contribution_summary: string | null; sort_order: number };
-type ObjectiveRow = { id: string; change_request_id: string; external_system: string; external_identifier: string; external_item_type: string; title: string; summary: string | null; technical_owner: string | null; status: ObjectiveStatus; planned_start: string | null; planned_finish: string | null; actual_start: string | null; actual_finish: string | null; source_locator: string | null; source_as_of: string | null; updated_at: string };
+type ObjectiveRow = { id: string; change_request_id: string | null; external_system: string; external_identifier: string; external_item_type: string; title: string; summary: string | null; technical_owner: string | null; status: ObjectiveStatus; planned_start: string | null; planned_finish: string | null; actual_start: string | null; actual_finish: string | null; source_locator: string | null; source_as_of: string | null; updated_at: string };
+type ObjectiveChangeRequestLinkRow = { id: string; objective_id: string; change_request_id: string; relationship: "primary" | "reported" | "related"; source_system: string | null; source_locator: string | null; source_as_of: string | null; updated_at: string };
 type ObjectiveDependencyRow = { id: string; dependent_change_request_id: string; prerequisite_objective_id: string; relationship: ObjectiveDependencyRelationship; status: ObjectiveDependencyStatus; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; updated_at: string };
 type ObjectiveAttributionRow = { id: string; objective_id: string; change_effect_id: string; attribution: ObjectiveAttribution; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; confidence: ObjectiveAttributionConfidence; updated_at: string };
 type EstimateRow = { id: string; objective_id: string; estimate_source: EstimateSource; hours_low: number | null; hours_likely: number | null; hours_high: number | null; cost_low: number | null; cost_likely: number | null; cost_high: number | null; basis: string; assumptions: string | null; source_reference: string | null; as_of: string; confidence: EstimateConfidence; created_at: string };
@@ -33,10 +34,11 @@ type MilestoneRow = { id: string; initiative_id: string; change_request_id: stri
 
 export async function initiativeDecisionWorkspace(db: Database, actor: Actor): Promise<InitiativeDecisionWorkspace> {
   const changes = await changePortfolio(db);
-  const [initiativeResult, linkResult, objectiveResult, dependencyResult, attributionResult, estimateResult, requirementResult, criterionResult, signoffResult, milestoneResult] = await Promise.all([
+  const [initiativeResult, linkResult, objectiveResult, objectiveChangeRequestLinkResult, dependencyResult, attributionResult, estimateResult, requirementResult, criterionResult, signoffResult, milestoneResult] = await Promise.all([
     db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT l.id,l.initiative_id,l.change_request_id,l.relationship,l.contribution_summary,l.sort_order FROM initiative_change_request l JOIN initiative i ON i.id=l.initiative_id WHERE i.program_id=? ORDER BY l.initiative_id,l.sort_order,l.created_at").bind(PROGRAM_ID).all<LinkRow>(),
-    db.prepare("SELECT o.* FROM incumbent_objective o JOIN change_request cr ON cr.id=o.change_request_id WHERE o.program_id=? AND cr.program_id=? ORDER BY o.planned_start,o.external_identifier").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveRow>(),
+    db.prepare("SELECT o.* FROM incumbent_objective o WHERE o.program_id=? ORDER BY o.planned_start,o.external_identifier").bind(PROGRAM_ID).all<ObjectiveRow>(),
+    db.prepare("SELECT l.id,l.objective_id,l.change_request_id,l.relationship,l.source_system,l.source_locator,l.source_as_of,l.updated_at FROM objective_change_request_link l JOIN incumbent_objective o ON o.id=l.objective_id JOIN change_request cr ON cr.id=l.change_request_id WHERE o.program_id=? AND cr.program_id=? ORDER BY l.objective_id,CASE l.relationship WHEN 'primary' THEN 0 WHEN 'reported' THEN 1 ELSE 2 END,l.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveChangeRequestLinkRow>(),
     db.prepare("SELECT d.* FROM change_request_objective_dependency d JOIN change_request cr ON cr.id=d.dependent_change_request_id JOIN incumbent_objective o ON o.id=d.prerequisite_objective_id WHERE cr.program_id=? AND o.program_id=? ORDER BY d.status,d.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveDependencyRow>(),
     db.prepare("SELECT a.* FROM objective_effect_attribution a JOIN incumbent_objective o ON o.id=a.objective_id JOIN change_effect e ON e.id=a.change_effect_id WHERE o.program_id=? AND e.change_request_id IN (SELECT id FROM change_request WHERE program_id=?) ORDER BY a.objective_id,a.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveAttributionRow>(),
     db.prepare("SELECT e.* FROM objective_estimate e JOIN incumbent_objective o ON o.id=e.objective_id WHERE o.program_id=? ORDER BY e.objective_id,e.as_of DESC,e.created_at DESC").bind(PROGRAM_ID).all<EstimateRow>(),
@@ -52,14 +54,15 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor): P
   const initiatives: InitiativeDecisionProfile[] = initiativeResult.results.map((row) => ({ id: row.id, title: row.title, status: row.status, priority: row.priority, owner: row.owner, targetDate: row.target_date, consequence: row.consequence, desiredOutcome: row.desired_outcome, decisionAsk: row.decision_ask, asIsStatement: row.as_is_statement, toBeStatement: row.to_be_statement, successMeasures: row.success_measures, briefingAudience: row.briefing_audience, decisionNeededBy: row.decision_needed_by, primaryReleaseId: row.primary_release_id, primaryReleaseName: row.primary_release_name, updatedAt: row.updated_at }));
   const links: InitiativeChangeLink[] = linkResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, changeRequestId: row.change_request_id, relationship: row.relationship, contributionSummary: row.contribution_summary, sortOrder: row.sort_order }));
   const objectives: IncumbentObjective[] = objectiveResult.results.map((row) => ({ id: row.id, changeRequestId: row.change_request_id, externalSystem: row.external_system, externalIdentifier: row.external_identifier, externalItemType: row.external_item_type || "Objective", title: row.title, summary: row.summary, technicalOwner: row.technical_owner, status: row.status, plannedStart: row.planned_start, plannedFinish: row.planned_finish, actualStart: row.actual_start, actualFinish: row.actual_finish, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, estimates: estimatesByObjective.get(row.id) || [], updatedAt: row.updated_at }));
+  const objectiveChangeRequestLinks: ObjectiveChangeRequestLink[] = objectiveChangeRequestLinkResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, changeRequestId: row.change_request_id, relationship: row.relationship, sourceSystem: row.source_system, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, updatedAt: row.updated_at }));
   const objectiveDependencies: ChangeRequestObjectiveDependency[] = dependencyResult.results.map((row) => ({ id: row.id, dependentChangeRequestId: row.dependent_change_request_id, prerequisiteObjectiveId: row.prerequisite_objective_id, relationship: row.relationship, status: row.status, rationale: row.rationale, sourceReference: row.source_reference, sourceAsOf: row.source_as_of, evidenceReference: row.evidence_reference, updatedAt: row.updated_at }));
   const objectiveEffectAttributions: ObjectiveEffectAttributionRecord[] = attributionResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, changeEffectId: row.change_effect_id, attribution: row.attribution, rationale: row.rationale, sourceReference: row.source_reference, sourceAsOf: row.source_as_of, evidenceReference: row.evidence_reference, confidence: row.confidence, updatedAt: row.updated_at }));
   const requirements: RequirementTrace[] = requirementResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, requirementId: row.requirement_id, versionLabel: row.version_label, externalIdentifier: row.external_identifier, title: row.title, sourceSystem: row.source_system, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, changeAction: row.change_action, beforeText: row.before_text, afterText: row.after_text, rationale: row.rationale, traceStatus: row.trace_status, updatedAt: row.updated_at }));
   const criteria: AcceptanceCriterion[] = criterionResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, requirementTraceId: row.objective_requirement_id || row.requirement_trace_id, tier: row.tier, code: row.code, statement: row.statement, verificationMethod: row.verification_method, status: row.status, plannedDate: row.planned_date, actualDate: row.actual_date, evidenceReference: row.evidence_reference, signoffs: signoffsByCriterion.get(row.id) || [], updatedAt: row.updated_at }));
   const milestones: InitiativeMilestone[] = milestoneResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, changeRequestId: row.change_request_id, objectiveId: row.objective_id, title: row.title, milestoneType: row.milestone_type, plannedDate: row.planned_date, actualDate: row.actual_date, status: row.status, consequenceIfMissed: row.consequence_if_missed, owner: row.owner, sortOrder: row.sort_order, updatedAt: row.updated_at }));
   const assessments: InitiativeDecisionWorkspace["assessments"] = {};
-  for (const initiative of initiatives) assessments[initiative.id] = assessInitiative(bundleFor({ actor, initiatives, links, objectives, requirements, criteria, milestones, changes, assessments: {} }, initiative.id));
-  return { actor, initiatives, links, objectives, objectiveDependencies, objectiveEffectAttributions, requirements, criteria, milestones, changes, assessments };
+  for (const initiative of initiatives) assessments[initiative.id] = assessInitiative(bundleFor({ actor, initiatives, links, objectives, objectiveChangeRequestLinks, requirements, criteria, milestones, changes, assessments: {} }, initiative.id));
+  return { actor, initiatives, links, objectives, objectiveChangeRequestLinks, objectiveDependencies, objectiveEffectAttributions, requirements, criteria, milestones, changes, assessments };
 }
 
 export function bundleFor(workspace: Omit<InitiativeDecisionWorkspace, "assessments"> & { assessments?: InitiativeDecisionWorkspace["assessments"] }, initiativeId: string): InitiativeDecisionBundle {
@@ -67,9 +70,10 @@ export function bundleFor(workspace: Omit<InitiativeDecisionWorkspace, "assessme
   if (!initiative) throw new Error("Initiative was not found.");
   const links = workspace.links.filter((item) => item.initiativeId === initiativeId);
   const requestIds = new Set(links.map((item) => item.changeRequestId));
-  const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId));
+  const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
+  const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId || "") || objectiveChangeRequestLinks.some((link) => link.objectiveId === item.id && requestIds.has(link.changeRequestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }
 
 async function assertInitiative(db: Database, initiativeId: string) {
@@ -112,24 +116,32 @@ export async function linkChangeRequest(db: Database, actor: Actor, body: Record
 export async function saveObjective(db: Database, actor: Actor, body: Record<string, unknown>) {
   requireWriter(actor);
   const objectiveId = clean(body.id) || makeId("objective");
-  const changeRequestId = clean(body.changeRequestId);
+  const changeRequestId = nullable(body.changeRequestId);
   const externalSystem = clean(body.externalSystem);
   const externalIdentifier = clean(body.externalIdentifier);
   const externalItemType = clean(body.externalItemType) || "Objective";
   const title = clean(body.title);
-  if (!changeRequestId || !externalSystem || !externalIdentifier || !title) throw new Error("Change Request, external system, Objective identifier, and title are required.");
-  const request = await db.prepare("SELECT id FROM change_request WHERE id=? AND program_id=?").bind(changeRequestId, PROGRAM_ID).first<{ id: string }>();
-  if (!request) throw new Error("Change Request was not found.");
+  if (!externalSystem || !externalIdentifier || !title) throw new Error("External system, Objective identifier, and title are required.");
+  if (changeRequestId) {
+    const request = await db.prepare("SELECT id FROM change_request WHERE id=? AND program_id=?").bind(changeRequestId, PROGRAM_ID).first<{ id: string }>();
+    if (!request) throw new Error("Change Request was not found.");
+  }
   const status = oneOf<ObjectiveStatus>(body.status, ["proposed", "planned", "in_progress", "blocked", "verification", "complete", "cancelled"], "proposed");
   const before = await db.prepare("SELECT * FROM incumbent_objective WHERE id=?").bind(objectiveId).first<Record<string, unknown>>();
-  if (before && clean(before.change_request_id) !== changeRequestId && !clean(body.reparentReason)) {
+  if (before && clean(before.change_request_id) !== (changeRequestId || "") && !clean(body.reparentReason)) {
     throw new Error("Changing an Objective's owning Change Request requires a documented reparent reason.");
   }
   const at = now();
-  await db.batch([
+  const statements: D1PreparedStatement[] = [
     db.prepare("INSERT INTO incumbent_objective (id,program_id,change_request_id,external_system,external_identifier,external_item_type,title,summary,technical_owner,status,planned_start,planned_finish,actual_start,actual_finish,source_locator,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET change_request_id=excluded.change_request_id,external_system=excluded.external_system,external_identifier=excluded.external_identifier,external_item_type=excluded.external_item_type,title=excluded.title,summary=excluded.summary,technical_owner=excluded.technical_owner,status=excluded.status,planned_start=excluded.planned_start,planned_finish=excluded.planned_finish,actual_start=excluded.actual_start,actual_finish=excluded.actual_finish,source_locator=excluded.source_locator,source_as_of=excluded.source_as_of,updated_at=excluded.updated_at").bind(objectiveId, PROGRAM_ID, changeRequestId, externalSystem, externalIdentifier, externalItemType, title, nullable(body.summary), nullable(body.technicalOwner), status, nullable(body.plannedStart), nullable(body.plannedFinish), nullable(body.actualStart), nullable(body.actualFinish), nullable(body.sourceLocator), nullable(body.sourceAsOf), actor.id, at, at),
-    audit(db, actor, before ? "incumbent_objective_updated" : "incumbent_objective_created", "incumbent_objective", objectiveId, { changeRequestId, externalSystem, externalIdentifier, title, status, reparentReason: nullable(body.reparentReason) }, before),
-  ]);
+    // A direct owner is represented consistently as a primary hard link.
+    // Removing the direct owner only removes that primary relation; imported
+    // reported/related references remain available for traceability.
+    db.prepare("DELETE FROM objective_change_request_link WHERE objective_id=? AND relationship='primary'").bind(objectiveId),
+  ];
+  if (changeRequestId) statements.push(db.prepare("INSERT INTO objective_change_request_link (id,program_id,objective_id,change_request_id,relationship,source_system,source_locator,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(objective_id,change_request_id,relationship) DO UPDATE SET source_system=excluded.source_system,source_locator=excluded.source_locator,source_as_of=excluded.source_as_of,updated_at=excluded.updated_at").bind(makeId("objective-change"), PROGRAM_ID, objectiveId, changeRequestId, "primary", "Government analyst", nullable(body.sourceLocator), nullable(body.sourceAsOf), actor.id, at, at));
+  statements.push(audit(db, actor, before ? "incumbent_objective_updated" : "incumbent_objective_created", "incumbent_objective", objectiveId, { changeRequestId, externalSystem, externalIdentifier, title, status, reparentReason: nullable(body.reparentReason) }, before));
+  await db.batch(statements);
   return objectiveId;
 }
 
@@ -145,10 +157,10 @@ export async function saveObjectiveDependency(db: Database, actor: Actor, body: 
   const prerequisiteObjectiveId = clean(body.prerequisiteObjectiveId);
   if (!dependentChangeRequestId || !prerequisiteObjectiveId) throw new Error("Dependent Change Request and prerequisite Objective are required.");
   const request = await db.prepare("SELECT id FROM change_request WHERE id=? AND program_id=?").bind(dependentChangeRequestId, PROGRAM_ID).first<{ id: string }>();
-  const objective = await db.prepare("SELECT o.id,o.change_request_id FROM incumbent_objective o JOIN change_request owner ON owner.id=o.change_request_id WHERE o.id=? AND o.program_id=? AND owner.program_id=?").bind(prerequisiteObjectiveId, PROGRAM_ID, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
+  const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(prerequisiteObjectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string | null }>();
   if (!request) throw new Error("Dependent Change Request was not found.");
   if (!objective) throw new Error("Prerequisite Objective was not found.");
-  if (objective.change_request_id === dependentChangeRequestId) throw new Error("A Change Request cannot depend on an Objective that it owns. Record the internal work relationship separately.");
+  if (objective.change_request_id && objective.change_request_id === dependentChangeRequestId) throw new Error("A Change Request cannot depend on an Objective that it owns. Record the internal work relationship separately.");
   const relationship = oneOf<ObjectiveDependencyRelationship>(body.relationship, ["requires", "enables", "blocks", "consumes"], "requires");
   const status = oneOf<ObjectiveDependencyStatus>(body.status, ["proposed", "accepted", "rejected", "retired"], "proposed");
   const rationale = clean(body.rationale);
@@ -175,11 +187,12 @@ export async function saveObjectiveEffectAttribution(db: Database, actor: Actor,
   const objectiveId = clean(body.objectiveId);
   const changeEffectId = clean(body.changeEffectId);
   if (!objectiveId || !changeEffectId) throw new Error("Objective and Change Effect are required.");
-  const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
+  const objective = await db.prepare("SELECT id,change_request_id FROM incumbent_objective WHERE id=? AND program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string | null }>();
   const effect = await db.prepare("SELECT ce.id,ce.change_request_id FROM change_effect ce JOIN change_request cr ON cr.id=ce.change_request_id WHERE ce.id=? AND cr.program_id=?").bind(changeEffectId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
   if (!objective) throw new Error("Objective was not found.");
   if (!effect) throw new Error("Change Effect was not found.");
-  if (effect.change_request_id !== objective.change_request_id) throw new Error("An Objective can attribute only technical effects owned by its owning Change Request.");
+  const linkedToEffect = objective && effect ? Boolean(await db.prepare("SELECT id FROM objective_change_request_link WHERE objective_id=? AND change_request_id=? LIMIT 1").bind(objectiveId, effect.change_request_id).first<{ id: string }>()) : false;
+  if (effect.change_request_id !== objective.change_request_id && !linkedToEffect) throw new Error("An Objective can attribute only technical effects on a Change Request linked to that Objective.");
   const attribution = oneOf<ObjectiveAttribution>(body.attribution, ["primary", "contributing", "uncertain"], "contributing");
   const confidence = oneOf<ObjectiveAttributionConfidence>(body.confidence, ["unassessed", "low", "medium", "high"], "unassessed");
   const rationale = clean(body.rationale);
@@ -302,8 +315,12 @@ export async function saveInitiativeMilestone(db: Database, actor: Actor, body: 
   const changeRequestId = nullable(body.changeRequestId);
   const objectiveId = nullable(body.objectiveId);
   if (objectiveId) {
-    const objective = await db.prepare("SELECT o.id,o.change_request_id FROM incumbent_objective o WHERE o.id=? AND o.program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string }>();
-    if (!objective || changeRequestId && objective.change_request_id !== changeRequestId) throw new Error("Milestone Objective must belong to its selected Change Request.");
+    const objective = await db.prepare("SELECT o.id,o.change_request_id FROM incumbent_objective o WHERE o.id=? AND o.program_id=?").bind(objectiveId, PROGRAM_ID).first<{ id: string; change_request_id: string | null }>();
+    if (!objective) throw new Error("Milestone Objective was not found.");
+    if (changeRequestId && objective.change_request_id !== changeRequestId) {
+      const reported = await db.prepare("SELECT id FROM objective_change_request_link WHERE objective_id=? AND change_request_id=? LIMIT 1").bind(objectiveId, changeRequestId).first<{ id: string }>();
+      if (!reported) throw new Error("Milestone Objective must be linked to its selected Change Request.");
+    }
   }
   const type = oneOf<MilestoneType>(body.milestoneType, ["decision", "delivery", "verification", "fielding", "dependency"], "delivery");
   const status = oneOf<MilestoneStatus>(body.status, ["planned", "at_risk", "complete", "missed"], "planned");

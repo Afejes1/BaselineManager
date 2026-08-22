@@ -6,6 +6,7 @@ import { DomainPageShell } from "../../components/domain-shell";
 import { useGovernancePortfolio } from "../../lib/governance-client";
 import { displayStatus, workPackageStatuses, type WorkPackage } from "../../lib/governance-model";
 import { useInitiativeDecisions } from "../../lib/initiative-decision-client";
+import { objectiveRelatedChangeRequestIds } from "../../lib/initiative-decision-model";
 
 const dateLabel = (value: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : "Not scheduled";
 const emptyWork = { initiativeId: "", objectiveId: "", objectiveRelationship: "supports", objectiveRationale: "", parentId: "", wbsCode: "", title: "", workType: "analysis", owner: "", plannedStart: "", dueDate: "", status: "planned", definitionOfDone: "", progressBasis: "", notes: "" };
@@ -35,7 +36,7 @@ export default function DeliveryPage() {
   const objectiveById = useMemo(() => new Map(objectives.map((item) => [item.id, item])), [objectives]);
   const selectedInitiative = portfolio?.initiatives.find((item) => item.id === work.initiativeId);
   const initiativeRequestIds = new Set((workspace?.links || []).filter((item) => item.initiativeId === selectedInitiative?.id).map((item) => item.changeRequestId));
-  const objectiveOptions = objectives.filter((item) => initiativeRequestIds.has(item.changeRequestId));
+  const objectiveOptions = objectives.filter((item) => objectiveRelatedChangeRequestIds(item, workspace?.objectiveChangeRequestLinks).some((requestId) => initiativeRequestIds.has(requestId)));
   const parentOptions = packages.filter((item) => item.initiativeId === work.initiativeId);
   const visiblePackages = packages.filter((item) => (initiativeFilter === "all" || item.initiativeId === initiativeFilter) && (statusFilter === "all" || item.status === statusFilter));
   const packageIds = new Set(visiblePackages.map((item) => item.id));

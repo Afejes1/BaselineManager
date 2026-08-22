@@ -22,7 +22,7 @@ export type ObjectiveImportRow = Record<ObjectiveImportColumn, string>;
 export type ObjectiveImportDisposition = "add" | "change" | "unchanged" | "blocked";
 
 export type ObjectiveImportIssue = {
-  code: "duplicate_key" | "missing_required" | "invalid_status" | "invalid_date" | "owner_not_found" | "owner_change";
+  code: "duplicate_key" | "missing_required" | "invalid_status" | "invalid_date" | "reported_reference";
   message: string;
   blocking: boolean;
 };
@@ -49,7 +49,7 @@ export type ObjectiveImportPreview = {
 
 type ExistingObjective = {
   id: string;
-  changeRequestId: string;
+  changeRequestId: string | null;
   externalSystem: string;
   externalIdentifier: string;
   externalItemType?: string | null;
@@ -71,7 +71,10 @@ const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().r
 const normalized = (value: unknown) => clean(value).toLocaleLowerCase("en-US");
 const validStatuses = new Set<ObjectiveStatus>(["proposed", "planned", "in_progress", "blocked", "verification", "complete", "cancelled"]);
 const dateColumns: ObjectiveImportColumn[] = ["PlannedStart", "PlannedFinish", "ActualStart", "ActualFinish", "SourceAsOf"];
-const requiredColumns: ObjectiveImportColumn[] = ["ExternalSystem", "ExternalIdentifier", "ExternalItemType", "OwningChangeRequest", "Title", "Status", "SourceAsOf"];
+// A supplier can report an Objective before it reports any MCP/DSOR.  The
+// column remains for backwards-compatible workbook exchange, but it is a
+// reported relationship rather than a required ownership assertion.
+const requiredColumns: ObjectiveImportColumn[] = ["ExternalSystem", "ExternalIdentifier", "ExternalItemType", "Title", "Status", "SourceAsOf"];
 
 export function objectiveImportKey(row: Pick<ObjectiveImportRow, "ExternalSystem" | "ExternalIdentifier">) {
   return `${normalized(row.ExternalSystem)}|${normalized(row.ExternalIdentifier)}`;
@@ -82,7 +85,7 @@ function validDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 }
 
-function rowFromExisting(item: ExistingObjective, ownerIdentifier: string): ObjectiveImportRow {
+function rowFromExisting(item: ExistingObjective, ownerIdentifier: string | null): ObjectiveImportRow {
   return {
     ExternalSystem: clean(item.externalSystem),
     ExternalIdentifier: clean(item.externalIdentifier),
@@ -107,7 +110,6 @@ export function normalizeObjectiveImportRow(input: Partial<Record<ObjectiveImpor
 
 export function reconcileObjectiveImport(incoming: ObjectiveImportRow[], existing: ExistingObjective[], requests: OwningRequest[]): ObjectiveImportPreview {
   const requestByIdentifier = new Map(requests.map((request) => [normalized(request.externalIdentifier), request]));
-  const requestIdentifierById = new Map(requests.map((request) => [request.id, request.externalIdentifier]));
   const existingByKey = new Map(existing.map((item) => [objectiveImportKey({ ExternalSystem: item.externalSystem, ExternalIdentifier: item.externalIdentifier }), item]));
   const keyCounts = new Map<string, number>();
   for (const row of incoming) keyCounts.set(objectiveImportKey(row), (keyCounts.get(objectiveImportKey(row)) || 0) + 1);
@@ -122,10 +124,9 @@ export function reconcileObjectiveImport(incoming: ObjectiveImportRow[], existin
     if (row.Status && !validStatuses.has(row.Status as ObjectiveStatus)) issues.push({ code: "invalid_status", message: `Status '${row.Status}' is not supported.`, blocking: true });
     for (const column of dateColumns) if (!validDate(row[column])) issues.push({ code: "invalid_date", message: `${column} must use YYYY-MM-DD.`, blocking: true });
     if ((keyCounts.get(key) || 0) > 1) issues.push({ code: "duplicate_key", message: "External system and identifier occur more than once in this import.", blocking: true });
-    if (row.OwningChangeRequest && !owner) issues.push({ code: "owner_not_found", message: `Owning Change Request '${row.OwningChangeRequest}' was not found.`, blocking: true });
-    if (current && owner && current.changeRequestId !== owner.id) issues.push({ code: "owner_change", message: `This would move the Objective from ${requestIdentifierById.get(current.changeRequestId) || current.changeRequestId} to ${owner.externalIdentifier}. Reparenting requires an explicit governed action.`, blocking: true });
+    if (row.OwningChangeRequest && !owner) issues.push({ code: "reported_reference", message: `Reported Change Request '${row.OwningChangeRequest}' is new and will be added as an external reference.`, blocking: false });
 
-    const baseline = current ? rowFromExisting(current, requestIdentifierById.get(current.changeRequestId) || current.changeRequestId) : null;
+    const baseline = current ? rowFromExisting(current, current.changeRequestId ? requests.find((request) => request.id === current.changeRequestId)?.externalIdentifier || current.changeRequestId : null) : null;
     const changedFields = baseline ? OBJECTIVE_IMPORT_COLUMNS.filter((column) => normalized(baseline[column]) !== normalized(row[column])) : [...OBJECTIVE_IMPORT_COLUMNS];
     const disposition: ObjectiveImportDisposition = issues.some((issue) => issue.blocking) ? "blocked" : !current ? "add" : changedFields.length ? "change" : "unchanged";
     return { rowNumber: index + 2, key, disposition, existingObjectiveId: current?.id || null, owningChangeRequestId: owner?.id || null, changedFields, issues, row };

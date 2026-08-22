@@ -9,7 +9,8 @@ import {
   type LockheedDailyFile,
   type LockheedDailyRecord,
 } from "../../../../lib/lockheed-daily-import";
-import type { GovernedImportItem, ImportResolution, ImportTargetOption } from "../../../../lib/governed-import";
+import type { GovernedImportItem, ImportResolution } from "../../../../lib/governed-import";
+import { CanonicalImportMaterializer, LM_JIRA_SYSTEM, splitReportedReferences } from "../../../../lib/canonical-import-materializer";
 
 type IncomingBody = {
   mode?: "preview" | "apply";
@@ -24,7 +25,6 @@ type SubjectRow = {
   canonical_entity_kind: string | null; canonical_entity_id: string | null; first_seen_at: string; last_seen_at: string;
   normalized_payload: string | null; source_as_of: string | null; disposition: string | null;
 };
-type CanonicalTarget = ImportTargetOption & { normalizedKeys: string[] };
 
 const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
 const normalizedKey = (value: unknown) => clean(value).toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g, "");
@@ -34,54 +34,23 @@ const datasetAdapter = (dataset: string) => `lockheed_daily_${dataset}`;
 const subjectIdentity = (sourceSystem: string, record: LockheedDailyRecord) => `${sourceSystem}|${record.dataset}|${record.sourceKey.toLocaleLowerCase("en-US")}`;
 
 async function loadContext(sourceSystem: string) {
-  const [subjects, capabilities, changes, objectives] = await Promise.all([
-    env.DB.prepare(`SELECT s.id,s.source_system,s.dataset_key,s.entity_kind,s.source_key,s.title,s.canonical_entity_kind,s.canonical_entity_id,s.first_seen_at,s.last_seen_at,
+  const subjects = await env.DB.prepare(`SELECT s.id,s.source_system,s.dataset_key,s.entity_kind,s.source_key,s.title,s.canonical_entity_kind,s.canonical_entity_id,s.first_seen_at,s.last_seen_at,
       o.normalized_payload,o.source_as_of,o.disposition
       FROM external_source_subject s
       LEFT JOIN external_source_observation o ON o.id=(SELECT lo.id FROM external_source_observation lo WHERE lo.subject_id=s.id ORDER BY lo.source_as_of DESC,lo.observed_at DESC LIMIT 1)
-      WHERE s.program_id=? AND s.source_system=?`).bind(PROGRAM_ID, sourceSystem).all<SubjectRow>(),
-    env.DB.prepare("SELECT id,code,name FROM capability WHERE program_id=? ORDER BY name").bind(PROGRAM_ID).all<{ id: string; code: string | null; name: string }>(),
-    env.DB.prepare("SELECT id,external_identifier,title FROM change_request WHERE program_id=? ORDER BY external_identifier").bind(PROGRAM_ID).all<{ id: string; external_identifier: string; title: string }>(),
-    env.DB.prepare("SELECT id,external_identifier,title FROM incumbent_objective WHERE program_id=? ORDER BY external_identifier").bind(PROGRAM_ID).all<{ id: string; external_identifier: string; title: string }>(),
-  ]);
-  const targets: CanonicalTarget[] = [
-    ...capabilities.results.map((row) => ({ id: row.id, kind: "capability", label: `${row.code ? `${row.code} · ` : ""}${row.name}`, normalizedKeys: [row.code, row.name].filter(Boolean).map(normalizedKey) })),
-    ...changes.results.map((row) => ({ id: row.id, kind: "change_request", label: `${row.external_identifier} · ${row.title}`, normalizedKeys: [normalizedKey(row.external_identifier)] })),
-    ...objectives.results.map((row) => ({ id: row.id, kind: "objective", label: `${row.external_identifier} · ${row.title}`, normalizedKeys: [normalizedKey(row.external_identifier)] })),
-  ];
-  return { subjects: subjects.results, targets };
-}
-
-function uniqueTarget(targets: CanonicalTarget[], kind: string, keys: string[]) {
-  const wanted = new Set(keys.map(normalizedKey).filter(Boolean));
-  const matches = targets.filter((target) => target.kind === kind && target.normalizedKeys.some((key) => wanted.has(key)));
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function proposedTarget(record: LockheedDailyRecord, subject: SubjectRow | undefined, targets: CanonicalTarget[]) {
-  if (!record.canonicalTargetKind) return null;
-  if (subject?.canonical_entity_kind === record.canonicalTargetKind && subject.canonical_entity_id) return targets.find((target) => target.kind === record.canonicalTargetKind && target.id === subject.canonical_entity_id) || null;
-  const keys = record.canonicalTargetKind === "objective"
-    ? [record.fields.JIRAID, record.sourceKey]
-    : record.canonicalTargetKind === "capability" ? [record.sourceKey, record.title] : [record.sourceKey];
-  return uniqueTarget(targets, record.canonicalTargetKind, keys);
+      WHERE s.program_id=? AND s.source_system=?`).bind(PROGRAM_ID, sourceSystem).all<SubjectRow>();
+  return { subjects: subjects.results };
 }
 
 function buildReview(body: IncomingBody, records: LockheedDailyRecord[], context: Awaited<ReturnType<typeof loadContext>>) {
   const sourceSystem = clean(body.sourceSystem) || LOCKHEED_DAILY_SOURCE_SYSTEM;
   const subjects = new Map(context.subjects.map((row) => [`${row.source_system}|${row.dataset_key}|${row.source_key.toLocaleLowerCase("en-US")}`, row]));
-  const resolutions = new Map((body.resolutions || []).map((item) => [item.rowNumber, item]));
-  const targetById = new Map(context.targets.map((target) => [target.id, target]));
   const items: GovernedImportItem[] = records.map((record) => {
     const subject = subjects.get(subjectIdentity(sourceSystem, record));
     const before = subject ? parsePayload(subject.normalized_payload) as ReturnType<typeof comparableLockheedDailyRecord> | null : null;
     const comparable = comparableLockheedDailyRecord(record);
     const changes = diffLockheedDailyRecords(before, comparable);
-    const automatic = proposedTarget(record, subject, context.targets);
-    const resolution = resolutions.get(record.rowNumber);
-    const resolvedTarget = resolution && Object.prototype.hasOwnProperty.call(resolution, "targetId") ? resolution.targetId ? targetById.get(resolution.targetId) : null : automatic;
     const issues = [...record.issues];
-    if (resolution?.targetId && (!resolvedTarget || resolvedTarget.kind !== record.canonicalTargetKind)) issues.push("The selected canonical target is not valid for this source record.");
     const disposition = issues.length ? "blocked" as const : !subject ? "add" as const : changes.length ? "change" as const : "unchanged" as const;
     return {
       id: `lockheed-daily-${record.fileId}-${record.rowNumber}`,
@@ -92,14 +61,10 @@ function buildReview(body: IncomingBody, records: LockheedDailyRecord[], context
       disposition,
       issues,
       changes,
-      proposedTargetId: resolvedTarget?.id || null,
-      proposedTargetLabel: resolvedTarget?.label || null,
-      targetKind: record.canonicalTargetKind,
-      targetRequired: false,
       defaultDecision: disposition === "blocked" ? "skip" as const : "approve" as const,
     };
   });
-  return { items, targets: context.targets.map((target) => ({ id: target.id, kind: target.kind, label: target.label, detail: target.detail })), sourceSystem };
+  return { items, sourceSystem };
 }
 
 async function getHistory() {
@@ -149,7 +114,7 @@ export async function POST(request: Request) {
     const sourceSystem = clean(body.sourceSystem) || LOCKHEED_DAILY_SOURCE_SYSTEM;
     const context = await loadContext(sourceSystem);
     const review = buildReview({ ...body, sourceSystem }, records, context);
-    const responsePreview = { items: review.items, targets: review.targets, canApply: review.items.some((item) => item.disposition !== "blocked") };
+    const responsePreview = { items: review.items, canApply: review.items.some((item) => item.disposition !== "blocked") };
     if (body.mode !== "apply") return Response.json({ preview: responsePreview });
     requireWriter(actor);
 
@@ -158,7 +123,6 @@ export async function POST(request: Request) {
     if (!approved.length) return Response.json({ error: "Approve at least one valid source row before applying the delivery.", preview: responsePreview }, { status: 409 });
     const approvedRows = new Set(approved.map((item) => item.rowNumber));
     const itemByRow = new Map(review.items.map((item) => [item.rowNumber, item]));
-    const targetById = new Map(context.targets.map((target) => [target.id, target]));
     const subjectByIdentity = new Map(context.subjects.map((subject) => [`${subject.source_system}|${subject.dataset_key}|${subject.source_key.toLocaleLowerCase("en-US")}`, subject]));
     const existingSubjectById = new Map(context.subjects.map((subject) => [subject.id, subject]));
     const incomingSubjectIds = new Map<string, string>();
@@ -168,19 +132,68 @@ export async function POST(request: Request) {
     }
 
     const at = new Date().toISOString();
-    let applied = 0; let skipped = 0; let duplicateFiles = 0;
-    const appliedRunIds: string[] = [];
-    const deliveryStatements: D1PreparedStatement[] = [];
+    const filePlans = [] as Array<{ file: LockheedDailyFile; identity: Awaited<ReturnType<typeof importIdentity>>; duplicate: boolean }>;
     for (const file of body.files) {
-      const fileRecords = records.filter((record) => record.fileId === file.fileId);
-      const fileItems = fileRecords.map((record) => itemByRow.get(record.rowNumber)!);
       const identity = await importIdentity(datasetAdapter(file.dataset), body.sourceAsOf, JSON.stringify({ sourceSystem, rows: file.rows }));
       const prior = await priorImportRun(env.DB, identity.idempotencyKey);
-      if (prior?.status === "applied") { duplicateFiles += 1; continue; }
+      filePlans.push({ file, identity, duplicate: prior?.status === "applied" });
+    }
+    const eligibleFileIds = new Set(filePlans.filter((plan) => !plan.duplicate).map((plan) => plan.file.fileId));
+    const acceptedRecords = records.filter((record) => eligibleFileIds.has(record.fileId) && approvedRows.has(record.rowNumber));
+    const materializer = await CanonicalImportMaterializer.load(env.DB, actor.id, at);
+    const canonicalByRow = new Map<number, { kind: "capability" | "change_request" | "objective" | null; id: string | null }>();
+    const objectiveBySourceKey = new Map<string, string>();
+    for (const record of acceptedRecords) {
+      let kind: "capability" | "change_request" | "objective" | null = null;
+      let id: string | null = null;
+      if (record.canonicalTargetKind === "capability") {
+        const capability = materializer.ensureCapability({ code: record.sourceKey, name: record.title, description: record.fields.Description || null, sourceReference: sourceSystem, sourceAsOf: body.sourceAsOf });
+        kind = capability.id ? "capability" : null; id = capability.id;
+      } else if (record.canonicalTargetKind === "change_request") {
+        const change = materializer.ensureChangeRequest({ identifier: record.sourceKey, title: record.title, externalStatus: record.status, externalOwner: record.fields.MxsPMOLead || record.fields.FunctionalOwner || null, sourceSystem, sourceLocator: record.fields.TitleURL || record.fields.URL || null, sourceAsOf: body.sourceAsOf, requestedRelease: record.fields.TargetRelease || null, updateSourceFields: true });
+        kind = change.id ? "change_request" : null; id = change.id;
+      } else if (record.canonicalTargetKind === "objective") {
+        const identifier = record.fields.JIRAID || record.sourceKey;
+        const objective = materializer.ensureObjective({ externalSystem: LM_JIRA_SYSTEM, externalIdentifier: identifier, title: record.title, summary: record.fields.Description || null, technicalOwner: record.fields.Team || record.fields.FunctionalOwner || null, status: record.status, plannedStart: record.fields.TargetStart || record.fields.TargetPIStart || null, plannedFinish: record.fields.TargetFinish || record.fields.TargetPIEnd || null, actualFinish: record.fields.Resolved || null, sourceLocator: record.fields.URL || null, sourceAsOf: body.sourceAsOf, primaryChangeRequestId: null });
+        kind = objective.id ? "objective" : null; id = objective.id;
+        if (id) {
+          objectiveBySourceKey.set(normalizedKey(record.sourceKey), id);
+          objectiveBySourceKey.set(normalizedKey(identifier), id);
+          for (const reference of splitReportedReferences([record.fields.JPOID, record.fields.JPOCode, record.fields.MCPDSOR].filter(Boolean).join(","))) {
+            const change = materializer.ensureChangeRequest({ identifier: reference, sourceSystem, sourceLocator: record.fields.URL || null, sourceAsOf: body.sourceAsOf, updateSourceFields: false });
+            if (change.id) materializer.ensureObjectiveChangeRequestLink({ objectiveId: id, changeRequestId: change.id, relationship: "reported", sourceSystem, sourceLocator: record.fields.URL || null, sourceAsOf: body.sourceAsOf });
+          }
+        }
+      }
+      canonicalByRow.set(record.rowNumber, { kind, id });
+    }
+    // The MCP projection can name Objectives that arrive in the same daily
+    // package. Promote those deterministic same-package references to real
+    // reported associations while retaining every raw source relation too.
+    for (const record of acceptedRecords.filter((item) => item.dataset === "mcps")) {
+      const request = canonicalByRow.get(record.rowNumber);
+      if (!request?.id) continue;
+      for (const relation of record.relations.filter((item) => item.relationType === "objective_reference")) {
+        const objectiveId = objectiveBySourceKey.get(normalizedKey(relation.targetReference));
+        if (objectiveId) materializer.ensureObjectiveChangeRequestLink({ objectiveId, changeRequestId: request.id, relationship: "reported", sourceSystem, sourceAsOf: body.sourceAsOf });
+      }
+    }
+    if (materializer.issues.length) return Response.json({ error: "One or more source identities match multiple canonical records. Review the identity exceptions before applying.", identityExceptions: materializer.issues, preview: responsePreview }, { status: 409 });
+    let applied = 0; let skipped = 0; let duplicateFiles = filePlans.filter((plan) => plan.duplicate).length;
+    const appliedRunIds: string[] = [];
+    const deliveryStatements: D1PreparedStatement[] = [...materializer.statements];
+    for (const { file, identity, duplicate } of filePlans) {
+      const fileRecords = records.filter((record) => record.fileId === file.fileId);
+      const fileItems = fileRecords.map((record) => itemByRow.get(record.rowNumber)!);
+      if (duplicate) continue;
       const runId = `ingestion-${crypto.randomUUID()}`;
       const fileResolutions: ImportResolution[] = fileItems.map((item) => {
         const resolution = resolutionByRow.get(item.rowNumber);
-        return { rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.disposition === "blocked" ? "skip" : resolution?.decision || item.defaultDecision, targetId: resolution && Object.prototype.hasOwnProperty.call(resolution, "targetId") ? resolution.targetId || null : item.proposedTargetId || null };
+        // The canonical record was resolved from the authoritative external
+        // identity above.  Record that exact object on the import receipt;
+        // this is an audit link, not a reviewer-selected mapping.
+        const canonical = canonicalByRow.get(item.rowNumber);
+        return { rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.disposition === "blocked" ? "skip" : resolution?.decision || item.defaultDecision, targetId: canonical?.id || null };
       });
       const statements = importRunStatements(env.DB, { runId, adapterKey: datasetAdapter(file.dataset), sourceSystem, fileName: file.fileName, sheetName: file.sheetName, sourceAsOf: body.sourceAsOf, ...identity, items: fileItems, resolutions: fileResolutions, rawRows: fileRecords.map((record) => record.raw), normalizedRows: fileRecords.map(comparableLockheedDailyRecord), targetSnapshotKind: "external_source_observation", targetSnapshotId: runId, actorId: actor.id, at });
       const acceptedFileRecords = fileRecords.filter((record) => approvedRows.has(record.rowNumber));
@@ -191,10 +204,9 @@ export async function POST(request: Request) {
       for (const record of acceptedFileRecords) {
         const existing = subjectByIdentity.get(subjectIdentity(sourceSystem, record));
         const subjectId = incomingSubjectIds.get(`${record.dataset}|${record.sourceKey.toLocaleLowerCase("en-US")}`)!;
-        const resolution = fileResolutions.find((candidate) => candidate.rowNumber === record.rowNumber)!;
-        const target = resolution.targetId ? targetById.get(resolution.targetId) : null;
-        const canonicalKind = target?.kind || null;
-        const canonicalId = target?.id || null;
+        const canonical = canonicalByRow.get(record.rowNumber) || { kind: null, id: null };
+        const canonicalKind = canonical.kind;
+        const canonicalId = canonical.id;
         if (existing) statements.push(env.DB.prepare("UPDATE external_source_subject SET entity_kind=?,title=?,canonical_entity_kind=?,canonical_entity_id=?,last_seen_at=?,updated_at=? WHERE id=? AND program_id=?")
           .bind(record.entityKind, record.title, canonicalKind, canonicalId, body.sourceAsOf, at, existing.id, PROGRAM_ID));
         else statements.push(env.DB.prepare("INSERT INTO external_source_subject (id,program_id,source_system,dataset_key,entity_kind,source_key,title,canonical_entity_kind,canonical_entity_id,first_seen_at,last_seen_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -203,10 +215,9 @@ export async function POST(request: Request) {
       for (const record of acceptedFileRecords) {
         const item = itemByRow.get(record.rowNumber)!;
         const subjectId = incomingSubjectIds.get(`${record.dataset}|${record.sourceKey.toLocaleLowerCase("en-US")}`)!;
-        const resolution = fileResolutions.find((candidate) => candidate.rowNumber === record.rowNumber)!;
-        const target = resolution.targetId ? targetById.get(resolution.targetId) : null;
-        const canonicalKind = target?.kind || null;
-        const canonicalId = target?.id || null;
+        const canonical = canonicalByRow.get(record.rowNumber) || { kind: null, id: null };
+        const canonicalKind = canonical.kind;
+        const canonicalId = canonical.id;
         const comparable = comparableLockheedDailyRecord(record);
         const observationId = `external-observation-${crypto.randomUUID()}`;
         const contentHash = await sha256Import(JSON.stringify(comparable));
