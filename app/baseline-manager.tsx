@@ -47,7 +47,7 @@ function demoRecord(values: DemoValues): Record24 {
   return Object.fromEntries(TECHNICAL_BASELINE_COLUMNS.map((column) => [column, values[column] ?? ""])) as Record24;
 }
 
-const DEMONSTRATION_ROWS: Record24[] = [
+const CORE_DEMONSTRATION_ROWS: Record24[] = [
   // Release 5 — reported baseline
   demoRecord({ "#": "DEMO-R5-001", ReleaseName: "Release 5", Tier: "Integration", Resource: "Mission systems", TechStackType: "Application service", ShortName: "MPS", HW_Host: "VM-MPS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Java", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Mission Planning Service", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Mission planning", "Notes.1": "Demonstration data" }),
   demoRecord({ "#": "DEMO-R5-002", ReleaseName: "Release 5", Tier: "Integration", Resource: "Threat intelligence", TechStackType: "Data service", ShortName: "TLS", HW_Host: "VM-TLS-05", HW_Storage_Type: "SSD", "HW_Storage (GB)": 120, HW_CPU_CORES: 4, "HW_RAM (GB)": 16, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "StatefulSet", LongName: "Threat Library Service", Notes: "Demonstration data — not program data.", "Technical Capability Satisfied by this SW/Tech - Notes": "Threat data management", "Notes.1": "Demonstration data" }),
@@ -73,6 +73,105 @@ const DEMONSTRATION_ROWS: Record24[] = [
   demoRecord({ "#": "DEMO-R7-006", ReleaseName: "Release 7", Tier: "Operations", Resource: "User services", TechStackType: "Analytics service", ShortName: "EIS", HW_Host: "VM-EIS-07", HW_Storage_Type: "SSD", "HW_Storage (GB)": 180, HW_CPU_CORES: 8, "HW_RAM (GB)": 32, "SW Language": "Python", "Software Type": "Custom", OEM: "Lockheed Martin", Containerized: "Yes", "Container Technology": "Kubernetes", "Container Type": "Deployment", LongName: "Execution Insights Service", Notes: "Demonstration data — not program data; new Release 7 service.", "Technical Capability Satisfied by this SW/Tech - Notes": "Operational awareness", "Notes.1": "Demonstration data" }),
   demoRecord({ "#": "DEMO-R7-007", ReleaseName: "Release 7", Tier: "Platform", Resource: "Edge networking", TechStackType: "Hardware gateway", HW_Host: "NET-GW-05", HW_Storage_Type: "Flash", "HW_Storage (GB)": 64, HW_CPU_CORES: 4, "HW_RAM (GB)": 8, Notes: "Demonstration host record; no product is reported.", "Notes.1": "Demonstration data" }),
 ];
+
+type DemonstrationProduct = {
+  code: string;
+  name: string;
+  tier: string;
+  resource: string;
+  type: string;
+  language: string;
+  softwareType: string;
+  oem: string;
+  capability: string;
+  storageType: string;
+  storage: number;
+  cpu: number;
+  ram: number;
+  containerized: boolean;
+  containerType?: string;
+};
+
+const DEMONSTRATION_PRODUCT_CATALOG: Record<string, DemonstrationProduct> = {
+  MPS: { code: "MPS", name: "Mission Planning Service", tier: "Integration", resource: "Mission systems", type: "Application service", language: "Java", softwareType: "Custom", oem: "Lockheed Martin", capability: "Mission planning", storageType: "SSD", storage: 150, cpu: 8, ram: 32, containerized: true, containerType: "Deployment" },
+  TLS: { code: "TLS", name: "Threat Library Service", tier: "Integration", resource: "Threat intelligence", type: "Data service", language: "Python", softwareType: "Custom", oem: "Lockheed Martin", capability: "Threat data management", storageType: "SSD", storage: 100, cpu: 4, ram: 16, containerized: true, containerType: "StatefulSet" },
+  DG: { code: "DG", name: "Data Gateway", tier: "Enterprise", resource: "Data exchange", type: "Integration service", language: "C#", softwareType: "COTS", oem: "Boeing", capability: "Data interchange", storageType: "SAN", storage: 450, cpu: 8, ram: 48, containerized: false },
+  SDS: { code: "SDS", name: "Secure Data Store", tier: "Enterprise", resource: "Shared data", type: "Data service", language: "SQL", softwareType: "COTS", oem: "Oracle", capability: "Protected data persistence", storageType: "SAN", storage: 800, cpu: 8, ram: 64, containerized: false },
+  OC: { code: "OC", name: "Operations Console", tier: "Operations", resource: "User services", type: "Application service", language: "TypeScript", softwareType: "Custom", oem: "Lockheed Martin", capability: "Operational awareness", storageType: "SSD", storage: 90, cpu: 4, ram: 16, containerized: true, containerType: "Deployment" },
+  LMPA: { code: "LMPA", name: "Legacy Mission Planning Adapter", tier: "Integration", resource: "Mission systems", type: "Adapter", language: "Java", softwareType: "Custom", oem: "Lockheed Martin", capability: "Mission planning", storageType: "SSD", storage: 70, cpu: 2, ram: 8, containerized: false },
+  IOS: { code: "IOS", name: "Integration Orchestrator Service", tier: "Integration", resource: "Data exchange", type: "Integration service", language: "Go", softwareType: "Custom", oem: "Northrop Grumman", capability: "Data interchange", storageType: "SSD", storage: 120, cpu: 6, ram: 24, containerized: true, containerType: "Deployment" },
+  EIS: { code: "EIS", name: "Execution Insights Service", tier: "Operations", resource: "User services", type: "Analytics service", language: "Python", softwareType: "Custom", oem: "Lockheed Martin", capability: "Operational awareness", storageType: "SSD", storage: 140, cpu: 8, ram: 32, containerized: true, containerType: "Deployment" },
+  MES: { code: "MES", name: "Maintenance Execution Service", tier: "Operations", resource: "Maintenance services", type: "Application service", language: "Java", softwareType: "Custom", oem: "Lockheed Martin", capability: "Maintenance execution", storageType: "SSD", storage: 180, cpu: 6, ram: 24, containerized: true, containerType: "Deployment" },
+  MDW: { code: "MDW", name: "Mission Data Warehouse", tier: "Enterprise", resource: "Shared data", type: "Data service", language: "SQL", softwareType: "COTS", oem: "Oracle", capability: "Mission data analysis", storageType: "SAN", storage: 1400, cpu: 12, ram: 96, containerized: false },
+  IAS: { code: "IAS", name: "Identity Assurance Service", tier: "Enterprise", resource: "Identity and access", type: "Security service", language: "Java", softwareType: "COTS", oem: "Ping Identity", capability: "Identity assurance", storageType: "SSD", storage: 160, cpu: 6, ram: 24, containerized: true, containerType: "Deployment" },
+  FCM: { code: "FCM", name: "Fleet Configuration Manager", tier: "Operations", resource: "Fleet management", type: "Application service", language: "C#", softwareType: "Custom", oem: "Lockheed Martin", capability: "Configuration management", storageType: "SSD", storage: 220, cpu: 8, ram: 32, containerized: false },
+  SRS: { code: "SRS", name: "Supply Reconciliation Service", tier: "Operations", resource: "Logistics", type: "Integration service", language: "Python", softwareType: "Custom", oem: "Lockheed Martin", capability: "Supply reconciliation", storageType: "SSD", storage: 140, cpu: 4, ram: 16, containerized: true, containerType: "Deployment" },
+  SDSVC: { code: "SDSVC", name: "Software Distribution Service", tier: "Enterprise", resource: "Software distribution", type: "Platform service", language: "Go", softwareType: "Custom", oem: "Lockheed Martin", capability: "Software distribution", storageType: "SAN", storage: 520, cpu: 8, ram: 32, containerized: true, containerType: "Deployment" },
+  CPS: { code: "CPS", name: "Cyber Posture Service", tier: "Enterprise", resource: "Cyber protection", type: "Security service", language: "Go", softwareType: "Custom", oem: "Northrop Grumman", capability: "Cyber posture", storageType: "SSD", storage: 180, cpu: 6, ram: 24, containerized: true, containerType: "Deployment" },
+  TCS: { code: "TCS", name: "Training Content Service", tier: "Operations", resource: "Training services", type: "Content service", language: "TypeScript", softwareType: "GOTS", oem: "Lockheed Martin", capability: "Training delivery", storageType: "SSD", storage: 260, cpu: 4, ram: 16, containerized: true, containerType: "Deployment" },
+  FDE: { code: "FDE", name: "Flight Data Exchange", tier: "Integration", resource: "Data exchange", type: "Integration service", language: "C++", softwareType: "Custom", oem: "Boeing", capability: "Flight data interchange", storageType: "SSD", storage: 280, cpu: 8, ram: 32, containerized: false },
+  OAS: { code: "OAS", name: "Operational Analytics Store", tier: "Operations", resource: "User services", type: "Analytics service", language: "Python", softwareType: "Custom", oem: "Lockheed Martin", capability: "Operational awareness", storageType: "SAN", storage: 640, cpu: 8, ram: 48, containerized: true, containerType: "StatefulSet" },
+};
+
+function buildDemonstrationExpansion(): Record24[] {
+  const rowsFor = (release: number, codes: string[], sourceStart: number) => codes.map((code, offset) => {
+    const product = DEMONSTRATION_PRODUCT_CATALOG[code];
+    const growth = Math.max(0, release - 4);
+    const host = product.containerized ? `VM-${product.code}-${String(release).padStart(2, "0")}` : `${product.code}-SRV-${String(release).padStart(2, "0")}`;
+    return demoRecord({
+      "#": `DEMO-R${release}-${String(sourceStart + offset).padStart(3, "0")}`,
+      ReleaseName: `Release ${release}`,
+      Tier: product.tier,
+      Resource: product.resource,
+      TechStackType: product.type,
+      ShortName: product.code,
+      HW_Host: host,
+      HW_Storage_Type: product.storageType,
+      "HW_Storage (GB)": product.storage + (growth * (product.storageType === "SAN" ? 125 : 30)),
+      HW_CPU_CORES: product.cpu + (growth > 2 ? 2 : 0),
+      "HW_RAM (GB)": product.ram + (growth * 8),
+      "SW Language": product.language,
+      "Software Type": product.softwareType,
+      OEM: product.oem,
+      Containerized: product.containerized ? "Yes" : "No",
+      "Container Technology": product.containerized ? "Kubernetes" : "",
+      "Container Type": product.containerized ? product.containerType : "",
+      LongName: product.name,
+      Notes: `Demonstration data — not program data; Release ${release} working-baseline scenario.`,
+      "Technical Capability Satisfied by this SW/Tech - Notes": product.capability,
+      "Notes.1": "Demonstration data",
+      "Notes.2": `Synthetic release posture: Release ${release}`,
+    });
+  });
+
+  const networkRow = (release: number, source: string) => demoRecord({
+    "#": source,
+    ReleaseName: `Release ${release}`,
+    Tier: "Platform",
+    Resource: "Edge networking",
+    TechStackType: "Hardware gateway",
+    HW_Host: `NET-GW-${String(release).padStart(2, "0")}`,
+    HW_Storage_Type: "Flash",
+    "HW_Storage (GB)": 64,
+    HW_CPU_CORES: 4,
+    "HW_RAM (GB)": 8,
+    Notes: "Demonstration host record; no product is reported.",
+    "Notes.1": "Demonstration data",
+  });
+
+  return [
+    ...rowsFor(4, ["MPS", "TLS", "DG", "SDS", "OC", "LMPA", "MES", "MDW", "IAS"], 1),
+    networkRow(4, "DEMO-R4-010"),
+    ...rowsFor(5, ["MES", "MDW", "IAS", "FCM", "SRS", "SDSVC", "CPS", "TCS"], 101),
+    ...rowsFor(6, ["MES", "MDW", "IAS", "FCM", "SRS", "SDSVC", "CPS", "TCS", "FDE"], 101),
+    ...rowsFor(7, ["MES", "MDW", "IAS", "FCM", "SRS", "SDSVC", "CPS", "TCS", "FDE", "OAS"], 101),
+    ...rowsFor(8, ["MPS", "TLS", "SDS", "OC", "IOS", "EIS", "MES", "MDW", "IAS", "FCM", "SRS", "SDSVC", "CPS", "TCS", "FDE", "OAS"], 1),
+    networkRow(8, "DEMO-R8-017"),
+  ];
+}
+
+const DEMONSTRATION_ROWS: Record24[] = [...CORE_DEMONSTRATION_ROWS, ...buildDemonstrationExpansion()];
+const DEMONSTRATION_RELEASE_COUNT = new Set(DEMONSTRATION_ROWS.map((row) => String(row.ReleaseName))).size;
 
 const text = (value: Cell) => value == null ? "" : String(value);
 const manualReviewLabel = (status: ReviewStatus) => status === "reviewed" ? "Reviewed" : status === "follow_up" ? "Follow-up" : "Not reviewed";
@@ -597,7 +696,7 @@ export function BaselineManager() {
       setActiveQuality("All checks");
       setActiveReview("All review statuses");
       setShowStewardMenu(false);
-      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration records across three releases, plus three Initiative decision scenarios for report testing.`);
+      setNotice(`Loaded ${DEMONSTRATION_ROWS.length} demonstration records across ${DEMONSTRATION_RELEASE_COUNT} releases, plus decision, objective, Initiative, Platform, and evidence scenarios for report testing.`);
     } catch (reason) {
       setDemoError(reason instanceof Error ? reason.message : "The demonstration dataset could not be loaded.");
     } finally {

@@ -19,6 +19,7 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/platforms", label: "Platforms", icon: "⌂", enabled: true, section: "Views" },
   { href: "/topology", label: "Deployment Topology", icon: "⌘", enabled: true, section: "Views" },
   { href: "/pbs", label: "Product Deployment", icon: "⌗", enabled: true, section: "Views" },
+  { href: "/analytics", label: "Analytics", icon: "◈", enabled: true, section: "Views" },
   { href: "/changes", label: "Change Requests", icon: "◫", enabled: true, section: "Decisions" },
   { href: "/objectives", label: "LM Objectives", icon: "▣", enabled: true, section: "Decisions" },
   { href: "/delivery", label: "Initiative Work Plan", icon: "⌗", enabled: true, section: "Decisions" },

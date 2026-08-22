@@ -12,6 +12,7 @@ import {
 } from "../../../lib/baseline-data";
 import { dataQualityFor } from "../../../lib/baseline-quality";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { AnalyticsLink } from "../../../components/analytics-link";
 import { ObjectRecordsPanel, ObjectTabBar } from "../../../components/object-workspace";
 import { useWorkspaceContext } from "../../../components/workspace-context";
 import { useChangePortfolio } from "../../../lib/change-client";
@@ -99,7 +100,7 @@ export default function OrganizationDetailPage() {
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search products or placement" />
-        </label>{masterOrganization ? <button className="ghost-button" type="button" onClick={() => setEditing(true)}>Edit Organization</button> : null}</>)}
+        </label><AnalyticsLink kind="organization" id={canonicalOrganization?.id || orgId} />{masterOrganization ? <button className="ghost-button" type="button" onClick={() => setEditing(true)}>Edit Organization</button> : null}</>)}
     >
       <section className="summary">
         <div className="metric"><span>Baseline records</span><strong>{orgRows.length}</strong><small>For this supplier</small></div>

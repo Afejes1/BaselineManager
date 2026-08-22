@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "../../../components/app-link";
 import { ProvenanceKey } from "../../../components/provenance-key";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { AnalyticsLink } from "../../../components/analytics-link";
 import { ViewportModal } from "../../../components/viewport-modal";
 import { AuditHistoryPanel } from "../../../components/governed-object";
 import { ObjectRecordsPanel } from "../../../components/object-workspace";
@@ -100,7 +101,7 @@ export default function InitiativeDetailPage() {
   if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading" contextMode="portfolio"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
   if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative" contextMode="portfolio"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
 
-  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
+  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release"} · ${sourceRows.length} baseline records`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><AnalyticsLink kind="initiative" id={bundle.initiative.id} /><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Wall one-pager</Link><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
     <ProvenanceKey compact />
     <section className="kpi-grid" aria-label="Initiative decision summary">
       <div className="kpi-card"><span>Decision readiness</span><strong>{assessment?.score ?? 0}%</strong><small>{readable(assessment?.stage || "not_ready")}</small></div>
