@@ -21,9 +21,11 @@ export default function ProductsPage() {
   const productSummaries = useMemo<ProductSummary[]>(() => getProductSummaries(rows), [rows]);
   const combined = useMemo(() => {
     const sourceByName = new Map(productSummaries.map((item) => [item.canonical.trim().toLowerCase(), item]));
-    const governed = master.portfolio.products.map((item) => ({ master: item, summary: sourceByName.get(item.canonicalName.trim().toLowerCase()) }));
-    const governedNames = new Set(governed.map((item) => item.master.canonicalName.trim().toLowerCase()));
-    return [...governed, ...productSummaries.filter((item) => !governedNames.has(item.canonical.trim().toLowerCase())).map((summary) => ({ master: undefined, summary }))];
+    const allMasterNames = new Set(master.portfolio.products.map((item) => item.canonicalName.trim().toLowerCase()));
+    // A reconciled spelling variant is retained for audit in Identity
+    // Stewardship, not presented as a second active Product in the portfolio.
+    const governed = master.portfolio.products.filter((item) => item.lifecycleStatus !== "retired").map((item) => ({ master: item, summary: sourceByName.get(item.canonicalName.trim().toLowerCase()) }));
+    return [...governed, ...productSummaries.filter((item) => !allMasterNames.has(item.canonical.trim().toLowerCase())).map((summary) => ({ master: undefined, summary }))];
   }, [master.portfolio.products, productSummaries]);
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -47,7 +49,7 @@ export default function ProductsPage() {
         <label className="search" style={{ width: "260px" }}>
           <span>⌕</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by product or supplier" />
-        </label><button className="primary-button" type="button" onClick={() => setCreating(true)}>＋ New Product</button></>)}
+        </label><Link className="ghost-button" href="/stewardship">Resolve duplicate</Link><button className="primary-button" type="button" onClick={() => setCreating(true)}>＋ New Product</button></>)}
     >
       <div className="summary">
         <div className="metric"><span>Product catalog</span><strong>{canonicalCount}</strong><small>{unfieldedCount ? `${unfieldedCount} not fielded in a Release` : "All active Products are fielded"}</small></div>

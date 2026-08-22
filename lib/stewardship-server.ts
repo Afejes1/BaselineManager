@@ -73,30 +73,54 @@ export async function mergeCanonicalEntity(db: Database, actor: Actor, body: Rec
   if (entityKind === "configuration_node") throw new Error("Configuration nodes may receive aliases, but node mergers require placement-by-placement reconciliation and are intentionally blocked.");
   const [source, target] = await Promise.all([entityName(db, entityKind, sourceId), entityName(db, entityKind, targetId)]);
   if (!source || !target) throw new Error("Both canonical entities must still exist.");
-  if (entityKind === "product") {
-    const conflicts = await db.prepare("SELECT COUNT(*) AS count FROM deployment source JOIN deployment target ON target.product_id=? AND target.configuration_node_id=source.configuration_node_id AND target.environment=source.environment AND target.site=source.site WHERE source.product_id=?").bind(targetId, sourceId).first<{ count: number }>();
-    if (Number(conflicts?.count || 0)) throw new Error("These Products have overlapping deployment positions. Reconcile those deployment records before merging the canonical identities.");
-  }
+  const existingMerge = await db.prepare("SELECT id FROM canonical_merge_event WHERE program_id=? AND entity_kind=? AND source_entity_id=?").bind(PROGRAM_ID, entityKind, sourceId).first<{ id: string }>();
+  if (existingMerge) throw new Error("This duplicate has already been reconciled. Open the retained canonical record instead.");
   const at = now();
   const sourceReference = clean(body.sourceReference) || null;
-  const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO canonical_alias (id,program_id,entity_kind,entity_id,alias,normalized_alias,namespace,source_reference,status,reviewed_by_user_id,reviewed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(program_id,entity_kind,namespace,normalized_alias) DO UPDATE SET entity_id=excluded.entity_id,status='accepted',reviewed_by_user_id=excluded.reviewed_by_user_id,reviewed_at=excluded.reviewed_at,updated_at=excluded.updated_at")
-      .bind(id("alias"), PROGRAM_ID, entityKind, targetId, source.name, normalized(source.name), "name", sourceReference, "accepted", actor.id, at, at, at),
-    db.prepare("INSERT INTO canonical_merge_event (id,program_id,entity_kind,source_entity_id,target_entity_id,rationale,source_reference,merged_by_user_id,merged_at) VALUES (?,?,?,?,?,?,?,?,?)")
-      .bind(id("merge"), PROGRAM_ID, entityKind, sourceId, targetId, rationale, sourceReference, actor.id, at),
-  ];
+  const statements: D1PreparedStatement[] = [];
   if (entityKind === "product") {
+    // A spelling variant can legitimately occupy the same host as its retained
+    // Product.  A deployment is a derived position, so collapse only those
+    // duplicate positions while retaining all baseline records and source rows.
+    // For every source deployment that already has the same target position,
+    // first move child references to the target deployment.  The source state
+    // is copied only when that target baseline position has no state yet.
     statements.push(
-      db.prepare("UPDATE source_row_24 SET product_id=?,updated_at=? WHERE product_id=?").bind(targetId, at, sourceId),
-      db.prepare("UPDATE baseline_occurrence SET product_id=?,updated_at=? WHERE product_id=?").bind(targetId, at, sourceId),
+      db.prepare("INSERT OR IGNORE INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,reported_version,application_version,runtime_version,presence,status,installation_type,containerized,container_technology,container_type,language,notes,created_at,updated_at) SELECT 'merge-state-' || lower(hex(randomblob(16))),state.program_id,state.baseline_id,target.id,state.source_row_id,state.reported_version,state.application_version,state.runtime_version,state.presence,state.status,state.installation_type,state.containerized,state.container_technology,state.container_type,state.language,state.notes,state.created_at,? FROM baseline_deployment_state state JOIN deployment source ON source.id=state.deployment_id JOIN deployment target ON target.program_id=source.program_id AND target.product_id=? AND target.configuration_node_id=source.configuration_node_id AND target.environment=source.environment AND target.site=source.site WHERE source.product_id=?").bind(at, targetId, sourceId),
+      db.prepare("UPDATE source_row_24 SET product_id=?,deployment_id=COALESCE((SELECT target.id FROM deployment source JOIN deployment target ON target.program_id=source.program_id AND target.product_id=? AND target.configuration_node_id=source.configuration_node_id AND target.environment=source.environment AND target.site=source.site WHERE source.id=source_row_24.deployment_id),deployment_id),updated_at=? WHERE product_id=?").bind(targetId, targetId, at, sourceId),
+      db.prepare("UPDATE baseline_occurrence SET product_id=?,deployment_id=COALESCE((SELECT target.id FROM deployment source JOIN deployment target ON target.program_id=source.program_id AND target.product_id=? AND target.configuration_node_id=source.configuration_node_id AND target.environment=source.environment AND target.site=source.site WHERE source.id=baseline_occurrence.deployment_id),deployment_id),updated_at=? WHERE product_id=?").bind(targetId, targetId, at, sourceId),
       db.prepare("UPDATE managed_deployment_profile SET product_id=?,updated_at=? WHERE product_id=?").bind(targetId, at, sourceId),
+      db.prepare("DELETE FROM baseline_deployment_state WHERE deployment_id IN (SELECT source.id FROM deployment source JOIN deployment target ON target.program_id=source.program_id AND target.product_id=? AND target.configuration_node_id=source.configuration_node_id AND target.environment=source.environment AND target.site=source.site WHERE source.product_id=?)").bind(targetId, sourceId),
+      db.prepare("DELETE FROM deployment WHERE product_id=? AND EXISTS (SELECT 1 FROM deployment target WHERE target.program_id=deployment.program_id AND target.product_id=? AND target.configuration_node_id=deployment.configuration_node_id AND target.environment=deployment.environment AND target.site=deployment.site)").bind(sourceId, targetId),
+      db.prepare("UPDATE deployment SET product_id=?,updated_at=? WHERE product_id=?").bind(targetId, at, sourceId),
       db.prepare("UPDATE change_effect SET subject_id=?,updated_at=? WHERE subject_kind='product' AND subject_id=?").bind(targetId, at, sourceId),
+      // Scope and record links are unique per parent.  Remove only the
+      // duplicate link, then point the remaining link at the retained Product.
+      db.prepare("DELETE FROM initiative_scope AS source WHERE source.scope_kind='product' AND source.scope_id=? AND EXISTS (SELECT 1 FROM initiative_scope target WHERE target.initiative_id=source.initiative_id AND target.scope_kind='product' AND target.scope_id=?)").bind(sourceId, targetId),
+      db.prepare("UPDATE initiative_scope SET scope_id=?,updated_at=? WHERE scope_kind='product' AND scope_id=?").bind(targetId, at, sourceId),
+      db.prepare("DELETE FROM governance_record_link AS source WHERE source.entity_kind='product' AND source.entity_id=? AND EXISTS (SELECT 1 FROM governance_record_link target WHERE target.governance_record_id=source.governance_record_id AND target.entity_kind='product' AND target.entity_id=? AND target.relationship=source.relationship)").bind(sourceId, targetId),
+      db.prepare("UPDATE governance_record_link SET entity_id=?,updated_at=? WHERE entity_kind='product' AND entity_id=?").bind(targetId, at, sourceId),
       db.prepare("INSERT OR IGNORE INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) SELECT ?,organization_id,supplier_role,created_at,? FROM product_supplier WHERE product_id=?").bind(targetId, at, sourceId),
       db.prepare("DELETE FROM product_supplier WHERE product_id=?").bind(sourceId),
       db.prepare("INSERT OR IGNORE INTO product_capability (product_id,capability_id,relationship,rationale,created_at,updated_at) SELECT ?,capability_id,relationship,rationale,created_at,? FROM product_capability WHERE product_id=?").bind(targetId, at, sourceId),
       db.prepare("DELETE FROM product_capability WHERE product_id=?").bind(sourceId),
-      db.prepare("UPDATE initiative_scope SET scope_id=?,updated_at=? WHERE scope_kind='product' AND scope_id=?").bind(targetId, at, sourceId),
-      db.prepare("UPDATE deployment SET product_id=?,updated_at=? WHERE product_id=?").bind(targetId, at, sourceId),
+      // Source observations can carry a deliberate analyst link to a Product.
+      // Preserve that traceability but redirect it to the retained identity.
+      db.prepare("UPDATE external_source_subject SET canonical_entity_id=?,updated_at=? WHERE program_id=? AND canonical_entity_kind='product' AND canonical_entity_id=?").bind(targetId, at, PROGRAM_ID, sourceId),
+      db.prepare("UPDATE external_source_relation SET canonical_target_id=? WHERE canonical_target_kind='product' AND canonical_target_id=?").bind(targetId, sourceId),
+    );
+  }
+  statements.push(
+    db.prepare("INSERT INTO canonical_alias (id,program_id,entity_kind,entity_id,alias,normalized_alias,namespace,source_reference,status,reviewed_by_user_id,reviewed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(program_id,entity_kind,namespace,normalized_alias) DO UPDATE SET entity_id=excluded.entity_id,status='accepted',reviewed_by_user_id=excluded.reviewed_by_user_id,reviewed_at=excluded.reviewed_at,updated_at=excluded.updated_at")
+      .bind(id("alias"), PROGRAM_ID, entityKind, targetId, source.name, normalized(source.name), "name", sourceReference, "accepted", actor.id, at, at, at),
+  );
+  if (entityKind === "product") {
+    statements.push(
+      // A source may already have aliases.  Merge them without violating the
+      // alias uniqueness rule; the canonical Product spelling is always added.
+      db.prepare("DELETE FROM canonical_alias AS source_alias WHERE source_alias.entity_kind='product' AND source_alias.entity_id=? AND EXISTS (SELECT 1 FROM canonical_alias target_alias WHERE target_alias.program_id=source_alias.program_id AND target_alias.entity_kind=source_alias.entity_kind AND target_alias.namespace=source_alias.namespace AND target_alias.normalized_alias=source_alias.normalized_alias AND target_alias.entity_id=?)").bind(sourceId, targetId),
+      db.prepare("UPDATE canonical_alias SET entity_id=?,status='accepted',reviewed_by_user_id=?,reviewed_at=?,updated_at=? WHERE entity_kind='product' AND entity_id=?").bind(targetId, actor.id, at, at, sourceId),
+      db.prepare("UPDATE product SET lifecycle_status='retired',updated_at=? WHERE id=? AND program_id=?").bind(at, sourceId, PROGRAM_ID),
     );
   } else {
     statements.push(
@@ -109,7 +133,12 @@ export async function mergeCanonicalEntity(db: Database, actor: Actor, body: Rec
       db.prepare("DELETE FROM platform_organization WHERE organization_id=?").bind(sourceId),
     );
   }
-  statements.push(audit(db, actor, "canonical_entity_merged", entityKind, targetId, { sourceId, targetId, rationale, sourceReference, sourceName: source.name, targetName: target.name }));
+  statements.push(
+    db.prepare("INSERT INTO canonical_merge_event (id,program_id,entity_kind,source_entity_id,target_entity_id,rationale,source_reference,merged_by_user_id,merged_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .bind(id("merge"), PROGRAM_ID, entityKind, sourceId, targetId, rationale, sourceReference, actor.id, at),
+    audit(db, actor, "canonical_entity_retired", entityKind, sourceId, { mergedInto: targetId, rationale, sourceReference, sourceName: source.name, targetName: target.name }),
+    audit(db, actor, "canonical_entity_merged", entityKind, targetId, { sourceId, targetId, rationale, sourceReference, sourceName: source.name, targetName: target.name }),
+  );
   await db.batch(statements);
   return targetId;
 }

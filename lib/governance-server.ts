@@ -170,7 +170,7 @@ export async function objectCatalog(db: Database): Promise<ObjectCatalogItem[]> 
   // D1 limits the number of terms in a compound SELECT. Keep each catalog
   // source independent, then combine the small result sets in application code.
   const results = await Promise.all([
-    db.prepare("SELECT 'product' AS kind,id,canonical_name AS label,COALESCE(short_name,product_type,'Product') AS detail FROM product WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
+    db.prepare("SELECT 'product' AS kind,id,canonical_name AS label,COALESCE(short_name,product_type,'Product') AS detail FROM product WHERE program_id=? AND lifecycle_status='active'").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'platform' AS kind,id,code || ' · ' || name AS label,UPPER(platform_type) || ' Platform' AS detail FROM platform WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'organization' AS kind,id,name AS label,COALESCE(organization_type,'Organization') AS detail FROM organization WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
     db.prepare("SELECT 'release' AS kind,id,name AS label,'Release · ' || status AS detail FROM release WHERE program_id=?").bind(PROGRAM_ID).all<CatalogRow>(),
