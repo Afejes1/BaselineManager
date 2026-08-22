@@ -35,3 +35,11 @@ test("duplicate identities in one dataset are blocked without treating absence a
   assert.equal(records.length, 2);
   assert.ok(records.every((record) => record.issues.some((issue) => issue.includes("occurs more than once"))));
 });
+
+test("a keyed but incomplete daily row remains importable with an advisory finding", () => {
+  const record = normalizeLockheedDailyRow({ fileId: "mcp", fileName: "FOR_JPO_MCPS.CSV", dataset: "mcps" }, { "MCP/DSOR": "ARCH-REFERENCE-44", Title: "" }, 2);
+  assert.equal(record.sourceKey, "ARCH-REFERENCE-44");
+  assert.equal(record.issues.length, 0);
+  assert.ok(record.warnings.some((warning) => warning.includes("Title or summary is blank")));
+  assert.ok(record.warnings.some((warning) => warning.includes("not a recognized MCP or DSOR")));
+});

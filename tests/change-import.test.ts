@@ -12,7 +12,17 @@ test("Change Request import refreshes external fields without requiring Governme
   assert.deepEqual(preview.rows[0].changedFields, ["ExternalStatus"]);
 });
 
-test("Change Request import blocks unknown types, releases, duplicates, and invalid source dates", () => {
+test("Change Request import matches an MCP across different source-system labels", () => {
+  const imported = { ...base, ExternalSystem: "JSF Confluence DSOR/MCP Dashboard", ExternalIdentifier: "MCP 100" };
+  const existing = [{ id: "change-1", typeId: "type-mcp", typeCode: "MCP", externalSystem: "JPO reference", externalIdentifier: "MCP-100", title: base.Title, externalStatus: base.ExternalStatus, externalOwner: base.ExternalOwner, sourceLocator: base.SourceLocator, sourceAsOf: base.SourceAsOf, requestedReleaseId: "release-7", requestedReleaseName: "Release 7" }];
+  const preview = reconcileChangeRequestImport([imported], existing, [{ id: "type-mcp", code: "MCP" }], [{ id: "release-7", name: "Release 7" }]);
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.added, 0);
+  assert.equal(preview.unchanged, 1);
+  assert.equal(preview.rows[0].existingId, "change-1");
+});
+
+test("Change Request import retains unknown source taxonomy while blocking duplicates and invalid source dates", () => {
   const invalid = { ...base, Type: "UNKNOWN", RequestedRelease: "Release 99", SourceAsOf: "08/20/2026" };
   const preview = reconcileChangeRequestImport([invalid, invalid], [], [{ id: "type-mcp", code: "MCP" }], [{ id: "release-7", name: "Release 7" }]);
   assert.equal(preview.canApply, false);

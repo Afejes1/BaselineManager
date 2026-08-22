@@ -49,6 +49,24 @@ test("objective reconciliation distinguishes unchanged and changed source rows",
   assert.deepEqual(changed.rows[0].changedFields, ["Status"]);
 });
 
+test("objective reconciliation reuses an unambiguous external Objective across Lockheed sources", () => {
+  const preview = reconcileObjectiveImport([row({ ExternalSystem: "Lockheed GitLab Pages", ExternalIdentifier: "OBJ-1" })], [current], [request]);
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.added, 0);
+  assert.equal(preview.unchanged, 1);
+  assert.equal(preview.rows[0].existingObjectiveId, "objective-1");
+});
+
+test("objective reconciliation retains incomplete source fields when the external identity is present", () => {
+  const incomplete = normalizeObjectiveImportRow({ ExternalIdentifier: "OBJ-2", Status: "Not Started", PlannedFinish: "FY27" });
+  const preview = reconcileObjectiveImport([incomplete], [], []);
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.added, 1);
+  assert.equal(preview.rows[0].issues.some((issue) => issue.blocking), false);
+  assert.equal(incomplete.ExternalSystem, "Lockheed Martin Jira");
+  assert.equal(incomplete.ExternalItemType, "Objective");
+});
+
 test("objective reconciliation blocks duplicate identities but retains reported request references", () => {
   const duplicate = reconcileObjectiveImport([row(), row()], [current], [request]);
   assert.equal(duplicate.blocked, 2);
