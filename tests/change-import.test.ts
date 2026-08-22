@@ -48,3 +48,18 @@ test("Confluence CSV headers map to canonical Change Request fields without disc
   assert.equal(record.raw.MOSCoW, "SHOULD");
   assert.equal(record.raw["MxS Impact Score"], "44");
 });
+
+test("Confluence snake_case columns map automatically and a row URL can supply a missing JPO identity", () => {
+  const raw = { Title: "SBCB #80 — 30 Day Fleet Data Delay", jpo_code: "", "Governance Phase": "OBJ BACKLOG", "Request Type": "NEW CAPABILITY", Title_url: "https://confluence.example/spaces/JPO/pages/539984500/SBCB-80" };
+  const mapping = inferChangeRequestImportMapping(Object.keys(raw));
+  assert.equal(mapping.ExternalIdentifier, "jpo_code");
+  assert.equal(mapping.SourceLocator, "Title_url");
+  assert.equal(mapping.RequestedRelease, "");
+  const [record] = mapChangeRequestSourceRows([raw], mapping, { sourceAsOf: "2026-08-22" });
+  assert.equal(record.canonical.ExternalIdentifier, "CONFLUENCE-539984500");
+  assert.equal(record.canonical.SourceLocator, raw.Title_url);
+  const preview = reconcileChangeRequestImport([record.canonical], [], [{ id: "type-mcp", code: "MCP" }], []);
+  assert.equal(preview.canApply, true);
+  assert.equal(preview.added, 1);
+  assert.ok(preview.rows[0].issues.some((issue) => issue.startsWith("Warning:")));
+});
