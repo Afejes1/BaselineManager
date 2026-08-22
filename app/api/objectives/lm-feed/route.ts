@@ -43,7 +43,11 @@ async function currentContext() {
     env.DB.prepare("SELECT s.feed_key,s.subject_id,f.canonical_objective_id FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id WHERE f.program_id=? AND f.external_system=?").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<StateRow>(),
     env.DB.prepare("SELECT id FROM lm_objective_feed_snapshot WHERE program_id=? AND external_system=? AND status='applied' ORDER BY observed_at DESC,created_at DESC LIMIT 1").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).first<{ id: string }>(),
   ]);
-  const prior = latest ? await env.DB.prepare("SELECT feed_key,subject_id AS objective_id,normalized_payload FROM lm_objective_feed_item WHERE snapshot_id=?").bind(latest.id).all<ExistingLmFeedItem>() : { results: [] as ExistingLmFeedItem[] };
+  // The reconciliation helper deliberately uses camelCase property names.
+  // D1 does not translate SQLite's snake_case column names, so alias every
+  // field here. Without these aliases a repeat daily file is treated as all
+  // new records and no field-level change history is recorded.
+  const prior = latest ? await env.DB.prepare("SELECT feed_key AS sourceKey,subject_id AS objectiveId,normalized_payload AS normalizedPayload FROM lm_objective_feed_item WHERE snapshot_id=?").bind(latest.id).all<ExistingLmFeedItem>() : { results: [] as ExistingLmFeedItem[] };
   return { requests: requests.results, states: states.results, prior: prior.results, latestSnapshotId: latest?.id || null };
 }
 
