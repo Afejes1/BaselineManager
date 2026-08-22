@@ -16,8 +16,9 @@ changing the Working Technical Baseline automatically.
 2. Open **Import Hub & Quality → Import Objective JSON**.
 3. Select the file and enter the source snapshot date.
 4. Review every parsed record: new, changed, unchanged, removed, and invalid.
-   Approve or skip each valid row. When evidence supports it, select an
-   existing governed LM Objective as the explicit canonical mapping.
+   Approve or skip each valid row. A valid Jira identifier automatically
+   creates or refreshes the canonical LM Objective; only an invalid or
+   duplicate identity needs analyst resolution.
 5. Inspect reported `blocks` and `blocked_by` references in the interactive
    dependency view. Unresolved references are retained rather than guessed.
 6. Apply the snapshot.
@@ -58,12 +59,9 @@ The importer accepts `rel-to` and the legacy `cel-to` spelling, and accepts both
 - A missing JPO/MCP is valid. The feed entry remains available for trend and
   dependency analysis.
 - A multi-valued JPO/MCP value is retained as multiple source associations.
-- The analyst may explicitly link an external feed subject to an existing
-  governed LM Objective when evidence supports that decision. This link does
-  not alter the governed Objective's owning Change Request or the reported
-  JPO/MCP associations.
-- A source subject may remain unlinked to a governed LM Objective indefinitely;
-  it remains a valid historical source observation.
+- A valid Jira identifier automatically creates or refreshes a canonical LM
+  Objective. A source subject without a usable Jira identifier remains a valid
+  historical observation but does not fabricate a canonical Objective.
 - A reported `blocks` or `blocked_by` value is not converted to a Government
   dependency unless the analyst records the governed dependency with a basis.
 

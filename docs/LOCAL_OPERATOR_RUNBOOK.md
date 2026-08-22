@@ -104,9 +104,10 @@ Build one Initiative completely before expanding the portfolio.
 5. Treat supplier ROM, percent complete, dates, release text, and dependencies
    as source claims—not Government-approved cost, schedule, funding, or
    progress.
-6. Explicitly link a source subject to a governed LM Objective only when the
-   evidence supports the reconciliation. The link does not create ownership or
-   funding approval.
+6. A valid Jira identity automatically creates or refreshes the canonical LM
+   Objective. Treat a blank or multi-valued JPO as a valid reported source
+   association, not an ownership or funding decision. Resolve only a genuine
+   invalid or duplicate identity before applying.
 
 The prototype reads a selected local file only. It does not fetch Lockheed
 GitLab Pages directly, keeping the workflow explicit for an air-gapped host.
