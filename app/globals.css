@@ -463,6 +463,38 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 @media(max-width:900px){.decision-color-key{grid-template-columns:1fr}.decision-color-key-items{grid-template-columns:1fr 1fr}}
 @media(max-width:520px){.decision-color-key-items{grid-template-columns:1fr}}
 
+/* Change Request workspace: navigation remains visible while dense decision
+   analysis, dependency entry, and evidence are intentionally separated. */
+.change-workspace-tabs { margin: 0 0 16px; background: #fff; border: 1px solid var(--line); padding-inline: 18px; }
+.change-workspace-tabs .tab-button { display: inline-flex; align-items: center; gap: 6px; }
+.change-workspace-tabs .tab-count { display: inline-grid; min-width: 18px; height: 18px; place-items: center; border-radius: 999px; background: #edf4f0; color: #35614c; font: 800 9px var(--font-geist-mono); }
+.change-tab-panel { display: grid; gap: 16px; }
+.change-tab-panel > .domain-section { margin: 0; }
+.change-workspace-next { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0 0; }
+.change-workspace-next .ghost-button { min-height: 34px; }
+.change-editor { margin: 0; }
+.change-editor > summary { list-style: none; }
+.change-editor > summary::-webkit-details-marker { display: none; }
+.change-editor > summary::after { content: "+"; float: right; color: #2a6448; font: 700 18px/1 var(--font-geist-mono); }
+.change-editor[open] > summary::after { content: "−"; }
+.change-editor-body { display: grid; gap: 14px; padding: 16px; }
+.change-editor-body > .modal-field { margin: 0; }
+.change-editor-body textarea, .change-editor-body input, .change-editor-body select { max-width: 100%; }
+.change-editor .search-picker { min-width: 0; }
+.change-editor .search-picker .modal-field { width: 100%; }
+.change-editor .search-picker .search { width: 100%; min-width: 0; }
+.change-editor .search-picker input { min-width: 0; }
+.dependency-editor-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr) minmax(180px, .8fr); gap: 12px; align-items: end; }
+.dependency-editor-grid > .search-picker { min-width: 0; }
+.dependency-editor-grid .modal-field { margin: 0; }
+.decision-decision-grid { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(0, 1.1fr); gap: 16px; align-items: stretch; }
+.decision-decision-grid > .domain-card, .decision-decision-grid > .domain-section { margin: 0; }
+.decision-decision-grid .decision-record { display: grid; align-content: start; }
+@media (max-width: 860px) {
+  .dependency-editor-grid, .decision-decision-grid { grid-template-columns: 1fr; }
+  .change-workspace-tabs { margin-inline: 0; }
+}
+
 /* A Change Request brief is a dedicated print document. It is deliberately
    allowed to span pages so objectives and evidence are never compressed into
    the interactive analysis view. */
