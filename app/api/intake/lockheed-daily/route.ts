@@ -50,8 +50,11 @@ function buildReview(body: IncomingBody, records: LockheedDailyRecord[], context
     const before = subject ? parsePayload(subject.normalized_payload) as ReturnType<typeof comparableLockheedDailyRecord> | null : null;
     const comparable = comparableLockheedDailyRecord(record);
     const changes = diffLockheedDailyRecords(before, comparable);
-    const issues = [...record.issues];
-    const disposition = issues.length ? "blocked" as const : !subject ? "add" as const : changes.length ? "change" as const : "unchanged" as const;
+    const issues = [...record.issues, ...record.warnings];
+    // A source row with an external identity is valuable even when its title
+    // or MCP label is incomplete. Only a missing/duplicate identity blocks
+    // materialization; the advisory findings remain on the import receipt.
+    const disposition = record.issues.length ? "blocked" as const : !subject ? "add" as const : changes.length ? "change" as const : "unchanged" as const;
     return {
       id: `lockheed-daily-${record.fileId}-${record.rowNumber}`,
       rowNumber: record.rowNumber,
