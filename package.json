@@ -14,6 +14,7 @@
     "local:start": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Start-A2OWorkspace.ps1",
     "local:backup": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Backup-A2OWorkspace.ps1",
     "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
+    "local:network-check": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2ONetworkBoundary.ps1",
     "local:verify": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1",
     "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild"
   },

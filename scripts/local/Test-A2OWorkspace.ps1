@@ -20,6 +20,8 @@ try {
     throw 'DEMO_ENABLED must be false before using program data.'
   }
 
+  & (Join-Path $PSScriptRoot 'Test-A2ONetworkBoundary.ps1')
+
   Invoke-A2OCommand {
     npx --no-install wrangler d1 migrations apply DB --local
   } 'Local database migration check failed.'

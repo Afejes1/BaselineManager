@@ -37,6 +37,12 @@ Workspace and storage location are approved for that data.
 
 Do not proceed to leadership analysis until the round trip is credible.
 
+`npm run local:verify` also checks the outbound network boundary. The running
+application makes same-origin API calls only and reads operator-selected import
+files locally. `npm ci` and Git operations are separate, operator-initiated
+network activities; use approved offline packages or an internal package source
+when working in an air-gapped environment.
+
 ## Workspace transfer between application versions
 
 Use **Workspace Transfer** for a clean deployment move or version change. This

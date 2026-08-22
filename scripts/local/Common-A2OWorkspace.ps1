@@ -4,6 +4,12 @@ $script:A2OProjectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..
 $env:WRANGLER_WRITE_LOGS = 'false'
 $env:WRANGLER_LOG_PATH = Join-Path $script:A2OProjectRoot '.wrangler\logs'
 $env:npm_config_cache = Join-Path $script:A2OProjectRoot '.npm-cache'
+# Do not make optional npm audit, funding, or update-notification calls during
+# local setup. Package acquisition is still an explicit operator action.
+$env:npm_config_audit = 'false'
+$env:npm_config_fund = 'false'
+$env:npm_config_update_notifier = 'false'
+$env:npm_config_prefer_offline = 'true'
 
 function Get-A2OProjectRoot {
   return $script:A2OProjectRoot

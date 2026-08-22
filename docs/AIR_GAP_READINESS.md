@@ -18,6 +18,20 @@ This application is being matured for an eventual JSF air-gapped deployment. The
   supplier data.
 - A versioned Workspace Transfer Package carries the complete application-owned dataset, relationships, audit history, and attached evidence between compatible deployments. It never carries credentials or destination access roles.
 
+## Outbound network boundary
+
+The local operator runtime is intentionally self-contained:
+
+- The browser uses same-origin `/api/...` routes only. There are no configured analytics, telemetry, webhooks, remote scripts, WebSockets, or direct calls to GitLab, Confluence, or another external service.
+- Imports read files selected by the operator. Source URLs supplied by Lockheed Martin or other parties are retained as evidence locators; they are not fetched by the application.
+- Local database and object state remain under the project-local `.wrangler/state` directory. The Vite development server binds to `127.0.0.1`.
+- The application uses system font stacks. It does not require Google Fonts or another remote font service.
+- `npm run local:network-check` scans application source and runtime configuration for external URL literals and common outbound client APIs. `npm run local:verify` runs that check automatically.
+
+Two operator-initiated activities can use a network when the workstation is connected: `npm ci` obtains packages if they are not already available locally, and Git clone/pull/push contacts the configured source-control remote. These are not application runtime calls. For an air-gapped deployment, carry an approved dependency cache or packaged `node_modules` set (or use an approved internal package repository), and transfer source updates through the approved media/process.
+
+The hosted demonstration uses the hosting platform by design. It is separate from the local AWS Workspace operator runtime and is not evidence of an outbound call in the local application.
+
 ## Runtime boundary still requiring an environment decision
 
 The hosted build currently uses Cloudflare D1-compatible SQLite, R2-style document storage, and the hosting platform's authenticated-user headers. An air-gapped deployment must supply equivalent adapters:
