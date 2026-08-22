@@ -13,6 +13,10 @@ export type PlatformRecord = {
   description: string | null;
   installationLocation: string | null;
   countryCode: string | null;
+  /** True when this Platform is materialized from A2O Resource. */
+  isA2OResourcePlatform: boolean;
+  /** The source Tier that describes an A2O Resource Platform. */
+  reportedTierName: string | null;
   directOccurrenceCount: number;
   directProductCount: number;
   directReleaseCount: number;

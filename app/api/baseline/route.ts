@@ -8,7 +8,7 @@ import { audit, ensureActor, requireWriter } from "../../../lib/governance-serve
 const nowIso = () => new Date().toISOString();
 export type CurrentBaselineRecord = { source_row_id: string | null; release_id: string | null; product_id: string | null; configuration_node_id: string | null; deployment_id: string | null; revision: number; projection_payload: string | null; lifecycle_status: string };
 type Current = CurrentBaselineRecord;
-type Ids = { releaseId: string; baselineId: string; baselineRevision: number; baselineParentId: string | null; baselineIsNew: boolean; tierId: string; resourceId: string; hostId: string; productId: string | null; supplierId: string | null; deploymentId: string | null };
+type Ids = { releaseId: string; baselineId: string; baselineRevision: number; baselineParentId: string | null; baselineIsNew: boolean; tierId: string; resourceId: string; hostId: string; resourcePlatformId: string; productId: string | null; supplierId: string | null; deploymentId: string | null };
 
 export type BaselineResolver = {
   releases: Map<string, string>;
@@ -18,13 +18,14 @@ export type BaselineResolver = {
   tiers: Map<string, string>;
   resources: Map<string, string>;
   hosts: Map<string, string>;
+  resourcePlatforms: Map<string, string>;
   products: Map<string, string>;
   suppliers: Map<string, string>;
   deployments: Map<string, string>;
 };
 
 export async function createBaselineResolver(db: D1Database): Promise<BaselineResolver> {
-  const [releases, sets, nodes, products, aliases, suppliers, deployments] = await Promise.all([
+  const [releases, sets, nodes, products, aliases, suppliers, deployments, resourcePlatforms] = await Promise.all([
     db.prepare("SELECT id,normalized_name FROM release WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
     db.prepare("SELECT id,release_id,revision_number,approval_status FROM configuration_baseline WHERE program_id=? ORDER BY revision_number DESC,updated_at DESC").bind(BASELINE_PROGRAM_ID).all<{ id: string; release_id: string; revision_number: number; approval_status: string }>(),
     db.prepare("SELECT id,parent_id,node_type,normalized_name FROM configuration_node WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; parent_id: string | null; node_type: string; normalized_name: string }>(),
@@ -32,6 +33,7 @@ export async function createBaselineResolver(db: D1Database): Promise<BaselineRe
     db.prepare("SELECT entity_kind,entity_id,normalized_alias FROM canonical_alias WHERE program_id=? AND namespace='name' AND status='accepted'").bind(BASELINE_PROGRAM_ID).all<{ entity_kind: string; entity_id: string; normalized_alias: string }>(),
     db.prepare("SELECT id,normalized_name FROM organization WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
     db.prepare("SELECT id,product_id,configuration_node_id FROM deployment WHERE program_id=? AND environment='unknown' AND site='unknown'").bind(BASELINE_PROGRAM_ID).all<{ id: string; product_id: string; configuration_node_id: string }>(),
+    db.prepare("SELECT id,configuration_node_id FROM platform WHERE program_id=? AND configuration_node_id IS NOT NULL").bind(BASELINE_PROGRAM_ID).all<{ id: string; configuration_node_id: string }>(),
   ]);
   const workingSets = new Map<string, { id: string; revision: number }>();
   const latestSets = new Map<string, { id: string; revision: number }>();
@@ -55,7 +57,7 @@ export async function createBaselineResolver(db: D1Database): Promise<BaselineRe
   }
   return {
     releases: new Map(releases.results.map((item) => [item.normalized_name, item.id])), workingSets, latestSets, underReviewReleases,
-    tiers, resources, hosts, products: productMap, suppliers: supplierMap,
+    tiers, resources, hosts, resourcePlatforms: new Map(resourcePlatforms.results.map((item) => [item.configuration_node_id, item.id])), products: productMap, suppliers: supplierMap,
     deployments: new Map(deployments.results.map((item) => [`${item.product_id}|${item.configuration_node_id}`, item.id])),
   };
 }
@@ -80,6 +82,11 @@ async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolv
   const tierKey = normalized(tierName); const tierId = resolver ? resolver.tiers.get(tierKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id IS NULL AND node_type='tier' AND normalized_name=?", BASELINE_PROGRAM_ID, tierKey) || crypto.randomUUID(); if (resolver) resolver.tiers.set(tierKey, tierId);
   const resourceKey = `${tierId}|${normalized(resourceName)}`; const resourceId = resolver ? resolver.resources.get(resourceKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id=? AND node_type='resource' AND normalized_name=?", BASELINE_PROGRAM_ID, tierId, normalized(resourceName)) || crypto.randomUUID(); if (resolver) resolver.resources.set(resourceKey, resourceId);
   const hostKey = `${resourceId}|${normalized(hostName)}`; const hostId = resolver ? resolver.hosts.get(hostKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM configuration_node WHERE program_id=? AND parent_id=? AND node_type='host' AND normalized_name=?", BASELINE_PROGRAM_ID, resourceId, normalized(hostName)) || crypto.randomUUID(); if (resolver) resolver.hosts.set(hostKey, hostId);
+  // In the A2O model Resource is the Platform. Tier qualifies that Platform;
+  // host remains the lower-level deployment node beneath it.
+  const generatedResourcePlatformId = `a2o-resource-platform-${resourceId}`;
+  const resourcePlatformId = resolver ? resolver.resourcePlatforms.get(resourceId) || generatedResourcePlatformId : await firstId(db, "SELECT id FROM platform WHERE program_id=? AND configuration_node_id=?", BASELINE_PROGRAM_ID, resourceId) || generatedResourcePlatformId;
+  if (resolver) resolver.resourcePlatforms.set(resourceId, resourcePlatformId);
   const productName = textCell(row.LongName) || textCell(row.ShortName);
   // Baseline Record editing assigns a Product; it does not rename the Product
   // already linked to other releases. Canonical renames use the Product editor.
@@ -87,7 +94,7 @@ async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolv
   const supplierName = textCell(row.OEM);
   const supplierKey = normalized(supplierName); const supplierId = supplierName ? resolver ? resolver.suppliers.get(supplierKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM organization WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, supplierKey) || await firstId(db, "SELECT entity_id AS id FROM canonical_alias WHERE program_id=? AND entity_kind='organization' AND namespace='name' AND status='accepted' AND normalized_alias=?", BASELINE_PROGRAM_ID, supplierKey) || crypto.randomUUID() : null; if (resolver && supplierId) resolver.suppliers.set(supplierKey, supplierId);
   const deploymentKey = productId ? `${productId}|${hostId}` : ""; const deploymentId = productId ? resolver ? resolver.deployments.get(deploymentKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM deployment WHERE program_id=? AND product_id=? AND configuration_node_id=? AND environment='unknown' AND site='unknown'", BASELINE_PROGRAM_ID, productId, hostId) || crypto.randomUUID() : null; if (resolver && deploymentId) resolver.deployments.set(deploymentKey, deploymentId);
-  return { releaseId, baselineId, baselineRevision, baselineParentId: editableSet ? null : latestSet?.id || null, baselineIsNew, tierId, resourceId, hostId, productId, supplierId, deploymentId };
+  return { releaseId, baselineId, baselineRevision, baselineParentId: editableSet ? null : latestSet?.id || null, baselineIsNew, tierId, resourceId, hostId, resourcePlatformId, productId, supplierId, deploymentId };
 }
 
 /** Materialize a database-authoritative record. JSON persists only as a legacy fallback. */
@@ -102,6 +109,10 @@ export async function materializeBaselineRecord(db: D1Database, occurrenceId: st
     db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.tierId, BASELINE_PROGRAM_ID, null, "tier", tierName, normalized(tierName), now, now),
     db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.resourceId, BASELINE_PROGRAM_ID, ids.tierId, "resource", resourceName, normalized(resourceName), now, now),
     db.prepare("INSERT INTO configuration_node (id,program_id,parent_id,node_type,name,normalized_name,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,updated_at=excluded.updated_at").bind(ids.hostId, BASELINE_PROGRAM_ID, ids.resourceId, "host", hostName, normalized(hostName), now, now),
+    // A source-derived Resource Platform is intentionally separate from the
+    // governed ALOU/OCK/OBK/PMA hierarchy.  Its identity is the Resource node;
+    // Tier is retained as the reported descriptor, not a second Platform.
+    db.prepare("INSERT INTO platform (id,program_id,parent_id,configuration_node_id,platform_type,code,normalized_code,name,normalized_name,status,description,installation_location,country_code,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(configuration_node_id) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.resourcePlatformId, BASELINE_PROGRAM_ID, null, ids.resourceId, "other", `A2O-RESOURCE-${ids.resourceId}`, normalized(`A2O-RESOURCE-${ids.resourceId}`), resourceName, normalized(resourceName), "active", `A2O Resource Platform · Tier descriptor: ${tierName}`, null, null, actorId || null, now, now),
   ];
   if (ids.baselineIsNew && ids.baselineParentId) statements.push(
     db.prepare("INSERT OR IGNORE INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,created_at,updated_at) SELECT 'clone-' || ? || '-' || id,program_id,?,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,state_notes,?,? FROM baseline_node_state WHERE baseline_id=?").bind(ids.baselineId, ids.baselineId, now, now, ids.baselineParentId),
@@ -121,6 +132,11 @@ export async function materializeBaselineRecord(db: D1Database, occurrenceId: st
     db.prepare("INSERT INTO baseline_node_state (id,program_id,baseline_id,configuration_node_id,source_row_id,storage_type,storage_gb,cpu_cores,ram_gb,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,configuration_node_id) DO UPDATE SET source_row_id=excluded.source_row_id,storage_type=excluded.storage_type,storage_gb=excluded.storage_gb,cpu_cores=excluded.cpu_cores,ram_gb=excluded.ram_gb,updated_at=excluded.updated_at").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, ids.baselineId, ids.hostId, sourceRowId, textCell(row.HW_Storage_Type), numberCell(row["HW_Storage (GB)"]), numberCell(row.HW_CPU_CORES), numberCell(row["HW_RAM (GB)"]), now, now),
   );
   if (ids.deploymentId) statements.push(db.prepare("INSERT INTO baseline_deployment_state (id,program_id,baseline_id,deployment_id,source_row_id,presence,status,containerized,container_technology,container_type,language,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_id,deployment_id) DO UPDATE SET source_row_id=excluded.source_row_id,containerized=excluded.containerized,container_technology=excluded.container_technology,container_type=excluded.container_type,language=excluded.language,updated_at=excluded.updated_at").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, ids.baselineId, ids.deploymentId, sourceRowId, "present", status, textCell(row.Containerized), textCell(row["Container Technology"]), textCell(row["Container Type"]), textCell(row["SW Language"]), now, now));
+  statements.push(
+    // Reimports refresh the reported A2O mapping. A Government-assessed or
+    // confirmed fielding assignment remains intact until an analyst changes it.
+    db.prepare("INSERT INTO platform_baseline_assignment (id,program_id,platform_id,baseline_occurrence_id,release_id,assignment_role,confidence,review_status,source_reference,source_as_of,reviewed_by_user_id,reviewed_at,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id,assignment_role) DO UPDATE SET platform_id=CASE WHEN platform_baseline_assignment.confidence='reported' THEN excluded.platform_id ELSE platform_baseline_assignment.platform_id END,release_id=excluded.release_id,source_reference=CASE WHEN platform_baseline_assignment.confidence='reported' THEN excluded.source_reference ELSE platform_baseline_assignment.source_reference END,source_as_of=CASE WHEN platform_baseline_assignment.confidence='reported' THEN excluded.source_as_of ELSE platform_baseline_assignment.source_as_of END,updated_at=excluded.updated_at").bind(crypto.randomUUID(), BASELINE_PROGRAM_ID, ids.resourcePlatformId, occurrenceId, ids.releaseId, "primary", "reported", "not_reviewed", `A2O Tech Stack · Tier: ${tierName} · Resource Platform: ${resourceName}`, null, null, null, actorId || null, now, now),
+  );
   statements.push(
     // Capability text stays staged; only a user resolution can create Product-Capability.
     db.prepare("INSERT INTO baseline_record_extension (baseline_occurrence_id,source_key,notes,capability_notes,notes_1,notes_2,notes_3,notes_4,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id) DO UPDATE SET source_key=excluded.source_key,notes=excluded.notes,capability_notes=excluded.capability_notes,notes_1=excluded.notes_1,notes_2=excluded.notes_2,notes_3=excluded.notes_3,notes_4=excluded.notes_4,updated_at=excluded.updated_at").bind(occurrenceId, textCell(row["#"]), textCell(row.Notes), textCell(row["Technical Capability Satisfied by this SW/Tech - Notes"]), textCell(row["Notes.1"]), textCell(row["Notes.2"]), textCell(row["Notes.3"]), textCell(row["Notes.4"]), now, now),

@@ -34,13 +34,13 @@ export default function ConfigurationPage() {
   return (
     <DomainPageShell
       title="Configuration Nodes"
-      subtitle="Tier, resource, and host combinations reported in the baseline"
+      subtitle="Tier descriptor, Resource Platform, and host combinations reported in the baseline"
       releaseScope={releaseLens || "All releases"}
       contextMode="filter"
       actions={(<>
         <label className="search" style={{ width: "280px" }}>
           <span>⌕</span>
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tier, resource, or host" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tier, Resource Platform, or host" />
         </label><button className="primary-button" type="button" onClick={() => setCreating(true)}>＋ New Configuration Node</button></>)}
     >
       <section className="summary">
@@ -51,7 +51,7 @@ export default function ConfigurationPage() {
 
       <section className="domain-section"><div className="section-heading"><div><span className="eyebrow">CANONICAL HIERARCHY</span><h3>Governed Configuration Nodes</h3></div><span>{master.portfolio.configurationNodes.length}</span></div><div className="domain-list">{master.portfolio.configurationNodes.filter((item) => !query.trim() || `${item.name} ${item.code || ""} ${item.nodeType}`.toLowerCase().includes(query.trim().toLowerCase())).map((item) => <article className="domain-card" key={item.id}><span className={`status-pill status-${item.lifecycleStatus}`}>{item.lifecycleStatus}</span><h3><Link href={`/configuration/${encodeURIComponent(item.id)}`}>{item.code ? `${item.code} · ` : ""}{item.name}</Link></h3><p>{item.description || "Description not recorded."}</p><p className="entity-meta">{item.nodeType} · Parent {master.portfolio.configurationNodes.find((parent) => parent.id === item.parentId)?.name || "none"}</p><p className="entity-actions"><Link className="mini-action" href={`/configuration/${encodeURIComponent(item.id)}`}>Open Configuration Node</Link></p></article>)}</div></section>
       <section className="domain-section">
-        <div className="section-heading"><div><span className="eyebrow">RELEASE-SPECIFIC PLACEMENTS</span><h3>Reported tier, resource, and host combinations</h3></div><span>{filtered.length} / {nodes.length}</span></div>
+        <div className="section-heading"><div><span className="eyebrow">RELEASE-SPECIFIC PLACEMENTS</span><h3>Reported Tier descriptor, Resource Platform, and host combinations</h3></div><span>{filtered.length} / {nodes.length}</span></div>
         <section className="domain-list">
           {filtered.map((node) => (
             <article key={node.id} className="domain-card">

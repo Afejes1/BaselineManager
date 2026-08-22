@@ -328,9 +328,10 @@ export const managedDeploymentProfiles = sqliteTable("managed_deployment_profile
   index("managed_deployment_profile_release_product_ix").on(t.programId, t.releaseId, t.productId),
 ]);
 
-// Platform is the Government's stable installation/fielding hierarchy. ALOU,
-// OCK, OBK, and PMA are governed types, while configuration_node remains the
-// lower-level physical/logical placement spine used by source materialization.
+// Platform is a first-class location/fielding context. ALOU, OCK, OBK, and
+// PMA are Government-governed types. A2O Resource is also materialized as a
+// source-derived Platform, with Tier retained as its reported descriptor;
+// configuration_node remains the source placement spine beneath it.
 export const platforms = sqliteTable("platform", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
