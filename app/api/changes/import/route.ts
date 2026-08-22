@@ -81,7 +81,11 @@ function review(body: IncomingBody, incoming: ReturnType<typeof makeIncoming>, d
     const sourceChanges = objectDiff(parseJsonRecord(sourceState?.normalized_payload), parseJsonRecord(sourceJson(rawByRow.get(item.rowNumber) || {}))).filter((change) => !canonicalChanges.some((candidate) => candidate.field === change.field));
     const issues = [...item.issues];
     if (selected?.sourceAsOf && item.row.SourceAsOf && selected.sourceAsOf > item.row.SourceAsOf) issues.push(`Source date ${item.row.SourceAsOf} is older than the current ${selected.sourceAsOf} observation.`);
-    const disposition = issues.length ? "blocked" as const : !selected ? "add" as const : canonicalChanges.length || sourceChanges.length ? "change" as const : "unchanged" as const;
+    // Advisory source-taxonomy findings are visible to the analyst but do not
+    // turn an otherwise identifiable, valid external record into a manual
+    // mapping exercise.  Only identity, date, duplicate, or stale-snapshot
+    // conflicts stop the package.
+    const disposition = issues.some((issue) => !issue.startsWith("Warning:")) ? "blocked" as const : !selected ? "add" as const : canonicalChanges.length || sourceChanges.length ? "change" as const : "unchanged" as const;
     return { id: `change-import-row-${item.rowNumber}`, rowNumber: item.rowNumber, sourceKey: item.row.ExternalIdentifier, title: item.row.Title || "Untitled Change Request", detail: `${item.row.ExternalSystem} · ${item.row.SourceAsOf || "source date not supplied"}`, disposition, issues, changes: [...canonicalChanges, ...sourceChanges], proposedTargetId: selected?.id || null, proposedTargetLabel: selected ? `${selected.externalIdentifier} · ${selected.title}` : null, defaultDecision: disposition === "blocked" ? "skip" as const : "approve" as const };
   });
   return { preview, items };

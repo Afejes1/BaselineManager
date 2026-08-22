@@ -33,6 +33,7 @@ export type ChangeReferenceRelease = { id: string; name: string; code?: string |
 const clean = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ");
 export const normalizedChangeImportValue = (value: unknown) => clean(value).toLocaleLowerCase("en-US");
 const normalized = normalizedChangeImportValue;
+const headerKey = (value: unknown) => normalized(value).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 /**
  * MCP/DSOR is a cross-source identity.  A Confluence row, a Lockheed daily
  * row, and a JPO reference can therefore all refer to the same Change
@@ -48,8 +49,11 @@ const SOURCE_CONTROLLED_CHANGE_REQUEST_FIELDS: ChangeRequestImportColumn[] = ["T
 const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
 
 export function inferChangeRequestImportMapping(headers: string[]): ChangeRequestImportMapping {
-  const byName = new Map(headers.map((header) => [normalized(header), header]));
-  return Object.fromEntries(CHANGE_REQUEST_IMPORT_COLUMNS.map((column) => [column, aliases[column].map(normalized).map((item) => byName.get(item)).find(Boolean) || ""])) as ChangeRequestImportMapping;
+  // Confluence scripts commonly emit snake_case headers (for example
+  // jpo_code and Title_url).  Treat separators as presentation, not schema,
+  // so a normal delivered CSV maps without analyst intervention.
+  const byName = new Map(headers.map((header) => [headerKey(header), header]));
+  return Object.fromEntries(CHANGE_REQUEST_IMPORT_COLUMNS.map((column) => [column, aliases[column].map(headerKey).map((item) => byName.get(item)).find(Boolean) || ""])) as ChangeRequestImportMapping;
 }
 
 function valueFor(raw: Record<string, unknown>, header: string) {
@@ -64,9 +68,24 @@ function inferredType(identifier: string, supplied: string) {
   return identifier.toUpperCase().startsWith("DSOR") ? "DSOR" : identifier.toUpperCase().startsWith("MCP") ? "MCP" : supplied || "OTHER";
 }
 
+/**
+ * Some dashboard rows have no MCP/DSOR/JPO.  A row-specific Confluence page
+ * is still a stable external identity, so retain it instead of requiring an
+ * analyst to invent a placeholder Change Request.  A row with neither an
+ * identifier nor a row-specific locator remains a genuine identity exception.
+ */
+function identifierFromSourceLocator(sourceLocator: string) {
+  const locator = clean(sourceLocator);
+  if (!locator) return "";
+  const confluencePage = locator.match(/\/pages\/(\d+)(?:\/|$|[?#])/i)?.[1];
+  return confluencePage ? `CONFLUENCE-${confluencePage}` : `SOURCE-${locator}`;
+}
+
 export function mapChangeRequestSourceRows(rawRows: Record<string, unknown>[], mapping: ChangeRequestImportMapping, defaults: { externalSystem?: string; sourceAsOf?: string } = {}): ChangeRequestSourceRecord[] {
   return rawRows.map((raw, index) => {
-    const externalIdentifier = valueFor(raw, mapping.ExternalIdentifier);
+    const sourceLocator = valueFor(raw, mapping.SourceLocator);
+    const explicitIdentifier = valueFor(raw, mapping.ExternalIdentifier);
+    const externalIdentifier = explicitIdentifier || identifierFromSourceLocator(sourceLocator);
     const suppliedType = valueFor(raw, mapping.Type);
     const canonical = normalizeChangeRequestImportRow({
       Type: inferredType(externalIdentifier, suppliedType),
@@ -75,7 +94,7 @@ export function mapChangeRequestSourceRows(rawRows: Record<string, unknown>[], m
       Title: valueFor(raw, mapping.Title),
       ExternalStatus: valueFor(raw, mapping.ExternalStatus),
       ExternalOwner: valueFor(raw, mapping.ExternalOwner),
-      SourceLocator: valueFor(raw, mapping.SourceLocator),
+      SourceLocator: sourceLocator,
       SourceAsOf: valueFor(raw, mapping.SourceAsOf) || defaults.sourceAsOf || "",
       RequestedRelease: valueFor(raw, mapping.RequestedRelease),
     });
@@ -124,6 +143,7 @@ export function reconcileChangeRequestImport(incoming: ChangeRequestImportRow[],
     // source omits them.  Only a missing identity or invalid date blocks a
     // row from being safely materialized.
     if (!row.ExternalIdentifier) issues.push("ExternalIdentifier is required.");
+    if (row.ExternalIdentifier.startsWith("CONFLUENCE-") || row.ExternalIdentifier.startsWith("SOURCE-")) issues.push("Warning: No MCP/DSOR/JPO identifier was supplied; the row-specific source locator is being used as its external identity.");
     if (row.SourceAsOf && !validDate(row.SourceAsOf)) issues.push("SourceAsOf must use YYYY-MM-DD.");
     if (!type) issues.push(`Warning: Change Request type '${row.Type || "blank"}' will be created as an external reference type.`);
     if (row.RequestedRelease && !release) issues.push(`Warning: Requested Release '${row.RequestedRelease}' will be retained as a source claim; a recognized Release label is added automatically.`);
