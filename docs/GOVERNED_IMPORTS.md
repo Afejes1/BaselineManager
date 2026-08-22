@@ -10,8 +10,10 @@ uses the same operating sequence:
 2. Parse the file with a source-specific adapter.
 3. Display every source row as **new**, **changed**, **unchanged**, or
    **blocked**.
-4. Display the proposed canonical match and field-level differences.
-5. Allow the analyst to approve, skip, or override the proposed match.
+4. Display field-level differences and any identity findings.
+5. Allow the analyst to approve or skip a source row. A valid external identity
+   creates or refreshes its canonical object automatically; only invalid or
+   duplicate identities need resolution.
 6. Apply all approved rows in one database transaction.
 7. Retain the source receipt, normalized values, decisions, findings, and
    target identifiers in import history.
@@ -24,9 +26,9 @@ snapshot is a no-op.
 
 | Adapter | Input | Canonical target | Identity and update rule |
 | --- | --- | --- | --- |
-| Confluence Change Request dashboard | CSV or XLSX | Change Request | `jpo code` / external identifier under the Confluence source system. The analyst may override a proposed match. Approved rows update external-source fields only. Government priority, funding decision, effects, dependencies, estimates, and analysis are retained. |
-| Lockheed Objective feed | JSON | External LM feed subject, optionally reconciled to a governed LM Objective | Root JSON key is the supplier dependency identity. Jira is an additional supplier identifier. A governed Objective link is explicit; JPO references do not establish ownership. Daily snapshots and field deltas are retained. |
-| Lockheed daily delivery | Multi-file CSV or XLSX (`CAPES`, `JIRA`, `MCPS`, `OBJS`) | Stable external source subject with an optional Capability, Change Request, or Objective trace link | Source system + dataset + source key. Every applied delivery retains raw/normalized observations and per-field deltas. Supplier values never overwrite governed analysis. Missing rows are not deletions. |
+| Confluence Change Request dashboard | CSV or XLSX | Change Request | `jpo code` / external identifier identifies a canonical Change Request. Approved rows create or refresh external-source fields only. Government priority, funding decision, effects, dependencies, estimates, and analysis are retained. |
+| Lockheed Objective feed | JSON | External LM feed subject and LM Objective | Root JSON key remains the supplier dependency identity. A valid Jira identifier creates or refreshes a canonical LM Objective. JPO references create reported Change Request links without ownership. Daily snapshots and field deltas are retained. |
+| Lockheed daily delivery | Multi-file CSV or XLSX (`CAPES`, `JIRA`, `MCPS`, `OBJS`) | Stable external source subject plus Capability, Change Request, or LM Objective | Source system + dataset + source key retains the source subject; a valid external identity creates or refreshes the corresponding canonical object. Every applied delivery retains raw/normalized observations and per-field deltas. Supplier values never overwrite governed analysis. Missing rows are not deletions. |
 | A2O Tech Stack exchange | Exact 24-column XLSX | Baseline record and normalized baseline relationships | `ReleaseName + #`; when `#` is blank, a release-scoped product/placement identity is used. Approved rows materialize the baseline. Skipped rows remain in the intake receipt. Missing rows are reported and are not deleted or voided. Additional columns, such as `CSCI`, are flagged for governance and never silently dropped into an unrelated field. |
 
 ## Import Hub routing
@@ -75,7 +77,7 @@ A new adapter must provide:
 - source-system identifier and source-date rule;
 - file parser and column/field mapping;
 - deterministic identity candidates;
-- target choices for analyst override;
+- an explicit, exception-only resolution flow for invalid or duplicate identity;
 - source-controlled fields that may be updated;
 - blocking and advisory validation rules;
 - immutable raw and normalized receipts;

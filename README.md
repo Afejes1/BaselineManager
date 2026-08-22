@@ -98,9 +98,10 @@ is complete.
 `jpo` is a reported external MCP/JPO reference. It may be blank or contain
 multiple comma-separated values. `blocks` and `blocked_by` are reported
 dependency references; unknown targets remain unresolved. These values do not
-create Government ownership, funding approval, or an Objective owner. Use an
-explicit analyst link when a source subject is reconciled to a governed LM
-Objective.
+create Government ownership, funding approval, or an Objective owner. A valid
+Jira identity automatically creates or refreshes the canonical LM Objective;
+an invalid or duplicate identity is the only case that needs analyst
+resolution.
 
 Synthetic fixtures and automated tests are maintained on the full development
 branch. They are intentionally excluded from this AWS Workspace package.
@@ -109,8 +110,9 @@ branch. They are intentionally excluded from this AWS Workspace package.
 
 Open **Import Hub & Quality → Import daily delivery** to load the delivered CAPES,
 Jira, MCP/DSOR, and Objective CSV/XLSX files together. The analyst verifies the
-dataset classification, row disposition, and optional governed trace link
-before applying. Each accepted source observation is retained by date and
+dataset classification and row disposition before applying. Each accepted row
+automatically creates or refreshes its canonical Capability, Change Request, or
+LM Objective from its valid external identity. Each source observation is retained by date and
 compared field by field with the preceding observation. Supplier schedule,
 ROM, completion, release, status, and dependency values do not overwrite
 Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md`.
@@ -120,9 +122,10 @@ Government analysis. See `docs/LOCKHEED_DAILY_DELIVERY.md`.
 The **Import Hub & Quality** page is the first stop for the Confluence Change
 Request export, Lockheed Objective JSON feed, Lockheed daily-delivery files,
 and A2O Tech Stack workbook. Each uses a common analyst-review control. Preview every row,
-confirm or override the proposed canonical match, skip questionable rows, and
-then apply approved records. Imports retain their source receipts and do not
-overwrite Government analysis. See
+approve or skip the source changes, and then apply the approved records. A
+valid external identifier creates or refreshes its canonical object
+automatically; a genuine invalid or duplicate identity is blocked for analyst
+resolution. Imports retain their source receipts and do not overwrite Government analysis. See
 [docs/GOVERNED_IMPORTS.md](docs/GOVERNED_IMPORTS.md).
 
 ## Verification
