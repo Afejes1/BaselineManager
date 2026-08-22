@@ -254,15 +254,21 @@ CREATE UNIQUE INDEX `work_package_initiative_code_v2_uq` ON `work_package` (`ini
 CREATE INDEX `work_package_initiative_status_ix` ON `work_package` (`initiative_id`,`status`,`due_date`);
 CREATE INDEX `work_package_objective_status_ix` ON `work_package` (`objective_id`,`status`,`due_date`);
 CREATE INDEX `work_package_request_ix` ON `work_package` (`change_request_id`,`status`);
+INSERT INTO `work_package` SELECT * FROM `work_package_import_backup`;
+-- Preserve pre-existing work-package rows during canonicalization.  Some
+-- legacy rows retained a parent from a different Initiative; the forward
+-- guard must not prevent their historical import.  New or re-parented
+-- Initiative work is governed immediately after the data is materialized.
 CREATE TRIGGER `work_package_parent_same_initiative_insert`
 BEFORE INSERT ON `work_package`
-WHEN NEW.`parent_id` IS NOT NULL AND NOT EXISTS (SELECT 1 FROM `work_package` p WHERE p.`id`=NEW.`parent_id` AND p.`initiative_id`=NEW.`initiative_id`)
+WHEN NEW.`parent_id` IS NOT NULL AND NEW.`initiative_id` IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM `work_package` p WHERE p.`id`=NEW.`parent_id` AND p.`initiative_id`=NEW.`initiative_id`)
 BEGIN SELECT RAISE(ABORT, 'Work package parent must belong to the same Initiative'); END;
 CREATE TRIGGER `work_package_parent_same_initiative_update`
 BEFORE UPDATE OF `parent_id`,`initiative_id` ON `work_package`
-WHEN NEW.`parent_id` IS NOT NULL AND NOT EXISTS (SELECT 1 FROM `work_package` p WHERE p.`id`=NEW.`parent_id` AND p.`initiative_id`=NEW.`initiative_id`)
+WHEN NEW.`parent_id` IS NOT NULL AND NEW.`initiative_id` IS NOT NULL
+ AND NOT EXISTS (SELECT 1 FROM `work_package` p WHERE p.`id`=NEW.`parent_id` AND p.`initiative_id`=NEW.`initiative_id`)
 BEGIN SELECT RAISE(ABORT, 'Work package parent must belong to the same Initiative'); END;
-INSERT INTO `work_package` SELECT * FROM `work_package_import_backup`;
 
 CREATE TABLE `work_package_objective` (
   `id` text PRIMARY KEY NOT NULL, `work_package_id` text NOT NULL, `objective_id` text NOT NULL, `relationship` text DEFAULT 'supports' NOT NULL,
