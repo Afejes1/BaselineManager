@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ensureActor } from "../../../lib/governance-server";
-import { saveDeploymentProfile, saveHostProfile, topologyExtensions } from "../../../lib/topology-server";
+import { removeInfrastructureConnection, removeInfrastructureInstallation, saveDeploymentProfile, saveHostProfile, saveInfrastructureConnection, saveInfrastructureInstallation, saveInfrastructureNode, saveReleaseInfrastructureNode, topologyExtensions } from "../../../lib/topology-server";
 
 export async function GET(request: Request) {
   try {
@@ -17,7 +17,15 @@ export async function POST(request: Request) {
     const actor = await ensureActor(env.DB, request);
     const body = await request.json() as Record<string, unknown>;
     const action = typeof body.action === "string" ? body.action : "";
-    const id = action === "save_host_profile" ? await saveHostProfile(env.DB, actor, body) : action === "save_deployment_profile" ? await saveDeploymentProfile(env.DB, actor, body) : null;
+    const id = action === "save_host_profile" ? await saveHostProfile(env.DB, actor, body)
+      : action === "save_deployment_profile" ? await saveDeploymentProfile(env.DB, actor, body)
+      : action === "save_infrastructure_node" ? await saveInfrastructureNode(env.DB, actor, body)
+      : action === "save_release_infrastructure_node" ? await saveReleaseInfrastructureNode(env.DB, actor, body)
+      : action === "save_infrastructure_installation" ? await saveInfrastructureInstallation(env.DB, actor, body)
+      : action === "remove_infrastructure_installation" ? await removeInfrastructureInstallation(env.DB, actor, body)
+      : action === "save_infrastructure_connection" ? await saveInfrastructureConnection(env.DB, actor, body)
+      : action === "remove_infrastructure_connection" ? await removeInfrastructureConnection(env.DB, actor, body)
+      : null;
     if (!id) return Response.json({ error: "Unknown topology action." }, { status: 400 });
     return Response.json({ ok: true, id });
   } catch (error) {

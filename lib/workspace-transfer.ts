@@ -6,7 +6,8 @@ import { schema } from "../db/schema";
 import type { DocumentBucket } from "./governance-server";
 
 export const WORKSPACE_PACKAGE_TYPE = "a2o.workspace-transfer";
-export const WORKSPACE_PACKAGE_VERSION = "1.0.0";
+export const WORKSPACE_PACKAGE_VERSION = "2.0.0";
+const LEGACY_WORKSPACE_PACKAGE_VERSION = "1.0.0";
 export const MAX_WORKSPACE_PACKAGE_BYTES = 100 * 1024 * 1024;
 
 type Database = typeof env.DB;
@@ -16,7 +17,7 @@ type TransferRow = Record<string, unknown>;
 
 export type WorkspacePackageManifest = {
   packageType: typeof WORKSPACE_PACKAGE_TYPE;
-  packageVersion: typeof WORKSPACE_PACKAGE_VERSION;
+  packageVersion: string;
   applicationVersion: string;
   exportedAt: string;
   program: { id: string; name: string; description: string | null; timezone: string };
@@ -69,6 +70,10 @@ const tableOrder: TransferTableName[] = [
   "platforms",
   "platformOrganizations",
   "platformBaselineAssignments",
+  "infrastructureNodes",
+  "releaseInfrastructureNodes",
+  "infrastructureProductInstallations",
+  "infrastructureConnections",
   "releaseProfiles",
   "changeRequestTypes",
   "changeRequests",
@@ -123,6 +128,7 @@ const selfParentColumns: Partial<Record<TransferTableName, string>> = {
   configurationNodes: "parent_id",
   capabilities: "parent_id",
   platforms: "parent_id",
+  releaseInfrastructureNodes: "parent_state_id",
   workPackages: "parent_id",
 };
 
@@ -231,7 +237,7 @@ export async function exportWorkspacePackage(db: Database, bucket: DocumentBucke
 function isManifest(value: unknown): value is WorkspacePackageManifest {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<WorkspacePackageManifest>;
-  return candidate.packageType === WORKSPACE_PACKAGE_TYPE && candidate.packageVersion === WORKSPACE_PACKAGE_VERSION && Array.isArray(candidate.tables) && Array.isArray(candidate.documents);
+  return candidate.packageType === WORKSPACE_PACKAGE_TYPE && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) && Array.isArray(candidate.tables) && Array.isArray(candidate.documents);
 }
 
 export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedPackage> {
@@ -246,12 +252,14 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedP
   catch { throw new Error("The package manifest is not valid JSON."); }
   if (!isManifest(manifestValue)) throw new Error("The package type or version is not supported by this application.");
   const manifest = manifestValue;
-  const expectedNames = new Set(tableSpecs.map((spec) => spec.name));
-  if (manifest.tables.length !== tableSpecs.length || manifest.tables.some((entry) => !expectedNames.has(entry.name))) throw new Error("The package does not contain the complete version 1 application dataset.");
+  const legacyLogicalNames = new Set<TransferTableName>(["infrastructureNodes", "releaseInfrastructureNodes", "infrastructureProductInstallations", "infrastructureConnections"]);
+  const packageSpecs = manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION ? tableSpecs.filter((spec) => !legacyLogicalNames.has(spec.logicalName)) : tableSpecs;
+  const expectedNames = new Set(packageSpecs.map((spec) => spec.name));
+  if (manifest.tables.length !== packageSpecs.length || manifest.tables.some((entry) => !expectedNames.has(entry.name))) throw new Error(`The package does not contain the complete version ${manifest.packageVersion} application dataset.`);
   const rowsByTable = new Map<string, TransferRow[]>();
   const warnings: string[] = [];
 
-  for (const spec of tableSpecs) {
+  for (const spec of packageSpecs) {
     const entry = manifest.tables.find((item) => item.name === spec.name);
     if (!entry) throw new Error(`The ${spec.name} dataset is missing.`);
     const file = zip.file(entry.file);
@@ -268,6 +276,10 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer): Promise<ParsedP
       if (keys.length !== spec.columns.length || keys.some((key) => !allowed.has(key))) throw new Error(`The ${entry.name} dataset does not match the version 1 schema.`);
     }
     rowsByTable.set(entry.name, rows as TransferRow[]);
+  }
+  if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) {
+    for (const spec of tableSpecs.filter((item) => legacyLogicalNames.has(item.logicalName))) rowsByTable.set(spec.name, []);
+    warnings.push("This version 1 package predates governed infrastructure. Existing baseline data will load; infrastructure can be added after import.");
   }
 
   const documentBytes = new Map<string, Uint8Array>();

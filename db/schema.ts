@@ -396,6 +396,126 @@ export const platformBaselineAssignments = sqliteTable("platform_baseline_assign
   index("platform_assignment_platform_release_ix").on(t.platformId, t.releaseId, t.reviewStatus),
 ]);
 
+// Infrastructure identity is stable across Releases.  A node belongs to one
+// governed Platform and represents a physical or logical asset that an analyst
+// may refer to repeatedly (for example a blade, switch, logical drive, or VM).
+// Capacity and parent/placement are intentionally not stored here because both
+// may change from one complete Release configuration to the next.
+export const infrastructureNodes = sqliteTable("infrastructure_node", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  nodeType: text("node_type").notNull(),
+  code: text("code").notNull(),
+  normalizedCode: text("normalized_code").notNull(),
+  name: text("name").notNull(),
+  normalizedName: text("normalized_name").notNull(),
+  manufacturerOrganizationId: text("manufacturer_organization_id").references(() => organizations.id),
+  hardwareProductId: text("hardware_product_id").references(() => products.id),
+  assetTag: text("asset_tag"),
+  serialNumber: text("serial_number"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  description: text("description"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("infrastructure_node_type", sql`${t.nodeType} IN ('ups','network_switch','chassis','blade','physical_server','storage_array','logical_drive','virtual_machine','appliance','other')`),
+  check("infrastructure_node_lifecycle", sql`${t.lifecycleStatus} IN ('active','planned','retired')`),
+  uniqueIndex("infrastructure_node_code_uq").on(t.platformId, t.normalizedCode),
+  index("infrastructure_node_platform_type_ix").on(t.platformId, t.nodeType, t.lifecycleStatus),
+  index("infrastructure_node_hardware_product_ix").on(t.hardwareProductId),
+]);
+
+// This table is the release-specific configuration of an infrastructure node.
+// parent_state_id creates the containment hierarchy for that Release: Platform
+// -> chassis/server -> drive or VM.  A node can move or be resized in a later
+// Release without rewriting its stable identity or earlier history.
+export const releaseInfrastructureNodes = sqliteTable("release_infrastructure_node", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  infrastructureNodeId: text("infrastructure_node_id").notNull().references(() => infrastructureNodes.id),
+  parentStateId: text("parent_state_id"),
+  lifecycleStatus: text("lifecycle_status").notNull().default("active"),
+  operatingState: text("operating_state").notNull().default("unknown"),
+  cpuCores: real("cpu_cores"),
+  memoryGb: real("memory_gb"),
+  storageGb: real("storage_gb"),
+  storageType: text("storage_type"),
+  driveLetter: text("drive_letter"),
+  fileSystem: text("file_system"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("release_infrastructure_lifecycle", sql`${t.lifecycleStatus} IN ('planned','active','retired','absent')`),
+  check("release_infrastructure_operating_state", sql`${t.operatingState} IN ('unknown','operational','degraded','offline','not_installed')`),
+  check("release_infrastructure_not_self", sql`${t.parentStateId} IS NULL OR ${t.parentStateId} <> ${t.id}`),
+  check("release_infrastructure_capacity", sql`(${t.cpuCores} IS NULL OR ${t.cpuCores} >= 0) AND (${t.memoryGb} IS NULL OR ${t.memoryGb} >= 0) AND (${t.storageGb} IS NULL OR ${t.storageGb} >= 0)`),
+  uniqueIndex("release_infrastructure_node_uq").on(t.releaseId, t.infrastructureNodeId),
+  index("release_infrastructure_platform_ix").on(t.platformId, t.releaseId, t.parentStateId),
+  index("release_infrastructure_release_type_ix").on(t.releaseId, t.lifecycleStatus),
+]);
+
+// Operating systems are Products, just like applications.  Installation role
+// describes how a governed Product is used on a release-specific node; the FK
+// relationships are the traceability mechanism and the version is a property
+// of this installation, not of the canonical Product identity.
+export const infrastructureProductInstallations = sqliteTable("infrastructure_product_installation", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  nodeStateId: text("node_state_id").notNull().references(() => releaseInfrastructureNodes.id),
+  productId: text("product_id").notNull().references(() => products.id),
+  baselineOccurrenceId: text("baseline_occurrence_id").references(() => baselineOccurrences.id),
+  installationRole: text("installation_role").notNull(),
+  instanceName: text("instance_name"),
+  normalizedInstanceName: text("normalized_instance_name").notNull().default(""),
+  version: text("version"),
+  deploymentStatus: text("deployment_status").notNull().default("installed"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("infrastructure_installation_role", sql`${t.installationRole} IN ('operating_system','hypervisor','application','middleware','database','runtime','firmware','agent','other')`),
+  check("infrastructure_installation_status", sql`${t.deploymentStatus} IN ('planned','installed','retired','absent')`),
+  uniqueIndex("infrastructure_installation_position_uq").on(t.nodeStateId, t.productId, t.installationRole, t.normalizedInstanceName),
+  uniqueIndex("infrastructure_installation_occurrence_uq").on(t.baselineOccurrenceId),
+  index("infrastructure_installation_product_ix").on(t.productId, t.releaseId),
+  index("infrastructure_installation_platform_ix").on(t.platformId, t.releaseId, t.installationRole),
+]);
+
+export const infrastructureConnections = sqliteTable("infrastructure_connection", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  releaseId: text("release_id").notNull().references(() => releases.id),
+  platformId: text("platform_id").notNull().references(() => platforms.id),
+  sourceNodeStateId: text("source_node_state_id").notNull().references(() => releaseInfrastructureNodes.id),
+  targetNodeStateId: text("target_node_state_id").notNull().references(() => releaseInfrastructureNodes.id),
+  connectionType: text("connection_type").notNull(),
+  label: text("label"),
+  status: text("status").notNull().default("active"),
+  capacityMbps: real("capacity_mbps"),
+  sourceReference: text("source_reference"),
+  sourceAsOf: text("source_as_of"),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("infrastructure_connection_type", sql`${t.connectionType} IN ('network','power','storage','cluster','management','other')`),
+  check("infrastructure_connection_status", sql`${t.status} IN ('planned','active','retired')`),
+  check("infrastructure_connection_not_self", sql`${t.sourceNodeStateId} <> ${t.targetNodeStateId}`),
+  check("infrastructure_connection_capacity", sql`${t.capacityMbps} IS NULL OR ${t.capacityMbps} >= 0`),
+  uniqueIndex("infrastructure_connection_uq").on(t.releaseId, t.sourceNodeStateId, t.targetNodeStateId, t.connectionType),
+  index("infrastructure_connection_platform_ix").on(t.platformId, t.releaseId, t.connectionType),
+]);
+
 // A release profile describes how a release is being used analytically. It is
 // not an approval of the technical stack: funding/priority decisions belong to
 // Change Requests. This merely distinguishes current evidence from a target.

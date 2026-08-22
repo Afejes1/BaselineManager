@@ -14,6 +14,7 @@ import { useInitiativeDecisions } from "../lib/initiative-decision-client";
 import { objectiveRelatedChangeRequestIds, readable, selectInitiativeBundle } from "../lib/initiative-decision-model";
 import { useMasterData } from "../lib/master-data-client";
 import { usePlatformPortfolio } from "../lib/platform-client";
+import { useTopologyExtensions } from "../lib/topology-client";
 import { compareReleases, releaseNames } from "../lib/release-analysis";
 import type { ManagedRecord24 } from "../lib/baseline-client";
 import type { ChangeEffect, ChangeRequest } from "../lib/change-model";
@@ -86,6 +87,7 @@ export function AnalyticsWorkbench() {
   const { rows, scopedRows, releaseLens, loading: baselineLoading, error: baselineError } = useWorkspaceContext();
   const master = useMasterData();
   const platforms = usePlatformPortfolio();
+  const topology = useTopologyExtensions();
   const changes = useChangePortfolio();
   const decisions = useInitiativeDecisions();
   const governance = useGovernancePortfolio();
@@ -289,6 +291,31 @@ export function AnalyticsWorkbench() {
   const scopedInitiatives = useMemo(() => (decisions.workspace?.initiatives || []).filter((initiative) => scope.initiativeIds.has(initiative.id)), [decisions.workspace?.initiatives, scope.initiativeIds]);
   const scopedEvidence = useMemo(() => (governance.portfolio?.records || []).filter((record) => scope.kind === "portfolio" || record.links.some((link) => scope.evidenceKeys.has(`${link.entityKind}:${link.entityId}`))), [governance.portfolio?.records, scope.evidenceKeys, scope.kind]);
   const products = useMemo(() => new Map(scope.rows.map((row) => [row.__meta.productId || productIdentityKey(row), productDisplayName(row)])), [scope.rows]);
+  const infrastructure = topology.extensions.infrastructure;
+  const scopedInfrastructure = useMemo(() => {
+    const productIds = new Set(Array.from(products.keys()));
+    if (scope.kind === "product" && scope.id) productIds.add(scope.id);
+    const releaseIds = scope.releaseIds;
+    const platformIds = scope.platformIds;
+    const releaseMatches = (releaseId: string) => !releaseIds.size || releaseIds.has(releaseId);
+    const platformMatches = (platformId: string) => !platformIds.size || platformIds.has(platformId);
+    let installations = infrastructure.installations.filter((item) => item.deploymentStatus !== "absent" && releaseMatches(item.releaseId) && platformMatches(item.platformId));
+    if (scope.kind === "product") installations = installations.filter((item) => productIds.has(item.productId));
+    const installationStateIds = new Set(installations.map((item) => item.nodeStateId));
+    let states = infrastructure.states.filter((item) => item.lifecycleStatus !== "absent" && releaseMatches(item.releaseId) && platformMatches(item.platformId));
+    if (scope.kind === "product") states = states.filter((item) => installationStateIds.has(item.id));
+    const stateIds = new Set(states.map((item) => item.id));
+    installations = installations.filter((item) => stateIds.has(item.nodeStateId));
+    const nodeIds = new Set(states.map((item) => item.infrastructureNodeId));
+    const nodes = infrastructure.nodes.filter((item) => nodeIds.has(item.id));
+    const connections = infrastructure.connections.filter((item) => stateIds.has(item.sourceNodeStateId) && stateIds.has(item.targetNodeStateId));
+    const hostStates = states.filter((item) => {
+      const type = nodes.find((node) => node.id === item.infrastructureNodeId)?.nodeType;
+      return type === "physical_server" || type === "blade" || type === "virtual_machine" || type === "appliance";
+    });
+    const operatingSystemStateIds = new Set(installations.filter((item) => item.installationRole === "operating_system").map((item) => item.nodeStateId));
+    return { states, nodes, installations, connections, hostStates, operatingSystemStateIds };
+  }, [infrastructure, products, scope.id, scope.kind, scope.platformIds, scope.releaseIds]);
   const quality = useMemo(() => scope.rows.reduce((result, row) => { const level = dataQualityFor(row).level; if (level === "issue") result.issues += 1; else if (level === "review") result.warnings += 1; else result.ready += 1; return result; }, { ready: 0, warnings: 0, issues: 0 }), [scope.rows]);
   const objectiveEffects = useMemo(() => new Set((decisions.workspace?.objectiveEffectAttributions || []).filter((item) => scope.objectiveIds.has(item.objectiveId)).map((item) => item.changeEffectId)), [decisions.workspace?.objectiveEffectAttributions, scope.objectiveIds]);
   const scopedDependencies = useMemo(() => changes.portfolio.dependencies.filter((dependency) => scope.requestIds.has(dependency.predecessorRequestId) || scope.requestIds.has(dependency.successorRequestId)), [changes.portfolio.dependencies, scope.requestIds]);
@@ -343,13 +370,15 @@ export function AnalyticsWorkbench() {
     };
   }, [decisions.workspace?.criteria, decisions.workspace?.requirements, objectiveEffects.size, scope.objectiveIds, scope.rows, scopedEvidence.length]);
 
-  const loading = baselineLoading || master.loading || platforms.loading || changes.loading || decisions.loading || governance.loading;
-  const errors = [baselineError, master.error, platforms.error, changes.error, decisions.error, governance.error].filter(Boolean);
+  const loading = baselineLoading || master.loading || platforms.loading || topology.loading || changes.loading || decisions.loading || governance.loading;
+  const errors = [baselineError, master.error, platforms.error, topology.error, changes.error, decisions.error, governance.error].filter(Boolean);
   if (loading) return <section className="domain-section"><p className="empty">Loading baseline analytics…</p></section>;
 
   const runtimeDistribution = distribution(scope.rows, (row) => normalized(row.Containerized) === "yes" ? `${clean(row.Containerized)} · ${clean(row["Container Technology"]) || "technology not reported"}` : clean(row.Containerized) ? "Direct / non-containerized" : "Runtime not reported");
   const languageDistribution = distribution(scope.rows, (row) => clean(row["SW Language"]));
   const supplierDistribution = distribution(scope.rows, (row) => clean(row.OEM));
+  const infrastructureTypeDistribution = Array.from(scopedInfrastructure.nodes.reduce((counts, node) => counts.set(readable(node.nodeType), (counts.get(readable(node.nodeType)) || 0) + 1), new Map<string, number>()).entries()).map(([label, count]) => ({ label, count })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+  const installationRoleDistribution = Array.from(scopedInfrastructure.installations.reduce((counts, item) => counts.set(readable(item.installationRole), (counts.get(readable(item.installationRole)) || 0) + 1), new Map<string, number>()).entries()).map(([label, count]) => ({ label, count })).sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
   const platformLabels = Array.from(scope.platformIds).map((id) => platforms.portfolio.platforms.find((item) => item.id === id)).filter(Boolean);
   const capabilityLabels = unique(scope.rows.map((row) => clean(row["Technical Capability Satisfied by this SW/Tech - Notes"])));
   const pending = scopedRequests.filter((request) => request.decisionStatus === "pending").length;
@@ -378,6 +407,8 @@ export function AnalyticsWorkbench() {
     </section>
 
     <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">RELEASE POSTURE</span><h3>What is fielded, what changed, and where decisions land</h3></div><Link className="mini-action" href="/reports">Open leadership reports →</Link></div><div className="domain-table-wrap"><table><thead><tr><th>Release</th><th>Baseline records</th><th>Products</th><th>Hosts</th><th>Quality findings</th><th>Observed change</th><th>Targeted Change Requests</th></tr></thead><tbody>{releaseRows.map((item) => <tr key={item.release}><td><Link href={hrefFor("release", item.release)}>{item.release}</Link></td><td>{item.records}</td><td>{item.products}</td><td>{item.hosts}</td><td>{item.issues ? <span className="status-pill status-critical">{item.issues} blocking</span> : item.review ? <span className="status-pill status-decision_required">{item.review} warnings</span> : <span className="status-pill">Pass</span>}</td><td>{item.changesFromPrior || "—"}{item.changesFromPrior ? <small>vs prior release in scope</small> : null}</td><td>{item.targetedRequests || "—"}</td></tr>)}{!releaseRows.length ? <tr><td colSpan={7} className="empty">No baseline records match this scope.</td></tr> : null}</tbody></table></div></section>
+
+    <section className="domain-section"><div className="section-toolbar"><div><span className="eyebrow">SYSTEM CONFIGURATION</span><h3>Governed infrastructure and installed Product coverage</h3></div><Link className="mini-action" href="/topology">Open deployment topology →</Link></div><section className="delta-summary"><div><span>Configured nodes</span><strong>{scopedInfrastructure.states.length}</strong></div><div><span>Host and VM positions</span><strong>{scopedInfrastructure.hostStates.length}</strong></div><div><span>Product installations</span><strong>{scopedInfrastructure.installations.length}</strong></div><div><span>OS coverage</span><strong>{scopedInfrastructure.hostStates.length ? `${scopedInfrastructure.operatingSystemStateIds.size}/${scopedInfrastructure.hostStates.length}` : "—"}</strong></div></section>{scopedInfrastructure.states.length ? <div className="dashboard-grid analytics-distribution-grid"><Distribution title="Infrastructure nodes" detail="Stable hardware and virtual identities represented in the selected Release scope." items={infrastructureTypeDistribution} /><Distribution title="Installed Product roles" detail="Operating systems, hypervisors, applications, and supporting software recorded as canonical Products." items={installationRoleDistribution} /></div> : <article className="empty-state domain-card"><h3>No governed infrastructure in this scope</h3><p>Open a Platform and record its Release configuration. Baseline rows remain valid; this identifies where deeper infrastructure evidence has not been entered.</p></article>}</section>
 
     <section className="dashboard-grid analytics-distribution-grid"><Distribution title="Runtime posture" detail="Container state recorded on baseline positions." items={runtimeDistribution} /><Distribution title="Languages" detail="Reported codebase languages in scope." items={languageDistribution} /><Distribution title="Suppliers" detail="Reported OEM or supplier attribution." items={supplierDistribution} /></section>
 

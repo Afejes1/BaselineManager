@@ -196,6 +196,101 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   const r5 = releasesByName.get("Release 5") || null;
   const r6 = releasesByName.get("Release 6") || null;
   const r7 = releasesByName.get("Release 7") || null;
+
+  // Governed infrastructure demonstration.  Identities persist across the
+  // three Releases; parent placement, capacity, connections, and installed
+  // Product versions are recorded per Release.  The same Windows Server
+  // Product is deliberately installed once on bare metal and again on VMs.
+  const infrastructureProducts = [
+    ["demo-product-windows-server-2019", "Windows Server 2019", "WS2019", "Operating system", "COTS"],
+    ["demo-product-windows-11-enterprise", "Windows 11 Enterprise", "Windows 11", "Operating system", "COTS"],
+    ["demo-product-rhel-9", "Red Hat Enterprise Linux 9", "RHEL9", "Operating system", "COTS"],
+    ["demo-product-vsphere-8", "VMware vSphere Hypervisor 8", "vSphere 8", "Hypervisor", "COTS"],
+  ] as const;
+  for (const product of infrastructureProducts) statements.push(db.prepare("INSERT INTO product (id,program_id,canonical_name,normalized_name,short_name,product_type,software_classification,owner_organization_id,description,lifecycle_status,source_reference,source_as_of,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET canonical_name=excluded.canonical_name,normalized_name=excluded.normalized_name,short_name=excluded.short_name,product_type=excluded.product_type,software_classification=excluded.software_classification,description=excluded.description,lifecycle_status=excluded.lifecycle_status,updated_at=excluded.updated_at")
+    .bind(product[0], PROGRAM_ID, product[1], product[1].toLowerCase(), product[2], product[3], product[4], null, "Synthetic catalog Product used by the governed infrastructure demonstration.", "active", "DEMO://INFRASTRUCTURE/CATALOG", "2026-08-22", at, at));
+
+  const infrastructureNodes = [
+    ["demo-infra-ups-va", "demo-platform-obk-va", "ups", "UPS-VA-01", "Mission systems UPS"],
+    ["demo-infra-switch-va", "demo-platform-obk-va", "network_switch", "SW-VA-CORE-01", "Mission systems core switch"],
+    ["demo-infra-chassis-va", "demo-platform-obk-va", "chassis", "CH-VA-01", "Mission systems compute chassis"],
+    ["demo-infra-blade-baremetal", "demo-platform-obk-va", "blade", "BLD-VA-01", "Bare-metal services blade"],
+    ["demo-infra-blade-virtual", "demo-platform-obk-va", "blade", "BLD-VA-02", "Virtual services blade"],
+    ["demo-infra-vm-mps", "demo-platform-obk-va", "virtual_machine", "VM-MPS", "Mission Planning Service VM"],
+    ["demo-infra-vm-tls", "demo-platform-obk-va", "virtual_machine", "VM-TLS", "Threat Library Service VM"],
+    ["demo-infra-drive-mps", "demo-platform-obk-va", "logical_drive", "DRV-MPS-D", "Mission Planning data drive"],
+    ["demo-infra-drive-tls", "demo-platform-obk-va", "logical_drive", "DRV-TLS-D", "Threat Library data drive"],
+    ["demo-infra-pma-mps", "demo-platform-pma-mps", "physical_server", "PMA-PLN-01-HW", "Mission planning laptop"],
+    ["demo-infra-pma-ops", "demo-platform-pma-ops", "physical_server", "PMA-OPS-04-HW", "Operations console laptop"],
+  ] as const;
+  for (const node of infrastructureNodes) statements.push(db.prepare("INSERT INTO infrastructure_node (id,program_id,platform_id,node_type,code,normalized_code,name,normalized_name,manufacturer_organization_id,hardware_product_id,asset_tag,serial_number,lifecycle_status,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_type=excluded.node_type,code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,normalized_name=excluded.normalized_name,lifecycle_status=excluded.lifecycle_status,description=excluded.description,updated_at=excluded.updated_at")
+    .bind(node[0], PROGRAM_ID, node[1], node[2], node[3], node[3].toLowerCase(), node[4], node[4].toLowerCase(), null, null, `DEMO-${node[3]}`, null, "active", "Synthetic infrastructure identity. Not program data.", actor.id, at, at));
+
+  const releaseConfigurations = [
+    { releaseId: r5, suffix: "r5", status: "operational", bladeCpu: 16, bladeRam: 64, mpsCpu: 8, mpsRam: 32, mpsStorage: 180, tlsCpu: 4, tlsRam: 16, tlsStorage: 120, hypervisor: "7.0", windows: "2019", linux: "9.1" },
+    { releaseId: r6, suffix: "r6", status: "operational", bladeCpu: 24, bladeRam: 96, mpsCpu: 12, mpsRam: 48, mpsStorage: 240, tlsCpu: 8, tlsRam: 24, tlsStorage: 160, hypervisor: "8.0 U2", windows: "2019 CU-2026-04", linux: "9.3" },
+    { releaseId: r7, suffix: "r7", status: "unknown", bladeCpu: 32, bladeRam: 128, mpsCpu: 12, mpsRam: 64, mpsStorage: 300, tlsCpu: 8, tlsRam: 32, tlsStorage: 220, hypervisor: "8.0 U3", windows: "2019 CU-2026-08", linux: "9.4" },
+  ];
+  const stateId = (suffix: string, key: string) => `demo-infra-state-${suffix}-${key}`;
+  for (const release of releaseConfigurations) {
+    if (!release.releaseId) continue;
+    const statePlan = [
+      ["ups", "demo-infra-ups-va", null, null, null, null, null, null, null],
+      ["switch", "demo-infra-switch-va", null, null, null, null, null, null, null],
+      ["chassis", "demo-infra-chassis-va", null, null, null, null, null, null, null],
+      ["bare", "demo-infra-blade-baremetal", "chassis", release.bladeCpu, release.bladeRam, 1000, "SSD", null, null],
+      ["virtual", "demo-infra-blade-virtual", "chassis", release.bladeCpu, release.bladeRam, 2000, "SAN", null, null],
+      ["vm-mps", "demo-infra-vm-mps", "virtual", release.mpsCpu, release.mpsRam, release.mpsStorage, "SSD", null, null],
+      ["vm-tls", "demo-infra-vm-tls", "virtual", release.tlsCpu, release.tlsRam, release.tlsStorage, "SSD", null, null],
+      ["drive-mps", "demo-infra-drive-mps", "vm-mps", null, null, release.mpsStorage, "SSD", "D:", "NTFS"],
+      ["drive-tls", "demo-infra-drive-tls", "vm-tls", null, null, release.tlsStorage, "SSD", "/data", "XFS"],
+    ] as const;
+    for (const state of statePlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_type,drive_letter,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_state_id=excluded.parent_state_id,lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_type=excluded.storage_type,drive_letter=excluded.drive_letter,file_system=excluded.file_system,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(stateId(release.suffix, state[0]), PROGRAM_ID, release.releaseId, "demo-platform-obk-va", state[1], state[2] ? stateId(release.suffix, state[2]) : null, "active", release.status, state[3], state[4], state[5], state[6], state[7], state[8], "DEMO://INFRASTRUCTURE/CONFIGURATION", "2026-08-22", "Synthetic complete Release configuration.", actor.id, at, at));
+    const installationPlan = [
+      ["bare-os", "bare", "demo-product-windows-server-2019", "operating_system", release.windows, null],
+      ["hypervisor", "virtual", "demo-product-vsphere-8", "hypervisor", release.hypervisor, null],
+      ["mps-os", "vm-mps", "demo-product-windows-server-2019", "operating_system", release.windows, null],
+      ["tls-os", "vm-tls", "demo-product-rhel-9", "operating_system", release.linux, null],
+    ] as const;
+    const sourceMps = rows.find((row) => row.releaseId === release.releaseId && row.shortName === "MPS");
+    const sourceTls = rows.find((row) => row.releaseId === release.releaseId && row.shortName === "TLS");
+    const appInstallations = [
+      sourceMps?.productId ? ["mps-app", "vm-mps", sourceMps.productId, "application", versions[sourceMps.sourceKey] || null, sourceMps.occurrenceId] : null,
+      sourceTls?.productId ? ["tls-app", "vm-tls", sourceTls.productId, "application", versions[sourceTls.sourceKey] || null, sourceTls.occurrenceId] : null,
+    ].filter((item): item is [string,string,string,string,string | null,string] => Boolean(item));
+    for (const installation of [...installationPlan, ...appInstallations]) statements.push(db.prepare("INSERT INTO infrastructure_product_installation (id,program_id,release_id,platform_id,node_state_id,product_id,baseline_occurrence_id,installation_role,instance_name,normalized_instance_name,version,deployment_status,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_state_id=excluded.node_state_id,product_id=excluded.product_id,baseline_occurrence_id=excluded.baseline_occurrence_id,installation_role=excluded.installation_role,version=excluded.version,deployment_status=excluded.deployment_status,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(`demo-infra-install-${release.suffix}-${installation[0]}`, PROGRAM_ID, release.releaseId, "demo-platform-obk-va", stateId(release.suffix, installation[1]), installation[2], installation[5], installation[3], null, "", installation[4], "installed", "DEMO://INFRASTRUCTURE/INSTALLATION", "2026-08-22", "Synthetic governed Product installation.", actor.id, at, at));
+    for (const connection of [
+      ["power", "ups", "chassis", "Protected chassis feed", null],
+      ["network", "switch", "bare", "Bare-metal service uplink", 10000],
+      ["network", "switch", "virtual", "Virtual services uplink", 25000],
+      ["management", "virtual", "vm-mps", "Hypervisor management", null],
+      ["management", "virtual", "vm-tls", "Hypervisor management", null],
+    ] as const) statements.push(db.prepare("INSERT INTO infrastructure_connection (id,program_id,release_id,platform_id,source_node_state_id,target_node_state_id,connection_type,label,status,capacity_mbps,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_node_state_id=excluded.source_node_state_id,target_node_state_id=excluded.target_node_state_id,connection_type=excluded.connection_type,label=excluded.label,status=excluded.status,capacity_mbps=excluded.capacity_mbps,updated_at=excluded.updated_at")
+      .bind(`demo-infra-connection-${release.suffix}-${connection[0]}-${connection[1]}-${connection[2]}`, PROGRAM_ID, release.releaseId, "demo-platform-obk-va", stateId(release.suffix, connection[1]), stateId(release.suffix, connection[2]), connection[0], connection[3], "active", connection[4], "DEMO://INFRASTRUCTURE/CONNECTION", "2026-08-22", "Synthetic connection used for topology testing.", actor.id, at, at));
+  }
+
+  // Release 7 laptop endpoints prove that one Product can have server-side
+  // and client-side placements without duplicating its canonical identity.
+  if (r7) {
+    const endpointPlan = [
+      ["pma-mps", "demo-platform-pma-mps", "demo-infra-pma-mps", "Mission planning analyst endpoint", 8, 32, 512],
+      ["pma-ops", "demo-platform-pma-ops", "demo-infra-pma-ops", "Operations console analyst endpoint", 8, 32, 512],
+    ] as const;
+    for (const endpoint of endpointPlan) statements.push(db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,cpu_cores,memory_gb,storage_gb,storage_type,drive_letter,file_system,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET lifecycle_status=excluded.lifecycle_status,operating_state=excluded.operating_state,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_type=excluded.storage_type,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(stateId("r7", endpoint[0]), PROGRAM_ID, r7, endpoint[1], endpoint[2], null, "active", "operational", endpoint[4], endpoint[5], endpoint[6], "NVMe", "C:", "NTFS", "DEMO://INFRASTRUCTURE/ENDPOINT", "2026-08-22", endpoint[3], actor.id, at, at));
+    const mpsProductId = rows.find((row) => row.releaseId === r7 && row.shortName === "MPS")?.productId;
+    const operationsProductId = rows.find((row) => row.releaseId === r7 && row.shortName === "OC")?.productId;
+    const endpointInstallations = [
+      ["pma-mps-os", "pma-mps", "demo-platform-pma-mps", "demo-product-windows-11-enterprise", "operating_system", "23H2"],
+      ["pma-ops-os", "pma-ops", "demo-platform-pma-ops", "demo-product-windows-11-enterprise", "operating_system", "23H2"],
+      mpsProductId ? ["pma-mps-app", "pma-mps", "demo-platform-pma-mps", mpsProductId, "application", "3.0.0"] : null,
+      operationsProductId ? ["pma-ops-app", "pma-ops", "demo-platform-pma-ops", operationsProductId, "application", "3.0.0"] : null,
+    ].filter((item): item is [string, string, string, string, string, string] => Boolean(item));
+    for (const installation of endpointInstallations) statements.push(db.prepare("INSERT INTO infrastructure_product_installation (id,program_id,release_id,platform_id,node_state_id,product_id,baseline_occurrence_id,installation_role,instance_name,normalized_instance_name,version,deployment_status,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_state_id=excluded.node_state_id,product_id=excluded.product_id,installation_role=excluded.installation_role,version=excluded.version,deployment_status=excluded.deployment_status,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(`demo-infra-install-r7-${installation[0]}`, PROGRAM_ID, r7, installation[2], stateId("r7", installation[1]), installation[3], null, installation[4], null, "", installation[5], "installed", "DEMO://INFRASTRUCTURE/ENDPOINT-INSTALLATION", "2026-08-22", "Synthetic endpoint Product installation.", actor.id, at, at));
+  }
   const changePlan = [
     { id: "demo-change-hardening", type: "cr-type-mcp", externalId: "DEMO-MCP-060", title: "Shared platform security hardening", priority: "critical", decision: "fund", releaseId: r6, summary: "Fund the common platform hardening prerequisite used by the Release 6 and 7 service changes.", funded: "Provides the hardened runtime and certificate posture required by dependent services.", deferred: "Mission-planning and threat-data changes cannot be fielded on the intended schedule.", impact: "Modifies shared runtime configuration at the Mission Systems Squadron.", knockOn: "Enables DEMO-MCP-061 and DEMO-DSOR-062; shifts integration-test sequencing.", authority: "Synthetic Configuration Steering Board", rationale: "Funded as the prerequisite with the widest downstream dependency chain." },
     { id: "demo-change-mps", type: "cr-type-mcp", externalId: "DEMO-MCP-061", title: "Mission Planning Service relocation and capacity uplift", priority: "high", decision: "pending", releaseId: r6, summary: "Decide whether to fund the move and capacity increase represented in the proposed Release 6 baseline.", funded: "Mission planners receive the intended capacity and new compute position for Release 6.", deferred: "The service remains on the Release 5 host with lower memory and CPU headroom.", impact: "Moves Mission Planning Service and increases storage, CPU, and memory.", knockOn: "Consumes integration capacity and depends on shared platform hardening.", authority: null, rationale: null },
@@ -271,6 +366,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("DELETE FROM objective_source_package WHERE external_system='Synthetic incumbent objective register' AND NOT EXISTS (SELECT 1 FROM objective_source_row WHERE objective_source_row.source_package_id=objective_source_package.id)"));
   statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?)").bind(...javaObjectiveIds));
+  statements.push(db.prepare("DELETE FROM objective_change_request_link WHERE objective_id IN (?,?,?)").bind(...javaObjectiveIds));
   // Daily supplier observations are immutable. A demo reload may remove a
   // governed synthetic Objective, but it must not destroy or partially prune
   // the linked external feed history; clear only the optional reconciliation.
@@ -399,6 +495,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("DELETE FROM objective_estimate WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_milestone WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
   statements.push(db.prepare("DELETE FROM change_request_objective_dependency WHERE prerequisite_objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
+  statements.push(db.prepare("DELETE FROM objective_change_request_link WHERE objective_id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
   statements.push(db.prepare("UPDATE lm_objective_feed_subject SET canonical_objective_id=NULL,updated_at=? WHERE canonical_objective_id IN (?,?,?,?,?)").bind(at, ...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM incumbent_objective WHERE id IN (?,?,?,?,?)").bind(...supplementalObjectiveIds));
   statements.push(db.prepare("DELETE FROM initiative_change_request WHERE initiative_id IN (?,?)").bind(...supplementalInitiativeIds));
@@ -533,7 +630,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     ["demo-wbs-dependency-analytics-report-retirement", "demo-analytics-wbs-1", "demo-analytics-wbs-2", "FS", 0, "accepted", "Gateway retirement recommendation requires the analytics report to validate the target operating picture.", "DEMO://WBS-LOGIC/ANALYTICS"],
   ] as const) statements.push(db.prepare("INSERT INTO work_package_dependency (id,predecessor_work_package_id,successor_work_package_id,relationship,lag_days,status,rationale,source_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(...dependency, actor.id, at, at));
 
-  statements.push(audit(db, actor, "demonstration_workspace_enriched", "baseline_workspace", WORKSPACE_ID, { occurrences: rows.length, managedTopology: true, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length, initiatives: 3, objectives: objectivePlan.length + supplementalObjectives.length, requirements: requirementPlan.length + supplementalRequirements.length, acceptanceCriteria: criterionPlan.length + supplementalCriteria.length }));
+  statements.push(audit(db, actor, "demonstration_workspace_enriched", "baseline_workspace", WORKSPACE_ID, { occurrences: rows.length, governedInfrastructure: true, infrastructureNodes: infrastructureNodes.length, releaseConfigurations: releaseConfigurations.length, managedTopology: true, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length, initiatives: 3, objectives: objectivePlan.length + supplementalObjectives.length, requirements: requirementPlan.length + supplementalRequirements.length, acceptanceCriteria: criterionPlan.length + supplementalCriteria.length }));
   await db.batch(statements);
-  return { occurrences: rows.length, hostProfiles: seenHosts.size, deploymentProfiles: rows.filter((row) => row.productId).length, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length };
+  return { occurrences: rows.length, hostProfiles: seenHosts.size, deploymentProfiles: rows.filter((row) => row.productId).length, infrastructureNodes: infrastructureNodes.length, releaseConfigurations: releaseConfigurations.length, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length };
 }
