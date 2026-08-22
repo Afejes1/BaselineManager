@@ -54,6 +54,16 @@ test("first-time multi-row intake reuses canonical UUID identities in one batch"
   assert.doesNotMatch(intake, /stableId\(/);
 });
 
+test("A2O intake creates its source package before the workspace points to it", () => {
+  const intake = readFileSync("app/api/baseline/import/route.ts", "utf8");
+  const packageInsert = intake.indexOf('INSERT INTO source_package');
+  const workspaceInsert = intake.indexOf('INSERT INTO baseline_workspace');
+
+  assert.ok(packageInsert >= 0, "the immutable source package must be written");
+  assert.ok(workspaceInsert >= 0, "the workspace must retain the active package pointer");
+  assert.ok(packageInsert < workspaceInsert, "the workspace cannot reference a package before it exists");
+});
+
 test("Configuration Set review locks edits and approval creates revision history", () => {
   const baseline = readFileSync("app/api/baseline/route.ts", "utf8");
   const master = readFileSync("lib/master-data-server.ts", "utf8");

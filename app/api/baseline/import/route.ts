@@ -35,6 +35,7 @@ export async function GET() {
  * active records for later restoration, then materializes a synthetic workspace.
  */
 export async function POST(request: Request) {
+  let importStage = "validating the workbook";
   try {
     const actor = await ensureActor(env.DB, request); requireWriter(actor);
     const body = await request.json() as { fileName?: string; sheetName?: string; rows?: IncomingRow[]; resolutions?: ImportResolution[]; replaceActiveBaseline?: boolean };
@@ -73,9 +74,11 @@ export async function POST(request: Request) {
     const packageId = duplicate?.id || crypto.randomUUID();
     const statements: D1PreparedStatement[] = [
       env.DB.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_PROGRAM_ID, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
-      env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET active_import_package_id=excluded.active_import_package_id,updated_at=excluded.updated_at").bind(BASELINE_WORKSPACE_ID, BASELINE_PROGRAM_ID, "Working Technical Baseline", packageId, now, now),
     ];
+    // The workspace points to its active Source Package. Insert the package
+    // first so SQLite/D1 never sees a dangling foreign-key reference.
     if (!duplicate) statements.push(env.DB.prepare("INSERT INTO source_package (id,program_id,source_system,file_name,sheet_name,content_hash,received_at,status,row_count,accepted_count,exception_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(packageId, BASELINE_PROGRAM_ID, "a2o-xlsx", body.fileName, body.sheetName || null, hash, now, "materialized", incoming.length, approvedIncoming.length, incoming.length - approvedIncoming.length, now, now));
+    statements.push(env.DB.prepare("INSERT INTO baseline_workspace (id,program_id,label,active_import_package_id,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET active_import_package_id=excluded.active_import_package_id,updated_at=excluded.updated_at").bind(BASELINE_WORKSPACE_ID, BASELINE_PROGRAM_ID, "Working Technical Baseline", packageId, now, now));
     if (replaceActiveBaseline && existing.length) statements.push(env.DB.prepare("UPDATE baseline_occurrence SET lifecycle_status='voided',lifecycle_reason=?,voided_at=?,voided_by_user_id=?,revision=revision+1,updated_at=? WHERE workspace_id=? AND lifecycle_status='active'").bind("Archived by confirmed demonstration dataset load", now, actor.id, now, BASELINE_WORKSPACE_ID));
     let added = 0; let updated = 0;
     for (let index = 0; index < incoming.length; index += 1) {
@@ -110,7 +113,12 @@ export async function POST(request: Request) {
       statements.push(...importRunStatements(env.DB, { runId: `ingestion-run-${crypto.randomUUID()}`, adapterKey: "a2o_tech_stack_xlsx", sourceSystem: "A2O Tech Stack exchange", fileName: body.fileName, sheetName: body.sheetName || null, contentHash: identity.contentHash, idempotencyKey: identity.idempotencyKey, items: governedItems, resolutions: body.resolutions || governedItems.map((item) => ({ rowNumber: item.rowNumber, sourceKey: item.sourceKey, decision: item.defaultDecision })), rawRows: incoming, normalizedRows: incoming, targetSnapshotKind: "source_package", targetSnapshotId: packageId, actorId: actor.id, at: now }));
     }
     statements.push(audit(env.DB, actor, replaceActiveBaseline ? "demonstration_baseline_loaded" : "a2o_intake_reconciled", "source_package", packageId, { rows: incoming.length, approved: approvedIncoming.length, skipped: incoming.length - approvedIncoming.length, added, updated, unchanged: reconciliation.unchanged.length, parallelDeploymentWarnings: reconciliation.warnings.length, archivedActiveRecords: replaceActiveBaseline ? existing.map((record) => record.occurrenceId) : [], absent: absent.map((record) => record.occurrenceId) }));
+    importStage = "writing the approved baseline records";
     await env.DB.batch(statements);
     return Response.json({ packageId, rows: incoming.length, added, updated, unchanged: reconciliation.unchanged.length, parallelDeploymentWarnings: reconciliation.warnings.length, absent: absent.length, archived: replaceActiveBaseline ? existing.length : 0, preservedLinks: true }, { status: 201 });
-  } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "Import failed without changing the baseline." }, { status: 500 }); }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Import failed without changing the baseline.";
+    console.error("A2O Tech Stack import failed", { stage: importStage, detail });
+    return Response.json({ error: `A2O Tech Stack import failed while ${importStage}. ${detail}`, stage: importStage }, { status: 500 });
+  }
 }
