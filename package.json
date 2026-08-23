@@ -16,7 +16,8 @@
     "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
     "local:network-check": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2ONetworkBoundary.ps1",
     "local:verify": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1",
-    "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild"
+    "local:verify:fast": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2OWorkspace.ps1 -SkipBuild",
+    "local:purge-objectives": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Remove-ImportedObjectives.ps1"
   },
   "dependencies": {
     "docx": "^9.7.1",

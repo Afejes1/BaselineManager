@@ -174,6 +174,33 @@ Restore moves the pre-restore state to a timestamped recovery directory under
 `.wrangler`. Do not delete that recovery copy until the restored workspace has
 been verified.
 
+## Remove a junk Objective import
+
+Do not reset the entire database to correct an Objective-only import. A reset
+also removes baseline records, Releases, Products, Platforms, Change Requests,
+Initiatives, evidence, and audit history.
+
+First list the external source names and counts. This command is read-only:
+
+```powershell
+npm run local:purge-objectives
+```
+
+If one external source was a junk import, purge only that source:
+
+```powershell
+npm run local:purge-objectives -- -ExternalSystem "SOURCE NAME" -Confirmation "PURGE IMPORTED OBJECTIVES"
+```
+
+The command creates a local backup before changing the database. It removes
+the governed Objectives and their dependent analysis links, preserves
+Initiatives and Government work packages, and clears their deleted Objective
+references. Raw supplier snapshots and import history remain available for
+traceability; their canonical Objective links are cleared. Use this recovery
+operation only for a confirmed bad source load, not as normal Objective
+lifecycle management. If the command reports any failure, stop and restore the
+automatic pre-purge backup before using the application again.
+
 ## Proof-of-value acceptance gate
 
 - The real workbook imports without unresolved blocking findings.

@@ -16,6 +16,7 @@ import { importResolutions, type GovernedImportItem, type ImportDecision } from 
 import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
 import { WorkspaceContextControl, useWorkspaceContext } from "../components/workspace-context";
 import { useMasterData } from "../lib/master-data-client";
+import { BaselineConfigurationRelationships } from "../components/baseline-configuration-relationships";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -1147,6 +1148,7 @@ export function BaselineManager() {
                         <p><strong>Source note</strong>{normalizedProjection.runtimeNode.notes}</p>
                       </div>
                     </div>
+                    {selectedMeta ? <BaselineConfigurationRelationships occurrenceId={selectedMeta.occurrenceId} productId={selectedProductId} /> : null}
                   </section>
                 )}
               </div>
