@@ -66,8 +66,14 @@ export default function EvidencePage() {
       if (file && created.id) {
         const data = new FormData(); data.set("file", file); data.set("governanceRecordId", String(created.id)); data.set("initiativeId", initiativeId);
         const response = await fetch("/api/documents", { method: "POST", body: data });
-        if (!response.ok) { const payload = await response.json() as { error?: string }; throw new Error(payload.error || "The record was saved, but its file could not be attached."); }
+        if (!response.ok) {
+          const payload = await response.json() as { error?: string };
+          setShowCreate(false);
+          await reload();
+          throw new Error(`The record was saved without its file. Open “Edit record” to retry the attachment. ${payload.error || "The file could not be attached."}`);
+        }
       }
+      await reload();
       setShowCreate(false); setNotice("Supporting record saved to the evidence register.");
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The supporting record could not be saved."); }
     finally { setSaving(false); }

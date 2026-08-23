@@ -59,8 +59,9 @@ export function assessInitiative(bundle: InitiativeDecisionBundle, asOf = new Da
   const today = new Date(asOf.toISOString().slice(0, 10));
   for (const criterion of bundle.criteria) {
     const planned = criterion.plannedDate ? new Date(`${criterion.plannedDate}T00:00:00Z`) : null;
+    const hasAttachedEvidence = criterion.signoffs.some((entry) => Boolean(entry.evidenceDocumentId));
     if (planned && planned < today && !["passed", "waived"].includes(criterion.status)) add({ severity: "blocker", category: "acceptance", title: `${criterion.code} verification is overdue`, detail: `Planned for ${criterion.plannedDate}; record the result, evidence, and sign-off.`, subjectKind: "criterion", subjectId: criterion.id });
-    if (criterion.status === "passed" && !criterion.evidenceReference) add({ severity: "blocker", category: "evidence", title: `${criterion.code} passed without evidence`, detail: "A passed criterion needs an inspectable evidence reference.", subjectKind: "criterion", subjectId: criterion.id });
+    if (criterion.status === "passed" && !criterion.evidenceReference && !hasAttachedEvidence) add({ severity: "blocker", category: "evidence", title: `${criterion.code} passed without evidence`, detail: "A passed criterion needs an inspectable evidence reference or attached sign-off document.", subjectKind: "criterion", subjectId: criterion.id });
     if (["passed", "waived"].includes(criterion.status) && !criterion.signoffs.some((entry) => ["accepted", "waived"].includes(entry.decision))) add({ severity: "warning", category: "acceptance", title: `${criterion.code} lacks acceptance sign-off`, detail: "Record the accountable role, signer, rationale, and date.", subjectKind: "criterion", subjectId: criterion.id });
     if (criterion.status === "failed") add({ severity: "blocker", category: "acceptance", title: `${criterion.code} failed`, detail: criterion.evidenceReference || "Record the failure evidence and recovery decision.", subjectKind: "criterion", subjectId: criterion.id });
   }

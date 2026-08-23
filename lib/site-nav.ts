@@ -25,4 +25,5 @@ export const APP_NAV_ITEMS: NavItem[] = [
   { href: "/delivery", label: "Initiative Work Plan", icon: "⌗", enabled: true, section: "Decisions" },
   { href: "/initiatives", label: "Initiatives", icon: "◆", enabled: true, section: "Decisions" },
   { href: "/reports", label: "Leadership Reports", icon: "✦", enabled: true, section: "Decisions" },
+  { href: "/briefs", label: "Saved One-Pagers", icon: "▧", enabled: true, section: "Decisions" },
 ];

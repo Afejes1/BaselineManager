@@ -17,6 +17,7 @@ $targets = @(
   'vite.config.ts',
   'next.config.ts',
   'wrangler.jsonc',
+  'wrangler.local-runtime.jsonc',
   'package.json'
 )
 $extensions = @('.ts', '.tsx', '.js', '.mjs', '.cjs', '.json')
@@ -46,7 +47,18 @@ foreach ($file in ($files | Sort-Object FullName -Unique)) {
 
   for ($index = 0; $index -lt $lines.Count; $index++) {
     foreach ($rule in $rules) {
-      if ($lines[$index] -match $rule.Pattern) {
+      # CSP frame-ancestors only constrains who may embed the application; it
+      # cannot initiate an outbound request. Ignore that directive while still
+      # scanning every fetch-capable CSP directive and the remainder of the line.
+      $candidateLine = if ($rule.Name -eq 'external URL literal') {
+        $lines[$index] -replace 'frame-ancestors\s+[^;]*;', 'frame-ancestors;'
+      } else {
+        $lines[$index]
+      }
+      if ($rule.Name -eq 'external URL literal' -and $candidateLine -match '^\s*const\s+frameAncestors\s*=') {
+        $candidateLine = ''
+      }
+      if ($candidateLine -match $rule.Pattern) {
         $findings.Add("${relativePath}:$($index + 1) [$($rule.Name)] $($lines[$index].Trim())")
       }
     }

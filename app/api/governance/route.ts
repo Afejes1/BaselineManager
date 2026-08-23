@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { createExecutiveBrief, createGovernanceRecord, createInitiative, createWorkPackage, ensureActor, portfolio, recordBriefPublication, saveWorkPackageDependency, updateExecutiveBrief, updateGovernanceRecord, updateInitiative, updateWorkPackage } from "../../../lib/governance-server";
+import { createGovernanceRecord, createInitiative, createWorkPackage, ensureActor, portfolio, recordBriefPublication, saveWorkPackageDependency, updateExecutiveBrief, updateGovernanceRecord, updateInitiative, updateWorkPackage } from "../../../lib/governance-server";
+import { createInitiativeLeadershipReport } from "../../../lib/initiative-report-server";
 
 export async function GET(request: Request) {
   try {
@@ -23,7 +24,7 @@ export async function POST(request: Request) {
     else if (action === "save_work_package_dependency") id = await saveWorkPackageDependency(env.DB, actor, body);
     else if (action === "create_governance_record") id = await createGovernanceRecord(env.DB, actor, body);
     else if (action === "update_governance_record") await updateGovernanceRecord(env.DB, actor, body);
-    else if (action === "create_executive_brief") id = await createExecutiveBrief(env.DB, actor, body);
+    else if (action === "create_executive_brief") id = await createInitiativeLeadershipReport(env.DB, actor, body);
     else if (action === "update_executive_brief") await updateExecutiveBrief(env.DB, actor, body);
     else if (action === "record_brief_publication") await recordBriefPublication(env.DB, actor, body);
     else return Response.json({ error: "Unknown governance action." }, { status: 400 });

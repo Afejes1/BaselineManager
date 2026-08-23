@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "../../../components/app-link";
 import { DomainPageShell } from "../../../components/domain-shell";
-import { downloadBriefDocx, downloadBriefMarkdown, downloadBriefPdf } from "../../../lib/brief-export";
+import { downloadPreparedBrief, prepareBriefDocx, prepareBriefMarkdown, prepareBriefPdf } from "../../../lib/brief-export";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
 import { briefStatuses, displayStatus, type BriefStatus } from "../../../lib/governance-model";
 import { AuditHistoryPanel } from "../../../components/governed-object";
@@ -18,9 +18,10 @@ function dateLabel(value: string | null) {
 export default function BriefDetailPage() {
   const params = useParams<{ id?: string }>();
   const briefId = decodeURIComponent(params.id ?? "");
-  const { portfolio, loading, error, mutate } = useGovernancePortfolio();
+  const { portfolio, loading, error, reload, mutate } = useGovernancePortfolio();
   const [notesDraft, setNotesDraft] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<"overview" | "snapshot" | "text" | "history">("overview");
   const brief = portfolio?.briefs.find((item) => item.id === briefId) ?? null;
   const initiative = portfolio?.initiatives.find((item) => item.id === brief?.initiativeId) ?? null;
@@ -35,17 +36,26 @@ export default function BriefDetailPage() {
 
   async function exportBrief(format: "markdown" | "pdf" | "docx") {
     if (!brief) return;
-    if (format === "markdown") downloadBriefMarkdown(brief);
-    if (format === "pdf") downloadBriefPdf(brief);
-    if (format === "docx") await downloadBriefDocx(brief);
-    try { await mutate("record_brief_publication", { briefId: brief.id, format }); setNotice(`Downloaded ${format.toUpperCase()} and recorded its publication history.`); }
-    catch { setNotice(`Downloaded ${format.toUpperCase()}. Publication history will be retried on the next export.`); }
+    setExporting(true); setNotice("");
+    try {
+      const prepared = format === "markdown" ? prepareBriefMarkdown(brief) : format === "pdf" ? prepareBriefPdf(brief) : await prepareBriefDocx(brief);
+      const digest = await crypto.subtle.digest("SHA-256", await prepared.blob.arrayBuffer());
+      const contentHash = `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+      // Publication confirmation is authoritative. A later portfolio refresh
+      // must never suppress delivery of an artifact already recorded in audit.
+      await mutate("record_brief_publication", { briefId: brief.id, format, contentHash, byteSize: prepared.blob.size }, { refresh: false });
+      downloadPreparedBrief(prepared.blob, prepared.fileName);
+      void reload();
+      setNotice(`Downloaded ${format.toUpperCase()} after recording its exact artifact hash.`);
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : "The report could not be exported and was not recorded as published.");
+    } finally { setExporting(false); }
   }
 
   if (loading) return <DomainPageShell title="Saved report" subtitle="Loading report snapshot…" releaseScope="Loading"><section className="domain-section"><p className="empty">Loading report…</p></section></DomainPageShell>;
   if (error || !brief) return <DomainPageShell title="Brief not found" subtitle={error || "This leadership output is no longer available."} releaseScope="No brief selected" actions={<Link href="/briefs">Back to briefs</Link>}><section className="domain-section"><article className="domain-card empty-state"><h3>Choose a brief from the shared portfolio</h3><p>Executive briefs are now stored with their source snapshot and export history.</p></article></section></DomainPageShell>;
 
-  return <DomainPageShell title={brief.title} subtitle="Saved baseline snapshot, decision context, and publication record." releaseScope={`${brief.snapshot.releaseName} · Snapshot ${dateLabel(brief.snapshot.asOf)}`} actions={<><button className="ghost-button" type="button" onClick={() => void exportBrief("docx")}>Download DOCX</button><button className="primary-button" type="button" onClick={() => void exportBrief("pdf")}>Download PDF</button></>}>
+  return <DomainPageShell title={brief.title} subtitle="Saved baseline snapshot, decision context, and publication record." releaseScope={`${brief.snapshot.releaseName} · Snapshot ${dateLabel(brief.snapshot.asOf)}`} actions={<><button className="ghost-button" type="button" disabled={exporting} onClick={() => void exportBrief("docx")}>Download DOCX</button><button className="primary-button" type="button" disabled={exporting} onClick={() => void exportBrief("pdf")}>{exporting ? "Preparing…" : "Download PDF"}</button></>}>
     <section className="kpi-grid" aria-label="Brief summary"><div className="kpi-card"><span>Lifecycle</span><strong>{displayStatus(brief.status)}</strong><small>Published {dateLabel(brief.publishedAt)}</small></div><div className="kpi-card"><span>Baseline scope</span><strong>{brief.snapshot.sourceRows}</strong><small>Working baseline records</small></div><div className="kpi-card"><span>Products</span><strong>{brief.snapshot.products}</strong><small>Across {brief.snapshot.releases} releases</small></div><div className="kpi-card"><span>Review attention</span><strong>{brief.snapshot.reviewRows}</strong><small>Review records at snapshot time</small></div></section>
     <nav className="detail-tabs" aria-label="Brief views">{(["overview", "snapshot", "text", "history"] as const).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "text" ? "Brief text" : displayStatus(item)}</button>)}</nav>
     {tab === "overview" && <section className="split-layout"><article className="domain-card"><span className="eyebrow">INITIATIVE CONTEXT</span><h3>{initiative ? <Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link> : "Independent report"}</h3><p>{initiative?.consequence || "Consequence not recorded."}</p><p className="entity-meta">Decision required: {initiative?.decisionAsk || "Not recorded"}</p><p className="entity-meta">Desired outcome: {initiative?.desiredOutcome || "Not recorded"}</p></article><article className="domain-card"><span className="eyebrow">REPORT CONTROLS</span><h3>Status and notes</h3><label className="modal-field">Status<select value={brief.status} onChange={(event) => void update({ status: event.target.value as BriefStatus }, "Report status updated.")}>{briefStatuses.map((status) => <option key={status} value={status}>{displayStatus(status)}</option>)}</select></label><label className="modal-field">Analyst notes<textarea rows={5} value={notes} onChange={(event) => setNotesDraft(event.target.value)} placeholder="Context for the next reviewer" /></label><button className="primary-button" type="button" onClick={() => void update({ notes }, "Report notes saved.")}>Save notes</button><p className="entity-meta">Created {dateLabel(brief.createdAt)} · Updated {dateLabel(brief.updatedAt)}</p></article></section>}

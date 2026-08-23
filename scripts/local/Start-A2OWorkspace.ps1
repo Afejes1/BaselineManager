@@ -14,13 +14,19 @@ try {
   if (-not (Test-Path -LiteralPath '.env')) {
     throw '.env is missing. Run npm run local:init first.'
   }
+  foreach ($requiredBuildInput in @('dist/server/index.js','dist/client','wrangler.local-runtime.jsonc')) {
+    if (-not (Test-Path -LiteralPath $requiredBuildInput)) {
+      throw "The verified local runtime is missing $requiredBuildInput. Run npm run local:verify first."
+    }
+  }
 
+  Assert-A2OBuildManifest
+  Assert-A2ONoPendingMigrations
+
+  Write-Output 'Starting the verified A2O Worker bundle on http://127.0.0.1:3000.'
   Invoke-A2OCommand {
-    npx --no-install wrangler d1 migrations apply DB --local
-  } 'Local database migration failed.'
-
-  Write-Output 'Starting the A2O Technical Baseline Manager on localhost only.'
-  Invoke-A2OCommand { npm run dev } 'The local application stopped with an error.'
+    npx --no-install wrangler dev --config wrangler.local-runtime.jsonc --local --ip 127.0.0.1 --port 3000 --persist-to .wrangler/state --log-level warn --show-interactive-dev-session false
+  } 'The local application stopped with an error.'
 } finally {
   Pop-Location
 }

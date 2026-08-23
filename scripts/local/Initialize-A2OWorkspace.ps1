@@ -20,9 +20,14 @@ try {
     Write-Output 'Dependencies are present; skipping installation.'
   }
 
-  Invoke-A2OCommand {
-    npx --no-install wrangler d1 migrations apply DB --local
-  } 'Local database migration failed.'
+  $statePath = Join-Path $projectRoot '.wrangler\state'
+  if (Test-Path -LiteralPath $statePath) {
+    Assert-A2ONoPendingMigrations
+  } else {
+    Invoke-A2OCommand {
+      npx --no-install wrangler d1 migrations apply DB --config wrangler.local-runtime.jsonc --local --persist-to .wrangler/state
+    } 'Local database migration failed.'
+  }
 
   Write-Output 'A2O local workspace initialized.'
   Write-Output 'Next: npm run local:verify'

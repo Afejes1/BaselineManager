@@ -30,7 +30,7 @@ export function useGovernancePortfolio() {
 
   useEffect(() => { const handle = window.setTimeout(() => { void reload(); }, 0); return () => window.clearTimeout(handle); }, [reload]);
 
-  const mutate = useCallback(async (action: string, payload: Record<string, unknown>) => {
+  const mutate = useCallback(async (action: string, payload: Record<string, unknown>, options: { refresh?: boolean } = {}) => {
     const response = await fetch("/api/governance", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -38,7 +38,7 @@ export function useGovernancePortfolio() {
     });
     const result = await response.json() as { error?: string; id?: string };
     if (!response.ok) throw new Error(result.error || "The governance update could not be saved.");
-    await reload();
+    if (options.refresh !== false) await reload();
     return result;
   }, [reload]);
 

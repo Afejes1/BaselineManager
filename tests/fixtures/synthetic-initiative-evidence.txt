@@ -1,0 +1,4 @@
+SYNTHETIC TEST EVIDENCE
+
+Purpose: reversible end-to-end verification of initiative-bound document handling.
+Classification: synthetic / unclassified test data.

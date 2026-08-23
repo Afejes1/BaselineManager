@@ -438,7 +438,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     const [requirementId, objectiveId, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, changeAction, beforeText, afterText, rationale, disposition] = requirement;
     const objectiveRequirementId = requirementId.replace("demo-requirement-", "demo-objective-requirement-");
     statements.push(
-      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, changeAction === "retire" ? "retired" : "active", actor.id, at, at),
+      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, "active", actor.id, at, at),
       db.prepare("INSERT INTO objective_requirement (id,objective_id,requirement_id,version_label,change_action,before_text,after_text,rationale,disposition,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(objectiveRequirementId, objectiveId, requirementId, "1", changeAction, beforeText, afterText, rationale, disposition, sourceLocator, sourceAsOf, actor.id, at, at),
     );
   }
@@ -596,7 +596,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     const [requirementId, objectiveId, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, changeAction, beforeText, afterText, rationale, disposition] = requirement;
     const objectiveRequirementId = requirementId.replace("demo-requirement-", "demo-objective-requirement-");
     statements.push(
-      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, changeAction === "retire" ? "retired" : "active", actor.id, at, at),
+      db.prepare("INSERT INTO requirement (id,program_id,external_identifier,title,source_system,source_locator,source_as_of,current_text,lifecycle_status,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(requirementId, PROGRAM_ID, externalIdentifier, title, sourceSystem, sourceLocator, sourceAsOf, afterText || beforeText, "active", actor.id, at, at),
       db.prepare("INSERT INTO objective_requirement (id,objective_id,requirement_id,version_label,change_action,before_text,after_text,rationale,disposition,source_reference,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(objectiveRequirementId, objectiveId, requirementId, "1", changeAction, beforeText, afterText, rationale, disposition, sourceLocator, sourceAsOf, actor.id, at, at),
     );
   }

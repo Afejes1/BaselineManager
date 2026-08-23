@@ -101,7 +101,8 @@ function normalizeSubjects(value: unknown): SourceSubject[] {
 function normalizeDependencies(value: unknown): SourceDependency[] {
   return Array.isArray(value) ? value.map((item) => {
     const row = item as Record<string, unknown>;
-    return { source_feed_key: text(row.source_feed_key || row.sourceFeedKey), direction: text(row.direction) === "blocked_by" ? "blocked_by" : "blocks", target_reference: text(row.target_reference || row.targetReference), target_subject_id: text(row.target_subject_id || row.targetSubjectId) || null };
+    const direction: SourceDependency["direction"] = text(row.direction) === "blocked_by" ? "blocked_by" : "blocks";
+    return { source_feed_key: text(row.source_feed_key || row.sourceFeedKey), direction, target_reference: text(row.target_reference || row.targetReference), target_subject_id: text(row.target_subject_id || row.targetSubjectId) || null };
   }).filter((dependency) => dependency.source_feed_key && dependency.target_reference) : [];
 }
 

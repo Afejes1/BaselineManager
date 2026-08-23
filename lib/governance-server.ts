@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { BriefSnapshot, BriefStatus, GovernanceEntityKind, GovernanceRecordStatus, GovernanceRecordType, InitiativePriority, InitiativeStatus, ObjectCatalogItem, Portfolio, WorkPackageStatus } from "./governance-model";
+import { handlingMarkingFromSourceNames, PROGRAM_HANDLING_MARKING } from "./output-handling";
 
 export const PROGRAM_ID = "program-jsf";
 // This is the existing authoritative baseline workspace. Governance records
@@ -8,7 +9,7 @@ export const PROGRAM_ID = "program-jsf";
 export const WORKSPACE_ID = "workspace-jsf-current";
 
 type Database = typeof env.DB;
-type Actor = Portfolio["actor"];
+export type Actor = Portfolio["actor"];
 
 const initiativeStatusSet = new Set<InitiativeStatus>(["draft", "active", "decision_required", "closed"]);
 const initiativePrioritySet = new Set<InitiativePriority>(["low", "medium", "high", "critical"]);
@@ -25,11 +26,27 @@ const normalized = (value: unknown) => clean(value).normalize("NFKC").replace(/\
 const asArray = <T>(value: unknown) => Array.isArray(value) ? value as T[] : [];
 const json = <T>(value: string, fallback: T): T => { try { return JSON.parse(value) as T; } catch { return fallback; } };
 
+function safeDecode(value: string | null) {
+  if (!value) return null;
+  try { return decodeURIComponent(value); }
+  catch { return null; }
+}
+
+function isLocalRequest(request: Request) {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 function actorFromRequest(request: Request) {
-  const userId = request.headers.get("oai-authenticated-user-id") || "local-baseline-steward";
-  const email = request.headers.get("oai-authenticated-user-email");
-  const fullName = request.headers.get("oai-authenticated-user-full-name");
-  const displayName = fullName ? decodeURIComponent(fullName) : email || "Baseline steward";
+  const authenticatedUserId = request.headers.get("oai-authenticated-user-id")?.trim() || "";
+  const authenticatedEmail = request.headers.get("oai-authenticated-user-email")?.trim() || "";
+  if ((!authenticatedUserId || !authenticatedEmail) && !isLocalRequest(request)) throw new Error("Authentication is required to access this workspace.");
+  const userId = authenticatedUserId || "local-baseline-steward";
+  const email = authenticatedEmail || null;
+  const fullName = request.headers.get("oai-authenticated-user-full-name-encoding") === "percent-encoded-utf-8"
+    ? safeDecode(request.headers.get("oai-authenticated-user-full-name"))
+    : null;
+  const displayName = fullName || email || "Baseline steward";
   return { id: userId, email, displayName };
 }
 
@@ -44,7 +61,9 @@ export async function ensureActor(db: Database, request: Request): Promise<Actor
   let role = existing?.role;
   if (!role) {
     const count = await db.prepare("SELECT COUNT(*) AS count FROM program_role_assignment WHERE program_id=?").bind(PROGRAM_ID).first<{ count: number }>();
-    role = Number(count?.count ?? 0) === 0 ? "steward" : "editor";
+    // The first local/hosted owner bootstraps the workspace. Every later user
+    // starts read-only and must be deliberately elevated by a steward.
+    role = Number(count?.count ?? 0) === 0 ? "steward" : "viewer";
     await db.prepare("INSERT INTO program_role_assignment (id,program_id,user_id,role,assigned_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("role"), PROGRAM_ID, candidate.id, role, candidate.id, at, at).run();
   }
   return { id: candidate.id, displayName: candidate.displayName, role };
@@ -79,7 +98,7 @@ type BriefRow = { id: string; initiative_id: string | null; initiative_title: st
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
 
 export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> {
-  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult] = await Promise.all([
+  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult, sourcePackageResult] = await Promise.all([
     db.prepare("SELECT i.*, r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
     db.prepare("SELECT w.id,w.initiative_id,w.parent_id,w.wbs_code,w.title,w.owner,w.planned_start,w.due_date,w.actual_start,w.actual_finish,w.status,w.work_type,w.definition_of_done,w.progress_basis,w.notes,w.sort_order,w.created_at,w.updated_at FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY w.initiative_id,w.sort_order,w.wbs_code").bind(PROGRAM_ID).all<WorkPackageRow>(),
@@ -90,6 +109,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
+    db.prepare("SELECT file_name FROM source_package WHERE program_id=? ORDER BY received_at,id").bind(PROGRAM_ID).all<{ file_name: string }>(),
   ]);
 
   const scopes = new Map<string, ScopeRow[]>();
@@ -107,6 +127,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
 
   return {
     actor,
+    handlingMarking: handlingMarkingFromSourceNames(sourcePackageResult.results.map((entry) => entry.file_name)),
     initiatives: initiativeResult.results.map((entry) => ({
       id: entry.id, title: entry.title, status: entry.status, priority: entry.priority, owner: entry.owner, targetDate: entry.target_date,
       consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, primaryReleaseId: entry.primary_release_id,
@@ -122,6 +143,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
       documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
       createdAt: entry.created_at, updatedAt: entry.updated_at,
     })),
+    documents: documentResult.results.map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
     briefs: briefResult.results.map((entry) => ({
       id: entry.id, initiativeId: entry.initiative_id, initiativeTitle: entry.initiative_title, title: entry.title, status: entry.status, notes: entry.notes,
       snapshot: json<BriefSnapshot>(entry.snapshot_payload, emptySnapshot()), bodyMarkdown: entry.body_markdown, publishedAt: entry.published_at, createdAt: entry.created_at, updatedAt: entry.updated_at,
@@ -204,7 +226,7 @@ function mapWorkPackage(work: WorkPackageRow, objectiveLinks: WorkPackageObjecti
 }
 
 function emptySnapshot(): BriefSnapshot {
-  return { asOf: "", releaseName: "All releases", sourceRows: 0, products: 0, releases: 0, reviewRows: 0, productNames: [], linkedRecords: [] };
+  return { asOf: "", handlingMarking: PROGRAM_HANDLING_MARKING, releaseName: "All releases", sourceRows: 0, products: 0, releases: 0, reviewRows: 0, productNames: [], linkedRecords: [] };
 }
 
 async function releaseIdFor(db: Database, releaseName: unknown) {
@@ -224,6 +246,14 @@ function scopeProducts(value: unknown): Array<{ id: string; label: string | null
   return [...unique.entries()].map(([id, label]) => ({ id, label }));
 }
 
+async function assertProductScopes(db: Database, products: Array<{ id: string }>, releaseId: string | null) {
+  for (const product of products) {
+    const row = await db.prepare("SELECT p.id FROM product p WHERE p.id=? AND p.program_id=? AND EXISTS (SELECT 1 FROM baseline_occurrence bo WHERE bo.product_id=p.id AND bo.workspace_id=? AND bo.lifecycle_status='active' AND (? IS NULL OR bo.release_id=?))")
+      .bind(product.id, PROGRAM_ID, WORKSPACE_ID, releaseId, releaseId).first<{ id: string }>();
+    if (!row) throw new Error("Every scoped product must be active in the selected baseline release.");
+  }
+}
+
 export async function createInitiative(db: Database, actor: Actor, body: Record<string, unknown>) {
   requireWriter(actor);
   const title = clean(body.title);
@@ -234,6 +264,10 @@ export async function createInitiative(db: Database, actor: Actor, body: Record<
   const initiativeId = id("initiative");
   const at = now();
   const products = scopeProducts(body.productScopes);
+  const entireReleaseScope = body.entireReleaseScope === true;
+  if (entireReleaseScope && products.length) throw new Error("Use either the entire release scope or specific products, not both.");
+  if (!entireReleaseScope && !products.length) throw new Error("Choose at least one product or explicitly use the entire release scope.");
+  await assertProductScopes(db, products, releaseId);
   const statements: D1PreparedStatement[] = [
     db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .bind(initiativeId, PROGRAM_ID, releaseId, title, normalized(title), status, priority, nullable(body.owner), nullable(body.targetDate), nullable(body.consequence), nullable(body.desiredOutcome), nullable(body.decisionAsk), actor.id, at, at),
@@ -434,25 +468,26 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   await db.batch(statements);
 }
 
-type SourceScopeRow = { product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
+type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
 
-export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>) {
+export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>, markdownFactory?: (context: { title: string; snapshot: BriefSnapshot }) => string) {
   requireWriter(actor);
   const initiativeId = clean(body.initiativeId);
   const initiative = await db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.id=? AND i.program_id=?").bind(initiativeId, PROGRAM_ID).first<InitiativeRow>();
   if (!initiative) throw new Error("Choose a durable initiative before creating a brief.");
   const productScopes = await db.prepare("SELECT scope_id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ scope_id: string }>();
   const scopedProductIds = new Set(productScopes.results.map((entry) => entry.scope_id));
-  const sourceRows = await db.prepare("SELECT bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
+  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
   const selectedRows = sourceRows.results.filter((row) => (!initiative.primary_release_id || row.release_id === initiative.primary_release_id) && (!scopedProductIds.size || (row.product_id && scopedProductIds.has(row.product_id))));
   const linkedRecords = await db.prepare("SELECT g.record_type,g.title,g.status FROM governance_record g JOIN governance_record_link l ON l.governance_record_id=g.id WHERE l.entity_kind='initiative' AND l.entity_id=? ORDER BY g.updated_at DESC").bind(initiativeId).all<{ record_type: string; title: string; status: string }>();
   const productNames = [...new Set(selectedRows.map((row) => row.product_name).filter(Boolean))].slice(0, 20) as string[];
   const releaseNames = new Set(selectedRows.map((row) => row.release_name).filter(Boolean));
-  const snapshot: BriefSnapshot = { asOf: now(), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
+  const sourcePackageNames = await db.prepare("SELECT file_name FROM source_package WHERE program_id=? ORDER BY received_at,id").bind(PROGRAM_ID).all<{ file_name: string }>();
+  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: handlingMarkingFromSourceNames(sourcePackageNames.results.map((entry) => entry.file_name)), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
   const title = clean(body.title) || `${initiative.title} - Executive one-pager`;
   const briefId = id("brief");
   const at = now();
-  const markdown = briefMarkdown(title, initiative, snapshot);
+  const markdown = markdownFactory ? markdownFactory({ title, snapshot }) : briefMarkdown(title, initiative, snapshot);
   await db.batch([
     db.prepare("INSERT INTO executive_brief (id,program_id,initiative_id,title,status,notes,snapshot_payload,body_markdown,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(briefId, PROGRAM_ID, initiativeId, title, "draft", nullable(body.notes), JSON.stringify(snapshot), markdown, actor.id, at, at),
     audit(db, actor, "executive_brief_created", "executive_brief", briefId, { title, initiativeId, snapshot }),
@@ -479,13 +514,16 @@ export async function recordBriefPublication(db: Database, actor: Actor, body: R
   const briefId = clean(body.briefId);
   const format = clean(body.format);
   if (format !== "markdown" && format !== "pdf" && format !== "docx") throw new Error("Unsupported brief publication format.");
+  const contentHash = clean(body.contentHash).toLowerCase();
+  const byteSize = Number(body.byteSize);
+  if (!/^sha256:[0-9a-f]{64}$/.test(contentHash) || !Number.isSafeInteger(byteSize) || byteSize <= 0) throw new Error("A valid SHA-256 artifact hash and byte size are required before recording publication.");
   const brief = await db.prepare("SELECT snapshot_payload,updated_at FROM executive_brief WHERE id=? AND program_id=?").bind(briefId, PROGRAM_ID).first<{ snapshot_payload: string; updated_at: string }>();
   if (!brief) throw new Error("The requested brief no longer exists.");
   const publicationId = id("brief-publication");
   const at = now();
   await db.batch([
-    db.prepare("INSERT INTO brief_publication (id,brief_id,format,content_hash,snapshot_payload,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(publicationId, briefId, format, `${briefId}:${brief.updated_at}:${format}`, brief.snapshot_payload, actor.id, at),
-    audit(db, actor, "executive_brief_exported", "executive_brief", briefId, { publicationId, format }),
+    db.prepare("INSERT INTO brief_publication (id,brief_id,format,content_hash,snapshot_payload,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(publicationId, briefId, format, contentHash, brief.snapshot_payload, actor.id, at),
+    audit(db, actor, "executive_brief_exported", "executive_brief", briefId, { publicationId, format, contentHash, byteSize }),
   ]);
 }
 
@@ -495,7 +533,7 @@ function briefMarkdown(title: string, initiative: InitiativeRow, snapshot: Brief
   return `# ${title}\n\n## Decision / outcome\n${initiative.decision_ask || "Decision ask not yet recorded."}\n\n${initiative.desired_outcome || "Desired outcome not yet recorded."}\n\n## Scope snapshot\n- As of: ${snapshot.asOf}\n- Release scope: ${snapshot.releaseName}\n- Baseline records: ${snapshot.sourceRows}\n- Products: ${snapshot.products}\n- Releases: ${snapshot.releases}\n- Records needing review: ${snapshot.reviewRows}\n\n## Consequence\n${initiative.consequence || "Not yet recorded."}\n\n## Representative products\n${products}\n\n## Linked Government record(s)\n${linked}\n`;
 }
 
-export type DocumentBucket = { put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string } }) => Promise<unknown>; get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string; contentDisposition?: string } } | null>; delete: (key: string) => Promise<void> };
+export type DocumentBucket = { put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string } }) => Promise<unknown>; get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string; contentDisposition?: string } } | null>; head?: (key: string) => Promise<unknown | null>; delete: (key: string) => Promise<void> };
 
 export function documentsBucket() {
   return (env as unknown as { DOCUMENTS?: DocumentBucket }).DOCUMENTS;

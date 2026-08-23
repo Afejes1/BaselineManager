@@ -1,3 +1,5 @@
+import type { OutputHandlingMarking } from "./output-handling.js";
+
 export const initiativeStatuses = ["draft", "active", "decision_required", "closed"] as const;
 export const initiativePriorities = ["low", "medium", "high", "critical"] as const;
 export const workPackageStatuses = ["planned", "in_progress", "on_hold", "complete", "cancelled"] as const;
@@ -125,6 +127,7 @@ export type GovernanceRecord = {
 
 export type BriefSnapshot = {
   asOf: string;
+  handlingMarking: OutputHandlingMarking;
   releaseName: string;
   sourceRows: number;
   products: number;
@@ -172,10 +175,12 @@ export type IntakePackage = {
 
 export type Portfolio = {
   actor: { id: string; displayName: string; role: "steward" | "editor" | "viewer" };
+  handlingMarking: OutputHandlingMarking;
   initiatives: Initiative[];
   workPackages: WorkPackage[];
   workPackageDependencies: WorkPackageDependency[];
   records: GovernanceRecord[];
+  documents: EvidenceDocument[];
   briefs: ExecutiveBrief[];
   activity: ActivityEvent[];
 };

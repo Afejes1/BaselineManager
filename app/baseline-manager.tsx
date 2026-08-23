@@ -278,11 +278,11 @@ export function BaselineManager() {
   useEffect(() => {
     fetch("/api/baseline/reviews")
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((payload: { reviews?: Record<string, ManualReview> }) => setReviews(payload.reviews ?? {}))
+      .then((payload) => setReviews((payload as { reviews?: Record<string, ManualReview> }).reviews ?? {}))
       .catch(() => undefined);
   }, []);
 
-  useEffect(() => { fetch("/api/demo", { cache: "no-store" }).then((response) => response.json()).then((payload: { enabled?: boolean }) => setDemoEnabled(payload.enabled !== false)).catch(() => undefined); }, []);
+  useEffect(() => { fetch("/api/demo", { cache: "no-store" }).then((response) => response.json()).then((payload) => setDemoEnabled((payload as { enabled?: boolean }).enabled !== false)).catch(() => undefined); }, []);
 
   const selected = selectedIndex === null ? blankRecord() : rows[selectedIndex] ?? blankRecord();
   const selectedMeta = selectedIndex === null ? null : rows[selectedIndex]?.__meta ?? null;
@@ -727,7 +727,7 @@ export function BaselineManager() {
       setNotice(publication.error || "The export readiness check could not be completed.");
       return;
     }
-    const data = [TECHNICAL_BASELINE_COLUMNS, ...exportRows.map((row) => TECHNICAL_BASELINE_COLUMNS.map((column) => row[column] ?? ""))];
+    const data = [Array.from(TECHNICAL_BASELINE_COLUMNS), ...exportRows.map((row) => TECHNICAL_BASELINE_COLUMNS.map((column) => row[column] ?? ""))];
     const sheet = XLSX.utils.aoa_to_sheet(data);
     sheet["!cols"] = TECHNICAL_BASELINE_COLUMNS.map((column) => ({ wch: Math.min(46, Math.max(12, column.length + 2)) }));
     const workbook = XLSX.utils.book_new();

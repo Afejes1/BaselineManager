@@ -70,10 +70,10 @@ export default function ProductDetailPage() {
   const changeRequests = changes.requests.filter((request) => changeRequestIds.has(request.id));
   const effectIds = new Set(changeEffects.map((effect) => effect.id));
   const objectiveIds = new Set((decisionWorkspace?.objectiveEffectAttributions || []).filter((item) => effectIds.has(item.changeEffectId)).map((item) => item.objectiveId));
-  const objectives = (decisionWorkspace?.objectives || []).filter((item) => objectiveIds.has(item.id) || changeRequestIds.has(item.changeRequestId));
+  const objectives = (decisionWorkspace?.objectives || []).filter((item) => objectiveIds.has(item.id) || Boolean(item.changeRequestId && changeRequestIds.has(item.changeRequestId)));
   const initiativeIds = new Set((decisionWorkspace?.links || []).filter((item) => changeRequestIds.has(item.changeRequestId)).map((item) => item.initiativeId));
   const initiatives = (decisionWorkspace?.initiatives || []).filter((item) => initiativeIds.has(item.id));
-  const workPackages = (governance?.workPackages || []).filter((item) => item.objectiveLinks.some((link) => objectiveIds.has(link.objectiveId)) || Boolean(item.objectiveId && objectiveIds.has(item.objectiveId)));
+  const workPackages = (governance?.workPackages || []).filter((item) => item.objectiveLinks.some((link) => objectiveIds.has(link.objectiveId)));
   const platformByOccurrence = new Map(platformPortfolio.assignments.filter((item) => item.assignmentRole === "primary").map((item) => [item.baselineOccurrenceId, platformPortfolio.platforms.find((platform) => platform.id === item.platformId)]));
   const productPlatforms = Array.from(new Map([...productRows.map((row) => platformByOccurrence.get(row.__meta.occurrenceId)).filter(Boolean), ...infrastructureInstallations.map((item) => infrastructurePlatformById.get(item.platformId)).filter(Boolean)].map((platform) => [platform!.id, platform!])).values());
   const capabilities = unique(productRows.map((row) => text(row["Technical Capability Satisfied by this SW/Tech - Notes"])));

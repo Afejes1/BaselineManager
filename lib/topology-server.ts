@@ -38,7 +38,7 @@ type OccurrenceReference = { id: string; release_id: string | null; configuratio
 async function checkedOccurrence(db: Database, occurrenceId: string) {
   const occurrence = await db.prepare("SELECT id,release_id,configuration_node_id,product_id FROM baseline_occurrence WHERE id=? AND workspace_id=? AND program_id=?").bind(occurrenceId, WORKSPACE_ID, PROGRAM_ID).first<OccurrenceReference>();
   if (!occurrence?.release_id || !occurrence.configuration_node_id) throw new Error("Choose a materialized release occurrence before adding topology details.");
-  return occurrence;
+  return { ...occurrence, release_id: occurrence.release_id, configuration_node_id: occurrence.configuration_node_id };
 }
 
 export async function saveHostProfile(db: Database, actor: Actor, body: Record<string, unknown>) {

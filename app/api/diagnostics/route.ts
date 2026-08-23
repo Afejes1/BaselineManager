@@ -4,6 +4,8 @@ import { documentsBucket, ensureActor } from "../../../lib/governance-server";
 import type { OperatorDiagnostic, OperatorDiagnostics } from "../../../lib/operator-diagnostics";
 
 type CountRow = { count: number };
+const buildSource = (import.meta.env as Record<string, string | undefined>).VITE_APP_BUILD_SHA || "development";
+const workspaceTransferMode = (env as unknown as { WORKSPACE_TRANSFER_MODE?: string }).WORKSPACE_TRANSFER_MODE === "local" ? "local" : "disabled";
 
 export async function GET(request: Request) {
   try {
@@ -20,7 +22,7 @@ export async function GET(request: Request) {
       env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('infrastructure_node','infrastructure_reference_value','release_infrastructure_node','infrastructure_product_installation','infrastructure_connection')").all<{ name: string }>(),
       env.DB.prepare("PRAGMA foreign_key_check").all<Record<string, unknown>>(),
       env.DB.prepare("SELECT created_at FROM audit_event WHERE program_id='program-jsf' AND action IN ('workspace_package_exported','workspace_package_imported') ORDER BY created_at DESC LIMIT 1").first<{ created_at: string }>(),
-      env.DB.prepare("SELECT id,file_name,r2_key FROM evidence_document WHERE program_id='program-jsf'").all<{ id: string; file_name: string; r2_key: string }>(),
+      env.DB.prepare("SELECT id,file_name,r2_key FROM evidence_document WHERE program_id='program-jsf' ORDER BY created_at DESC LIMIT 20").all<{ id: string; file_name: string; r2_key: string }>(),
     ]);
     const requiredDependencyColumns = ["consequence_if_unmet", "confidence", "source_reference", "source_as_of"];
     const dependencyColumnNames = new Set(dependencyColumns.results.map((item) => item.name));
@@ -47,13 +49,18 @@ export async function GET(request: Request) {
     checks.push({ id: "foreign-keys", label: "Referential integrity", status: foreignKeys.results.length ? "fail" : "pass", detail: foreignKeys.results.length ? `${foreignKeys.results.length} foreign-key violations detected.` : "No foreign-key violations detected." });
     const bucket = documentsBucket();
     let missingEvidence = 0;
-    if (bucket) for (const row of evidenceRows.results) if (!await bucket.get(row.r2_key)) missingEvidence += 1;
-    checks.push({ id: "documents", label: "Evidence storage", status: !bucket && evidenceRows.results.length ? "fail" : !bucket ? "warning" : missingEvidence ? "fail" : "pass", detail: !bucket ? "Document storage binding is unavailable." : missingEvidence ? `${missingEvidence} evidence files are missing from storage.` : `${evidenceRows.results.length} evidence files verified.` });
+    if (bucket) for (const row of evidenceRows.results) {
+      if (bucket.head) { if (!await bucket.head(row.r2_key)) missingEvidence += 1; }
+      else { const object = await bucket.get(row.r2_key); if (!object) missingEvidence += 1; else await object.body.cancel(); }
+    }
+    const evidenceCount = Number(evidence?.count || 0);
+    const evidenceScope = evidenceCount > evidenceRows.results.length ? `Latest ${evidenceRows.results.length} of ${evidenceCount}` : `${evidenceRows.results.length}`;
+    checks.push({ id: "documents", label: "Evidence storage", status: !bucket && evidenceCount ? "fail" : !bucket ? "warning" : missingEvidence ? "fail" : evidenceCount > evidenceRows.results.length ? "warning" : "pass", detail: !bucket ? "Document storage binding is unavailable." : missingEvidence ? `${missingEvidence} sampled evidence files are missing from storage.` : `${evidenceScope} evidence files checked without downloading their contents.` });
     checks.push({ id: "recovery", label: "Recovery package", status: lastExport?.created_at ? "pass" : "warning", detail: lastExport?.created_at ? `Last full workspace transfer: ${new Date(lastExport.created_at).toLocaleString("en-US")}.` : "No full Workspace Transfer Package export or import is recorded." });
     let latestMigration: string | null = null;
     try { latestMigration = (await env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1").first<{ name: string }>())?.name || null; } catch { latestMigration = null; }
     const overall = checks.some((item) => item.status === "fail") ? "blocked" : checks.some((item) => item.status === "warning") ? "attention" : "ready";
-    const result: OperatorDiagnostics = { generatedAt: new Date().toISOString(), overall, applicationVersion: packageMetadata.version, latestMigration, lastWorkspaceExportAt: lastExport?.created_at || null, counts: { baselineRecords: Number(baseline?.count || 0), changeRequests: Number(changes?.count || 0), objectives: Number(objectives?.count || 0), initiatives: Number(initiatives?.count || 0), evidenceDocuments: Number(evidence?.count || 0) }, checks };
+    const result: OperatorDiagnostics = { generatedAt: new Date().toISOString(), overall, applicationVersion: packageMetadata.version, buildSource, workspaceTransferMode, latestMigration, lastWorkspaceExportAt: lastExport?.created_at || null, counts: { baselineRecords: Number(baseline?.count || 0), changeRequests: Number(changes?.count || 0), objectives: Number(objectives?.count || 0), initiatives: Number(initiatives?.count || 0), evidenceDocuments: Number(evidence?.count || 0) }, checks };
     return Response.json(result);
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Operator diagnostics are unavailable." }, { status: 500 });

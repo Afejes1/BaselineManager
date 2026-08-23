@@ -73,7 +73,7 @@ export function bundleFor(workspace: Omit<InitiativeDecisionWorkspace, "assessme
   const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
   const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId || "") || objectiveChangeRequestLinks.some((link) => link.objectiveId === item.id && requestIds.has(link.changeRequestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }
 
 async function assertInitiative(db: Database, initiativeId: string) {
@@ -275,7 +275,10 @@ export async function saveAcceptanceCriterion(db: Database, actor: Actor, body: 
   const tier = oneOf<AcceptanceTier>(body.tier, ["tier_3", "tier_4", "other"], "tier_4");
   const method = oneOf<VerificationMethod>(body.verificationMethod, ["analysis", "demonstration", "inspection", "test", "review"], "test");
   const status = oneOf<AcceptanceStatus>(body.status, ["draft", "ready", "in_verification", "passed", "failed", "waived"], "draft");
-  if (status === "passed" && !clean(body.evidenceReference)) throw new Error("A passed acceptance criterion requires an evidence reference.");
+  if (status === "passed" && !clean(body.evidenceReference)) {
+    const attached = await db.prepare("SELECT id FROM acceptance_signoff WHERE criterion_id=? AND decision IN ('accepted','waived') AND evidence_document_id IS NOT NULL LIMIT 1").bind(criterionId).first<{ id: string }>();
+    if (!attached) throw new Error("A passed acceptance criterion requires an evidence reference or an accepted sign-off with an attached document.");
+  }
   const before = await db.prepare("SELECT * FROM acceptance_criterion WHERE id=?").bind(criterionId).first<Record<string, unknown>>();
   const at = now();
   await db.batch([
@@ -291,15 +294,21 @@ export async function recordAcceptanceSignoff(db: Database, actor: Actor, body: 
   const signoffRole = clean(body.signoffRole);
   const decision = oneOf<SignoffDecision>(body.decision, ["pending", "accepted", "rejected", "waived"], "pending");
   if (!criterionId || !signoffRole) throw new Error("Criterion and accountable sign-off role are required.");
-  const criterion = await db.prepare("SELECT c.id FROM acceptance_criterion c JOIN incumbent_objective o ON o.id=c.objective_id WHERE c.id=? AND o.program_id=?").bind(criterionId, PROGRAM_ID).first<{ id: string }>();
+  const criterion = await db.prepare("SELECT c.id,c.objective_id FROM acceptance_criterion c JOIN incumbent_objective o ON o.id=c.objective_id WHERE c.id=? AND o.program_id=?").bind(criterionId, PROGRAM_ID).first<{ id: string; objective_id: string }>();
   if (!criterion) throw new Error("Acceptance criterion was not found.");
   if (decision !== "pending" && (!clean(body.signer) || !clean(body.rationale))) throw new Error("Signer and rationale are required for a completed sign-off.");
+  const evidenceDocumentId = nullable(body.evidenceDocumentId);
+  if (evidenceDocumentId) {
+    const evidence = await db.prepare("SELECT d.id FROM evidence_document d WHERE d.id=? AND d.program_id=? AND (d.initiative_id IN (SELECT icr.initiative_id FROM initiative_change_request icr WHERE icr.change_request_id IN (SELECT change_request_id FROM incumbent_objective WHERE id=? UNION SELECT change_request_id FROM objective_change_request_link WHERE objective_id=?)) OR EXISTS (SELECT 1 FROM governance_record_link grl WHERE grl.governance_record_id=d.governance_record_id AND grl.entity_kind='initiative' AND grl.entity_id IN (SELECT icr.initiative_id FROM initiative_change_request icr WHERE icr.change_request_id IN (SELECT change_request_id FROM incumbent_objective WHERE id=? UNION SELECT change_request_id FROM objective_change_request_link WHERE objective_id=?))))")
+      .bind(evidenceDocumentId, PROGRAM_ID, criterion.objective_id, criterion.objective_id, criterion.objective_id, criterion.objective_id).first<{ id: string }>();
+    if (!evidence) throw new Error("Choose a supporting document attached to the same Initiative as this acceptance criterion.");
+  }
   const existing = await db.prepare("SELECT * FROM acceptance_signoff WHERE criterion_id=? AND signoff_role=?").bind(criterionId, signoffRole).first<Record<string, unknown>>();
   const signoffId = clean(existing?.id) || makeId("signoff");
   const at = now();
   await db.batch([
-    db.prepare("INSERT INTO acceptance_signoff (id,criterion_id,signoff_role,signer,decision,decided_at,rationale,evidence_document_id,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(criterion_id,signoff_role) DO UPDATE SET signer=excluded.signer,decision=excluded.decision,decided_at=excluded.decided_at,rationale=excluded.rationale,evidence_document_id=excluded.evidence_document_id,updated_at=excluded.updated_at").bind(signoffId, criterionId, signoffRole, nullable(body.signer), decision, decision === "pending" ? null : clean(body.decidedAt) || at, nullable(body.rationale), nullable(body.evidenceDocumentId), actor.id, at, at),
-    audit(db, actor, "acceptance_signoff_recorded", "acceptance_criterion", criterionId, { signoffId, signoffRole, decision, signer: nullable(body.signer), rationale: nullable(body.rationale) }, existing),
+    db.prepare("INSERT INTO acceptance_signoff (id,criterion_id,signoff_role,signer,decision,decided_at,rationale,evidence_document_id,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(criterion_id,signoff_role) DO UPDATE SET signer=excluded.signer,decision=excluded.decision,decided_at=excluded.decided_at,rationale=excluded.rationale,evidence_document_id=excluded.evidence_document_id,updated_at=excluded.updated_at").bind(signoffId, criterionId, signoffRole, nullable(body.signer), decision, decision === "pending" ? null : clean(body.decidedAt) || at, nullable(body.rationale), evidenceDocumentId, actor.id, at, at),
+    audit(db, actor, "acceptance_signoff_recorded", "acceptance_criterion", criterionId, { signoffId, signoffRole, decision, signer: nullable(body.signer), rationale: nullable(body.rationale), evidenceDocumentId }, existing),
   ]);
   return signoffId;
 }

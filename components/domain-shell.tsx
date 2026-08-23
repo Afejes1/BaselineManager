@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import Link from "./app-link";
 import { usePathname } from "next/navigation";
@@ -29,6 +29,7 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
   const pathname = usePathname();
   const { releaseLens } = useWorkspaceContext();
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
+  const [online, setOnline] = useState(true);
   const navigationSections = ["Baseline", "Views", "Decisions"] as const;
 
   function toggleRail() {
@@ -38,6 +39,14 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
       return next;
     });
   }
+
+  useEffect(() => {
+    const update = () => setOnline(window.navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => { window.removeEventListener("online", update); window.removeEventListener("offline", update); };
+  }, []);
 
   return (
     <main className="shell">
@@ -87,6 +96,7 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
           </div>
           <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} /><CallNoteControl context={objectContext} />{actions}</div>
         </header>
+        {!online ? <div className="offline-banner" role="alert"><strong>Offline mode:</strong> this page remains visible, but saves, uploads, and report generation require a connection. Use the local Workspace runtime for disconnected airport work.</div> : null}
         {breadcrumb?.length ? <nav className="breadcrumb" aria-label="Breadcrumb">
           {breadcrumb.map((item, index) => <span key={`${item.label}:${index}`}>
             {index ? <i aria-hidden="true">/</i> : null}

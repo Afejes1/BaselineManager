@@ -4,10 +4,13 @@ import { audit, documentsBucket, ensureActor, requireSteward } from "../../../li
 import { exportWorkspacePackage, MAX_WORKSPACE_PACKAGE_BYTES, parseWorkspacePackage, replaceWorkspaceFromPackage } from "../../../lib/workspace-transfer";
 
 const fileName = () => `A2O-Workspace-${new Date().toISOString().slice(0, 10)}.a2oworkspace`;
+const transferEnabled = () => (env as unknown as { WORKSPACE_TRANSFER_MODE?: string }).WORKSPACE_TRANSFER_MODE === "local";
 
 export async function GET(request: Request) {
   try {
+    if (!transferEnabled()) return Response.json({ error: "Full Workspace Transfer is disabled on the hosted Site. Use the local operator runtime for bounded backup and restore." }, { status: 409 });
     const actor = await ensureActor(env.DB, request);
+    requireSteward(actor);
     const result = await exportWorkspacePackage(env.DB, documentsBucket(), packageMetadata.version);
     await audit(env.DB, actor, "workspace_package_exported", "baseline_workspace", "workspace-jsf-current", { packageVersion: result.manifest.packageVersion, totals: result.manifest.totals }).run();
     return new Response(result.bytes as BodyInit, {
@@ -18,13 +21,16 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "The workspace package could not be created." }, { status: 500 });
+    const message = error instanceof Error ? error.message : "The workspace package could not be created.";
+    return Response.json({ error: message }, { status: /Only a Baseline steward/.test(message) ? 403 : 500 });
   }
 }
 
 export async function POST(request: Request) {
   try {
+    if (!transferEnabled()) return Response.json({ error: "Full Workspace Transfer is disabled on the hosted Site. Validate and restore packages in the local operator runtime." }, { status: 409 });
     const actor = await ensureActor(env.DB, request);
+    requireSteward(actor);
     const form = await request.formData();
     const file = form.get("file");
     const mode = String(form.get("mode") || "validate");
