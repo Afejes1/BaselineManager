@@ -531,7 +531,7 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 .transfer-preview{display:grid;grid-template-columns:1fr 1fr;gap:9px;border-top:1px solid #d6e1db;padding-top:13px;}
 .transfer-preview>div{display:grid;gap:3px;border:1px solid #dbe4df;background:#f8fbf9;padding:10px;}
 .transfer-preview span{color:#6c7b73;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;}
-.transfer-preview strong{color:#254b39;font-size:11px;}
+.transfer-preview strong{color:#254b39;font-size:11px;overflow-wrap:anywhere;}
 .transfer-preview>p,.transfer-preview>label,.transfer-preview>button{grid-column:1/-1;}
 .destructive-note,.warning-copy,.success-copy{border-left:4px solid;padding:11px 13px;font-size:11px;line-height:1.5;}
 .destructive-note{border-color:#aa5047;background:#fff3f1;color:#743931;}

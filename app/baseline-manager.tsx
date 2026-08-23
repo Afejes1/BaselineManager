@@ -17,6 +17,8 @@ import { saveChangeAction, useChangePortfolio } from "../lib/change-client";
 import { WorkspaceContextControl, useWorkspaceContext } from "../components/workspace-context";
 import { useMasterData } from "../lib/master-data-client";
 import { BaselineConfigurationRelationships } from "../components/baseline-configuration-relationships";
+import { DEMONSTRATION_SOURCE_FILE_NAME, SYNTHETIC_HANDLING_MARKING, type OutputHandlingMarking } from "../lib/output-handling";
+import { demonstrationRowsAreAttested } from "../lib/demo-baseline-attestation";
 
 type Cell = string | number | boolean | null | undefined;
 type Record24 = Record<TechnicalBaselineColumn, Cell>;
@@ -171,7 +173,7 @@ function buildDemonstrationExpansion(): Record24[] {
   ];
 }
 
-const DEMONSTRATION_ROWS: Record24[] = [...CORE_DEMONSTRATION_ROWS, ...buildDemonstrationExpansion()];
+export const DEMONSTRATION_ROWS: Record24[] = [...CORE_DEMONSTRATION_ROWS, ...buildDemonstrationExpansion()];
 const DEMONSTRATION_RELEASE_COUNT = new Set(DEMONSTRATION_ROWS.map((row) => String(row.ReleaseName))).size;
 
 const text = (value: Cell) => value == null ? "" : String(value);
@@ -672,11 +674,12 @@ export function BaselineManager() {
     setDemoError("");
     setDemoLoading(true);
     try {
+      if (!(await demonstrationRowsAreAttested(DEMONSTRATION_ROWS))) throw new Error("The built-in demonstration dataset no longer matches its governed server attestation. Rebuild and review the demonstration fixture before loading it.");
       const response = await fetch("/api/baseline/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          fileName: "JSF_V3_Demonstration_Baseline.xlsx",
+          fileName: DEMONSTRATION_SOURCE_FILE_NAME,
           sheetName: "Technical Baseline",
           rows: DEMONSTRATION_ROWS,
           replaceActiveBaseline: true,
@@ -722,18 +725,24 @@ export function BaselineManager() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ releaseScope: activeRelease, occurrenceIds: exportRows.map((row) => row.__meta.occurrenceId) }),
     });
-    const publication = await readiness.json() as { error?: string; blockers?: Array<{ message: string }> };
+    const publication = await readiness.json() as { error?: string; blockers?: Array<{ message: string }>; publicationId?: string; asOf?: string; handlingMarking?: OutputHandlingMarking; rows?: Array<{ occurrenceId: string; row: Record24 }> };
     if (!readiness.ok) {
       setNotice(publication.error || "The export readiness check could not be completed.");
       return;
     }
-    const data = [Array.from(TECHNICAL_BASELINE_COLUMNS), ...exportRows.map((row) => TECHNICAL_BASELINE_COLUMNS.map((column) => row[column] ?? ""))];
+    if (!publication.rows || publication.rows.length !== exportRows.length || !publication.handlingMarking || !publication.publicationId || !publication.asOf) {
+      setNotice("The server did not return a complete governed export snapshot.");
+      return;
+    }
+    const data = [Array.from(TECHNICAL_BASELINE_COLUMNS), ...publication.rows.map(({ row }) => TECHNICAL_BASELINE_COLUMNS.map((column) => row[column] ?? ""))];
     const sheet = XLSX.utils.aoa_to_sheet(data);
     sheet["!cols"] = TECHNICAL_BASELINE_COLUMNS.map((column) => ({ wch: Math.min(46, Math.max(12, column.length + 2)) }));
     const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([[publication.handlingMarking], ["Artifact", "A2O Tech Stack 24-column exchange"], ["Generated", publication.asOf], ["Publication ID", publication.publicationId], ["Control status", "Draft / uncontrolled export; verify against authoritative source systems before decision or distribution."]]), "READ ME");
     XLSX.utils.book_append_sheet(workbook, sheet, "Technical Baseline");
-    XLSX.writeFile(workbook, `Technical_Baseline_${activeRelease === "All releases" ? "All_Releases" : activeRelease}.xlsx`);
-    setNotice(`Exported ${exportRows.length} rows for ${activeRelease} from the validated working baseline.`);
+    const syntheticPrefix = publication.handlingMarking === SYNTHETIC_HANDLING_MARKING ? "SYNTHETIC_" : "WORKING_";
+    XLSX.writeFile(workbook, `${syntheticPrefix}Technical_Baseline_${activeRelease === "All releases" ? "All_Releases" : activeRelease}.xlsx`);
+    setNotice(`Exported ${publication.rows.length} rows for ${activeRelease} from the server-validated working baseline.`);
   }
 
   return <main className="shell">

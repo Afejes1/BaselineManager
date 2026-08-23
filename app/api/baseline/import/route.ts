@@ -6,13 +6,15 @@ import { createBaselineResolver, materializeBaselineRecord, type CurrentBaseline
 import { audit, ensureActor, requireWriter } from "../../../../lib/governance-server";
 import type { GovernedImportItem, ImportResolution } from "../../../../lib/governed-import";
 import { importIdentity, importRunStatements } from "../../../../lib/import-run-server";
+import { demoEnabledFromValue } from "../../../../lib/runtime-policy";
+import { sourceKeyIsSynthetic, sourceNameIsSynthetic } from "../../../../lib/output-handling";
+import { demonstrationRowsAreAttested } from "../../../../lib/demo-baseline-attestation";
 
 type IncomingRow = Record<string, string | number | boolean | null | undefined>;
 const nowIso = () => new Date().toISOString();
-const DEMONSTRATION_SOURCE_KEY_PREFIX = "DEMO-";
 function demoEnabled() {
   const value = (env as unknown as { DEMO_ENABLED?: string }).DEMO_ENABLED;
-  return String(value ?? "true").toLowerCase() !== "false";
+  return demoEnabledFromValue(value);
 }
 async function sha256(value: string) { const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)); return Array.from(new Uint8Array(bytes)).map((byte) => byte.toString(16).padStart(2, "0")).join(""); }
 
@@ -23,8 +25,8 @@ function exactRow(value: IncomingRow): { row: A2ORow | null; error?: string } {
   return { row: asA2ORow(value) };
 }
 
-export async function GET() {
-  try { const rows = await readAssembledBaselineRecords(env.DB, { includeVoided: true }); return Response.json({ rows: rows.map((item) => item.row) }); }
+export async function GET(request: Request) {
+  try { await ensureActor(env.DB, request); const rows = await readAssembledBaselineRecords(env.DB, { includeVoided: true }); return Response.json({ rows: rows.map((item) => item.row) }); }
   catch (error) { return Response.json({ rows: [], error: error instanceof Error ? error.message : "Baseline storage is unavailable." }, { status: 500 }); }
 }
 
@@ -44,12 +46,20 @@ export async function POST(request: Request) {
     const invalidRow = parsedRows.find((item) => !item.row);
     if (invalidRow) return Response.json({ error: invalidRow.error || "Every imported row must preserve the exact A2O Tech Stack 24-column contract." }, { status: 400 });
     const incoming = parsedRows.map((item) => item.row) as A2ORow[]; const replaceActiveBaseline = body.replaceActiveBaseline === true;
+    const usesReservedDemonstrationName = sourceNameIsSynthetic(body.fileName);
+    const reservedDemonstrationKeys = incoming.filter((row) => sourceKeyIsSynthetic(String(row["#"] || ""))).length;
+    if (!replaceActiveBaseline && (usesReservedDemonstrationName || reservedDemonstrationKeys)) {
+      return Response.json({ error: "The built-in demonstration filename and DEMO- source-key namespace are reserved. Rename operational sources and use program source identities." }, { status: 400 });
+    }
     const resolutionByRow = new Map((body.resolutions || []).map((item) => [item.rowNumber, item]));
     const approvedIndexes = new Set(incoming.map((_, index) => index).filter((index) => replaceActiveBaseline || (resolutionByRow.get(index + 2)?.decision || "approve") === "approve"));
     const approvedIncoming = incoming.filter((_, index) => approvedIndexes.has(index));
     if (!approvedIncoming.length) return Response.json({ error: "Approve at least one valid baseline record before applying the workbook." }, { status: 409 });
-    if (replaceActiveBaseline && incoming.some((row) => !String(row["#"] || "").startsWith(DEMONSTRATION_SOURCE_KEY_PREFIX))) {
+    if (replaceActiveBaseline && (!usesReservedDemonstrationName || reservedDemonstrationKeys !== incoming.length)) {
       return Response.json({ error: "Only the synthetic demonstration dataset may replace the active working baseline." }, { status: 400 });
+    }
+    if (replaceActiveBaseline && !(await demonstrationRowsAreAttested(incoming))) {
+      return Response.json({ error: "The baseline replacement payload does not exactly match the server-attested demonstration dataset." }, { status: 400 });
     }
     if (replaceActiveBaseline && !demoEnabled()) return Response.json({ error: "Demonstration data is disabled in this operational environment." }, { status: 403 });
     const existing = await readAssembledBaselineRecords(env.DB, { includeVoided: false });
@@ -60,7 +70,7 @@ export async function POST(request: Request) {
     // A demo reset is repeatable: it reactivates its original immutable source
     // rows rather than attempting to insert a duplicate source package.
     const existingByIdentity = new Map((replaceActiveBaseline
-      ? historical.filter((record) => String(record.row["#"] || "").startsWith(DEMONSTRATION_SOURCE_KEY_PREFIX))
+      ? historical.filter((record) => sourceKeyIsSynthetic(String(record.row["#"] || "")))
       : existing).map((record) => [intakeIdentity(record.row), record]));
     const activeOccurrenceIds = new Set(existing.map((record) => record.occurrenceId));
     // Preload and update an in-memory identity map so every row in the single

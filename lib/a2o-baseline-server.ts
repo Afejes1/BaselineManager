@@ -18,7 +18,7 @@ export type AssembledBaselineRecord = {
   voidedAt: string | null;
   voidedByUserId: string | null;
   baseline: { name: string | null; maturity: string | null; asOf: string | null };
-  source: { fileName: string | null };
+  source: { fileName: string | null; sourceKey: string | null; row: A2ORow | null };
   releaseId: string | null;
   productId: string | null;
   configurationNodeId: string | null;
@@ -38,7 +38,7 @@ type RecordRow = {
   deployment_state_source_row_id: string | null; language: string | null; containerized: string | null; container_technology: string | null; container_type: string | null;
   supplier_name: string | null; extension_source_key: string | null; extension_notes: string | null; extension_capability_notes: string | null;
   extension_notes_1: string | null; extension_notes_2: string | null; extension_notes_3: string | null; extension_notes_4: string | null;
-  snapshot_source_key: string | null;
+  snapshot_source_key: string | null; source_payload: string | null;
 };
 
 const text = (value: unknown) => value == null ? "" : String(value);
@@ -135,7 +135,7 @@ export function assemblySelect(includeVoided = false) {
     bds.source_row_id AS deployment_state_source_row_id, bds.language, bds.containerized, bds.container_technology, bds.container_type,
     supplier.name AS supplier_name,
     ext.source_key AS extension_source_key, ext.notes AS extension_notes, ext.capability_notes AS extension_capability_notes, ext.notes_1 AS extension_notes_1, ext.notes_2 AS extension_notes_2, ext.notes_3 AS extension_notes_3, ext.notes_4 AS extension_notes_4,
-    sr.source_key AS snapshot_source_key
+    sr.source_key AS snapshot_source_key, sr.raw_payload AS source_payload
     FROM baseline_occurrence bo
     LEFT JOIN configuration_baseline cb ON cb.id=bo.baseline_id
     LEFT JOIN release r ON r.id=bo.release_id
@@ -154,19 +154,27 @@ export function assemblySelect(includeVoided = false) {
     `;
 }
 
-export async function readAssembledBaselineRecords(db: D1Database, options: { includeVoided?: boolean; ids?: string[] } = {}) {
-  const ids = options.ids || [];
-  const whereIds = ids.length ? ` AND bo.id IN (${ids.map(() => "?").join(",")})` : "";
-  const sql = assemblySelect(options.includeVoided) + whereIds + " ORDER BY bo.created_at ASC";
-  const result = await db.prepare(sql).bind(BASELINE_WORKSPACE_ID, ...ids).all<RecordRow>();
-  return result.results.map((record) => ({
+export function assembledBaselineRecordsFromDatabaseRows(rows: readonly Record<string, unknown>[]) {
+  return (rows as unknown as RecordRow[]).map((record) => ({
     occurrenceId: record.occurrence_id, sourceRowId: record.source_row_id, revision: record.revision,
     materializationStatus: record.materialization_status, lifecycleStatus: record.lifecycle_status,
     lifecycleReason: record.lifecycle_reason, voidedAt: record.voided_at, voidedByUserId: record.voided_by_user_id,
     baseline: { name: record.baseline_name, maturity: record.baseline_maturity, asOf: record.baseline_as_of },
-    source: { fileName: record.source_file_name }, releaseId: record.release_id, productId: record.product_id,
+    source: { fileName: record.source_file_name, sourceKey: record.snapshot_source_key, row: (() => { try { return asA2ORow(JSON.parse(record.source_payload || "")); } catch { return null; } })() }, releaseId: record.release_id, productId: record.product_id,
     configurationNodeId: record.configuration_node_id, deploymentId: record.deployment_id, row: assembleA2ORow(record),
   })) as AssembledBaselineRecord[];
+}
+
+export async function readAssembledBaselineRecords(db: D1Database, options: { includeVoided?: boolean; ids?: string[] } = {}) {
+  const ids = options.ids || [];
+  const whereIds = ids.length ? " AND bo.id IN (SELECT value FROM json_each(?))" : "";
+  const sql = assemblySelect(options.includeVoided) + whereIds + " ORDER BY bo.created_at ASC";
+  const result = await db.prepare(sql).bind(BASELINE_WORKSPACE_ID, ...(ids.length ? [JSON.stringify(ids)] : [])).all<RecordRow>();
+  return assembledBaselineRecordsFromDatabaseRows(result.results as unknown as Record<string, unknown>[]);
+}
+
+export function assembledRecordMatchesSource(record: AssembledBaselineRecord) {
+  return Boolean(record.source.row) && TECHNICAL_BASELINE_COLUMNS.every((column) => Object.is(record.row[column], record.source.row?.[column]));
 }
 
 export const normalized = (value: unknown) => String(value ?? "").normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();

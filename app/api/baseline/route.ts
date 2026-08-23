@@ -220,7 +220,7 @@ export async function materializeBaselineRecord(db: D1Database, occurrenceId: st
 }
 
 export async function GET(request: Request) {
-  try { const records = await readAssembledBaselineRecords(env.DB, { includeVoided: new URL(request.url).searchParams.get("includeVoided") === "true" }); return Response.json({ workspace: { id: BASELINE_WORKSPACE_ID, label: "Working Technical Baseline" }, records: records.map((record) => ({ ...record, sourceRowId: record.sourceRowId || record.occurrenceId })) }); }
+  try { await ensureActor(env.DB, request); const records = await readAssembledBaselineRecords(env.DB, { includeVoided: new URL(request.url).searchParams.get("includeVoided") === "true" }); return Response.json({ workspace: { id: BASELINE_WORKSPACE_ID, label: "Working Technical Baseline" }, records: records.map((record) => ({ ...record, sourceRowId: record.sourceRowId || record.occurrenceId })) }); }
   catch (error) { return Response.json({ error: error instanceof Error ? error.message : "The working baseline is unavailable." }, { status: 500 }); }
 }
 

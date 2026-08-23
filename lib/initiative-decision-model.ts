@@ -157,6 +157,7 @@ export type AcceptanceSignoff = {
   decidedAt: string | null;
   rationale: string | null;
   evidenceDocumentId: string | null;
+  evidenceIntegrityStatus: "not_attached" | "verified" | "unverified" | "not_checked";
   updatedAt: string;
 };
 

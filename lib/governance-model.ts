@@ -102,6 +102,8 @@ export type EvidenceDocument = {
   contentType: string | null;
   byteSize: number;
   description: string | null;
+  quarantined: boolean;
+  integritySealed: boolean;
   createdAt: string;
 };
 
@@ -145,10 +147,24 @@ export type ExecutiveBrief = {
   status: BriefStatus;
   notes: string | null;
   snapshot: BriefSnapshot;
+  snapshotValid: boolean;
   bodyMarkdown: string;
+  publications: BriefPublication[];
   publishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type BriefPublication = {
+  id: string;
+  briefId: string;
+  format: "markdown" | "pdf" | "docx";
+  contentHash: string;
+  byteSize: number;
+  sourceHash: string;
+  rendererVersion: string;
+  artifactDocumentId: string | null;
+  createdAt: string;
 };
 
 export type ActivityEvent = {

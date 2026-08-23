@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
-import { BASELINE_PROGRAM_ID, BASELINE_WORKSPACE_ID, readAssembledBaselineRecords } from "../../../../lib/a2o-baseline-server";
+import { assembledRecordMatchesSource, BASELINE_PROGRAM_ID, BASELINE_WORKSPACE_ID, readAssembledBaselineRecords } from "../../../../lib/a2o-baseline-server";
 import { ensureActor, requireWriter } from "../../../../lib/governance-server";
+import { handlingMarkingFromSourceLineage } from "../../../../lib/output-handling";
+import { readRuntimePolicy, type RuntimePolicyInput } from "../../../../lib/runtime-policy";
 
 export async function POST(request: Request) {
   try {
@@ -19,9 +21,11 @@ export async function POST(request: Request) {
     if (blockers.length) return Response.json({ error: "Export is blocked until the listed baseline records are deterministic.", blockers }, { status: 422 });
     const releaseNames = [...new Set(records.map((record) => String(record.row.ReleaseName ?? "").trim()).filter(Boolean))];
     const releaseScope = releaseNames.length === 1 ? releaseNames[0] : "All releases";
+    const policy = readRuntimePolicy(env as unknown as RuntimePolicyInput);
+    const handlingMarking = handlingMarkingFromSourceLineage(records.map((record) => ({ fileName: record.source.fileName || "", sourceKey: record.source.sourceKey || "", projectionMatchesSource: assembledRecordMatchesSource(record) })), policy.demoEnabled);
     const now = new Date().toISOString(); const publicationId = crypto.randomUUID();
-    await env.DB.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(publicationId, BASELINE_PROGRAM_ID, actor.id, "a2o_tech_stack_exported", "baseline_workspace", BASELINE_WORKSPACE_ID, JSON.stringify({ releaseScope, occurrenceIds, asOf: now, contract: "A2O Tech Stack 24-column exchange" }), now).run();
+    await env.DB.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(publicationId, BASELINE_PROGRAM_ID, actor.id, "a2o_tech_stack_exported", "baseline_workspace", BASELINE_WORKSPACE_ID, JSON.stringify({ releaseScope, occurrenceIds, asOf: now, handlingMarking, contract: "A2O Tech Stack 24-column exchange" }), now).run();
     // The browser workbook writer calls GET and receives this exact assembled 24-column projection.
-    return Response.json({ publicationId, asOf: now, rows: records.map((record) => ({ occurrenceId: record.occurrenceId, row: record.row })) });
+    return Response.json({ publicationId, asOf: now, handlingMarking, rows: records.map((record) => ({ occurrenceId: record.occurrenceId, row: record.row })) });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "The export readiness check could not be completed." }, { status: 500 }); }
 }

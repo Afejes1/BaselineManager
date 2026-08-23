@@ -7,6 +7,8 @@ import { useChangePortfolio } from "../../../../lib/change-client";
 import { dependencyStatement } from "../../../../lib/change-model";
 import { useInitiativeDecisions } from "../../../../lib/initiative-decision-client";
 import { objectiveIsRelatedToChangeRequest, readable } from "../../../../lib/initiative-decision-model";
+import { criterionIsAccepted } from "../../../../lib/initiative-readiness";
+import { PROGRAM_HANDLING_MARKING } from "../../../../lib/output-handling";
 
 const display = (value: string | null | undefined, fallback = "Not recorded") => value?.trim() || fallback;
 const dateLabel = (value: string | null | undefined) => {
@@ -16,11 +18,12 @@ const dateLabel = (value: string | null | undefined) => {
   return Number.isNaN(date.valueOf()) ? raw : date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 };
 const hoursLabel = (value: number | null | undefined) => value == null ? "Not reported" : `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value)} hours`;
+const moneyLabel = (value: number | null | undefined) => value == null ? "Not reported" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
 
 export default function ChangeDecisionBriefPage() {
   const id = decodeURIComponent(useParams<{ id: string }>().id || "");
   const { portfolio, loading, error } = useChangePortfolio();
-  const { workspace, loading: decisionLoading, error: decisionError } = useInitiativeDecisions();
+  const { workspace, loading: decisionLoading, error: decisionError } = useInitiativeDecisions({ changeRequestId: id });
   const request = portfolio.requests.find((item) => item.id === id);
   const effects = portfolio.effects.filter((item) => item.changeRequestId === id);
   const dependencies = portfolio.dependencies.filter((item) => item.predecessorRequestId === id || item.successorRequestId === id);
@@ -29,14 +32,20 @@ export default function ChangeDecisionBriefPage() {
   const objectiveLinks = workspace?.objectiveChangeRequestLinks || [];
   const attributions = workspace?.objectiveEffectAttributions || [];
   const requirements = workspace?.requirements || [];
-  const criteria = workspace?.criteria || [];
+  const relevantObjectiveIds = new Set(linkedObjectives.map((objective) => objective.id));
+  const criteria = (workspace?.criteria || []).filter((criterion) => relevantObjectiveIds.has(criterion.objectiveId));
+  const unacceptableEvidence = criteria.flatMap((criterion) => ["passed", "waived"].includes(criterion.status)
+    ? criterion.signoffs.filter((signoff) => ["accepted", "waived"].includes(signoff.decision) && Boolean(signoff.evidenceDocumentId) && signoff.evidenceIntegrityStatus !== "verified")
+    : []);
+  const printBlockReason = unacceptableEvidence.length ? `${unacceptableEvidence.length} completed acceptance sign-off${unacceptableEvidence.length === 1 ? " has" : "s have"} evidence that is missing, unverified, or outside the current verification envelope. Repair or re-verify it before printing.` : "";
 
   if (loading || decisionLoading) return <main className="decision-brief-loading">Preparing decision brief…</main>;
   if (error || decisionError || !request) return <main className="decision-brief-loading"><p>{error || decisionError || "Change Request not found."}</p><Link href="/changes">Return to Change Requests</Link></main>;
 
   return <main className="change-decision-brief">
-    <nav className="decision-brief-actions" aria-label="Decision brief actions"><Link href={`/changes/${encodeURIComponent(request.id)}`}>← Return to Change Request</Link><button type="button" onClick={() => window.print()}>Print / Save PDF</button></nav>
+    <nav className="decision-brief-actions" aria-label="Decision brief actions"><Link href={`/changes/${encodeURIComponent(request.id)}`}>← Return to Change Request</Link>{printBlockReason ? <span className="one-pager-content-warning" role="alert">{printBlockReason}</span> : null}<button type="button" disabled={Boolean(printBlockReason)} title={printBlockReason || "Print the governed decision brief"} onClick={() => window.print()}>Print / Save PDF</button></nav>
     <article className="decision-brief-document">
+      <div className="output-handling-banner">{PROGRAM_HANDLING_MARKING}</div>
       <header className="decision-brief-header">
         <div><span>JSF TECHNICAL BASELINE · GOVERNMENT DECISION BRIEF</span><h1>{request.externalIdentifier} · {request.title}</h1><p>{request.typeCode} · External system: {display(request.externalSystem)} · Source checked: {dateLabel(request.sourceAsOf)} · Brief generated: {dateLabel(request.updatedAt)}</p></div>
         <div className={`decision-brief-status decision-${request.decisionStatus}`}><strong>{readable(request.decisionStatus)}</strong><span>{request.decisionStatus === "pending" ? "Government decision required" : display(request.decisionAuthority, "Decision authority not recorded")}</span></div>
@@ -67,12 +76,12 @@ export default function ChangeDecisionBriefPage() {
           const objectiveEffects = attributions.filter((attribution) => attribution.objectiveId === objective.id).map((attribution) => ({ attribution, effect: portfolio.effects.find((effect) => effect.id === attribution.changeEffectId) })).filter((item): item is { attribution: typeof attributions[number]; effect: typeof portfolio.effects[number] } => Boolean(item.effect));
           const objectiveRequirements = requirements.filter((requirement) => requirement.objectiveId === objective.id);
           const objectiveCriteria = criteria.filter((criterion) => criterion.objectiveId === objective.id);
-          const acceptedCriteria = objectiveCriteria.filter((criterion) => ["passed", "waived"].includes(criterion.status)).length;
-          const likelyEstimate = objective.estimates.slice().sort((left, right) => right.asOf.localeCompare(left.asOf))[0];
+          const acceptedCriteria = objectiveCriteria.filter(criterionIsAccepted).length;
+          const likelyEstimate = objective.estimates.slice().sort((left, right) => `${right.asOf}|${right.createdAt}`.localeCompare(`${left.asOf}|${left.createdAt}`))[0];
           return <article className="decision-brief-objective" key={objective.id}>
             <header><div><span>{relation}</span><h3>{objective.externalIdentifier} · {objective.title}</h3></div><b>{readable(objective.status)}</b></header>
             <p>{display(objective.summary, "No delivery summary recorded.")}</p>
-            <dl><div><dt>Planned window</dt><dd>{dateLabel(objective.plannedStart)} → {dateLabel(objective.plannedFinish)}</dd></div><div><dt>Technical owner</dt><dd>{display(objective.technicalOwner, "Not assigned")}</dd></div><div><dt>Likely effort</dt><dd>{hoursLabel(likelyEstimate?.hoursLikely)}</dd></div><div><dt>Requirements / acceptance</dt><dd>{objectiveRequirements.length} / {acceptedCriteria} of {objectiveCriteria.length} accepted</dd></div></dl>
+            <dl><div><dt>Planned window</dt><dd>{dateLabel(objective.plannedStart)} → {dateLabel(objective.plannedFinish)}</dd></div><div><dt>Technical owner</dt><dd>{display(objective.technicalOwner, "Not assigned")}</dd></div><div><dt>Latest sourced estimate</dt><dd>{likelyEstimate ? `${readable(likelyEstimate.estimateSource)} · ${hoursLabel(likelyEstimate.hoursLikely)} · ${moneyLabel(likelyEstimate.costLikely)} · ${dateLabel(likelyEstimate.asOf)} · ${readable(likelyEstimate.confidence)}` : "Not reported"}</dd></div><div><dt>Requirements / acceptance</dt><dd>{objectiveRequirements.length} / {acceptedCriteria} of {objectiveCriteria.length} accepted</dd></div></dl>
             <div className="decision-brief-objective-effects"><strong>Attributed technical scope</strong>{objectiveEffects.length ? objectiveEffects.map(({ attribution, effect }) => <span key={attribution.id}>{effect.subjectLabel} · {readable(effect.action)} {effect.aspect} · {readable(attribution.attribution)} / {readable(attribution.confidence)}</span>) : <span className="unattributed">No Change Request effect has been attributed to this Objective.</span>}</div>
           </article>;
         })}</div> : <p className="decision-brief-gap">No LM Objectives are linked to this Change Request. Import the LM Objective source or establish a reviewed reference before using this brief as a delivery plan.</p>}
@@ -83,7 +92,7 @@ export default function ChangeDecisionBriefPage() {
         {dependencies.length ? <div className="decision-brief-dependencies">{dependencies.map((dependency) => { const predecessor = requestById.get(dependency.predecessorRequestId)?.externalIdentifier || dependency.predecessorRequestId; const successor = requestById.get(dependency.successorRequestId)?.externalIdentifier || dependency.successorRequestId; return <article key={dependency.id}><h3>{dependencyStatement(dependency, predecessor, successor)}</h3><p><strong>Basis:</strong> {display(dependency.rationale)}</p><p><strong>If unmet:</strong> {display(dependency.consequenceIfUnmet)}</p><small>{readable(dependency.confidence)} · Owner: {display(dependency.owner, "Unassigned")} · {display(dependency.sourceReference, "Source not recorded")}{dependency.sourceAsOf ? ` · ${dateLabel(dependency.sourceAsOf)}` : ""}</small></article>; })}</div> : <p className="decision-brief-gap">No request-to-request dependency is recorded. This means no dependency conclusion should be drawn from this brief.</p>}
       </section>
 
-      <footer className="decision-brief-footer"><span>Government analysis record. External MCP and Objective systems remain authoritative for their own lifecycle state.</span><span>Evidence source: {display(request.sourceLocator, request.externalIdentifier)}</span></footer>
+      <footer className="decision-brief-footer"><span>{PROGRAM_HANDLING_MARKING}. Government analysis record; external MCP and Objective systems remain authoritative for their own lifecycle state.</span><span>Evidence source: {display(request.sourceLocator, request.externalIdentifier)}</span></footer>
     </article>
   </main>;
 }

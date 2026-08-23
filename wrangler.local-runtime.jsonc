@@ -7,7 +7,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "send_metrics": false,
   "assets": { "directory": "dist/client" },
-  "vars": { "DEMO_ENABLED": "false", "WORKSPACE_TRANSFER_MODE": "local" },
+  "vars": { "AUTH_MODE": "local-single-user", "DEMO_ENABLED": "false", "WORKSPACE_TRANSFER_MODE": "local", "STEWARD_USER_IDS": "" },
   "d1_databases": [
     {
       "binding": "DB",

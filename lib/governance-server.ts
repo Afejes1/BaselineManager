@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
 import type { BriefSnapshot, BriefStatus, GovernanceEntityKind, GovernanceRecordStatus, GovernanceRecordType, InitiativePriority, InitiativeStatus, ObjectCatalogItem, Portfolio, WorkPackageStatus } from "./governance-model";
-import { handlingMarkingFromSourceNames, PROGRAM_HANDLING_MARKING } from "./output-handling";
+import { evidenceHashFromAuditPayload } from "./evidence-validation";
+import { PROGRAM_HANDLING_MARKING } from "./output-handling";
+import { isLoopbackHostname, readRuntimePolicy, type RuntimePolicyInput } from "./runtime-policy";
+import { BRIEF_RENDERER_VERSION, briefSourceHash, isCurrentBriefSnapshot } from "./brief-publication";
 
 export const PROGRAM_ID = "program-jsf";
 // This is the existing authoritative baseline workspace. Governance records
@@ -32,22 +35,24 @@ function safeDecode(value: string | null) {
   catch { return null; }
 }
 
-function isLocalRequest(request: Request) {
-  const hostname = new URL(request.url).hostname.toLowerCase();
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-}
-
 function actorFromRequest(request: Request) {
+  const policy = readRuntimePolicy(env as unknown as RuntimePolicyInput);
+  if (policy.authMode === "local-single-user") {
+    if (!isLoopbackHostname(new URL(request.url).hostname)) throw new Error("The local single-user runtime accepts loopback requests only.");
+    return { id: "local-baseline-steward", email: null, displayName: "Baseline steward", policy };
+  }
   const authenticatedUserId = request.headers.get("oai-authenticated-user-id")?.trim() || "";
   const authenticatedEmail = request.headers.get("oai-authenticated-user-email")?.trim() || "";
-  if ((!authenticatedUserId || !authenticatedEmail) && !isLocalRequest(request)) throw new Error("Authentication is required to access this workspace.");
-  const userId = authenticatedUserId || "local-baseline-steward";
-  const email = authenticatedEmail || null;
+  if (!authenticatedUserId || !authenticatedEmail) throw new Error("Authentication is required to access this workspace.");
   const fullName = request.headers.get("oai-authenticated-user-full-name-encoding") === "percent-encoded-utf-8"
     ? safeDecode(request.headers.get("oai-authenticated-user-full-name"))
     : null;
-  const displayName = fullName || email || "Baseline steward";
-  return { id: userId, email, displayName };
+  const displayName = fullName || authenticatedEmail;
+  return { id: authenticatedUserId, email: authenticatedEmail, displayName, policy };
+}
+
+export function assertAuthenticatedRequest(request: Request) {
+  actorFromRequest(request);
 }
 
 export async function ensureActor(db: Database, request: Request): Promise<Actor> {
@@ -57,14 +62,27 @@ export async function ensureActor(db: Database, request: Request): Promise<Actor
     db.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(PROGRAM_ID, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", at, at),
     db.prepare("INSERT INTO app_user (id,email,display_name,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET email=excluded.email,display_name=excluded.display_name,updated_at=excluded.updated_at").bind(candidate.id, candidate.email, candidate.displayName, at, at),
   ]);
-  const existing = await db.prepare("SELECT role FROM program_role_assignment WHERE program_id=? AND user_id=?").bind(PROGRAM_ID, candidate.id).first<{ role: Actor["role"] }>();
+  let existing = await db.prepare("SELECT id,role FROM program_role_assignment WHERE program_id=? AND user_id=?").bind(PROGRAM_ID, candidate.id).first<{ id: string; role: Actor["role"] }>();
+  const configuredSteward = candidate.policy.authMode === "local-single-user" || candidate.policy.stewardUserIds.has(candidate.id);
+  if (existing && configuredSteward && existing.role !== "steward") {
+    await db.batch([
+      db.prepare("UPDATE program_role_assignment SET role='steward',assigned_by_user_id=?,updated_at=? WHERE id=?").bind(candidate.id, at, existing.id),
+      audit(db, { id: candidate.id, displayName: candidate.displayName, role: "steward" }, "program_role_assignment_bootstrapped", "program_role_assignment", existing.id, { userId: candidate.id, role: "steward", source: "runtime_allowlist" }, { role: existing.role }),
+    ]);
+    existing = { ...existing, role: "steward" };
+  }
   let role = existing?.role;
   if (!role) {
-    const count = await db.prepare("SELECT COUNT(*) AS count FROM program_role_assignment WHERE program_id=?").bind(PROGRAM_ID).first<{ count: number }>();
-    // The first local/hosted owner bootstraps the workspace. Every later user
-    // starts read-only and must be deliberately elevated by a steward.
-    role = Number(count?.count ?? 0) === 0 ? "steward" : "viewer";
-    await db.prepare("INSERT INTO program_role_assignment (id,program_id,user_id,role,assigned_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("role"), PROGRAM_ID, candidate.id, role, candidate.id, at, at).run();
+    role = configuredSteward ? "steward" : "viewer";
+    const assignmentId = candidate.policy.authMode === "local-single-user" ? "role-local-baseline-steward" : id("role");
+    const result = await db.prepare("INSERT INTO program_role_assignment (id,program_id,user_id,role,assigned_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(program_id,user_id) DO NOTHING")
+      .bind(assignmentId, PROGRAM_ID, candidate.id, role, configuredSteward ? candidate.id : null, at, at).run();
+    const stored = await db.prepare("SELECT id,role FROM program_role_assignment WHERE program_id=? AND user_id=?").bind(PROGRAM_ID, candidate.id).first<{ id: string; role: Actor["role"] }>();
+    if (!stored) throw new Error("The authenticated account could not be provisioned.");
+    role = stored.role;
+    if (Number(result.meta?.changes || 0) > 0) {
+      await audit(db, { id: candidate.id, displayName: candidate.displayName, role }, "program_role_assignment_bootstrapped", "program_role_assignment", stored.id, { userId: candidate.id, role, source: configuredSteward ? "runtime_allowlist" : "default_viewer" }).run();
+    }
   }
   return { id: candidate.id, displayName: candidate.displayName, role };
 }
@@ -74,7 +92,7 @@ export function requireWriter(actor: Actor) {
 }
 
 export function requireSteward(actor: Actor) {
-  if (actor.role !== "steward") throw new Error("Only a Baseline steward may replace the application workspace.");
+  if (actor.role !== "steward") throw new Error("Only a Baseline steward may perform this operation.");
 }
 
 export function audit(db: Database, actor: Actor, action: string, entityKind: string, entityId: string, after: unknown, before?: unknown) {
@@ -93,12 +111,13 @@ type WorkPackageDependencyRow = { id: string; predecessor_work_package_id: strin
 type ScopeRow = { id: string; initiative_id: string; scope_kind: "product" | "release" | "capability" | "occurrence" | "configuration_node"; scope_id: string; display_label: string | null };
 type RecordRow = { id: string; record_type: GovernanceRecordType; external_reference: string | null; title: string; status: GovernanceRecordStatus; owner: string | null; occurred_at: string | null; participants: string | null; due_date: string | null; summary: string | null; decision_ask: string | null; action_items: string | null; impact: string | null; created_at: string; updated_at: string };
 type LinkRow = { id: string; governance_record_id: string; entity_kind: GovernanceEntityKind; entity_id: string; relationship: string; display_label: string | null; infrastructure_platform_id: string | null; infrastructure_release_name: string | null };
-type DocumentRow = { id: string; governance_record_id: string | null; initiative_id: string | null; file_name: string; content_type: string | null; byte_size: number; description: string | null; created_at: string };
+type DocumentRow = { id: string; governance_record_id: string | null; initiative_id: string | null; file_name: string; content_type: string | null; byte_size: number; r2_key: string; description: string | null; created_at: string; integrity_payload: string | null };
 type BriefRow = { id: string; initiative_id: string | null; initiative_title: string | null; title: string; status: BriefStatus; notes: string | null; snapshot_payload: string; body_markdown: string; published_at: string | null; created_at: string; updated_at: string };
+type BriefPublicationRow = { id: string; brief_id: string; format: "markdown" | "pdf" | "docx"; content_hash: string; byte_size: number; source_hash: string; renderer_version: string; artifact_document_id: string | null; created_at: string };
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
 
 export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> {
-  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult, activeSourceLineageResult] = await Promise.all([
+  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, briefPublicationResult, activityResult] = await Promise.all([
     db.prepare("SELECT i.*, r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
     db.prepare("SELECT w.id,w.initiative_id,w.parent_id,w.wbs_code,w.title,w.owner,w.planned_start,w.due_date,w.actual_start,w.actual_finish,w.status,w.work_type,w.definition_of_done,w.progress_basis,w.notes,w.sort_order,w.created_at,w.updated_at FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY w.initiative_id,w.sort_order,w.wbs_code").bind(PROGRAM_ID).all<WorkPackageRow>(),
@@ -106,11 +125,18 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT d.* FROM work_package_dependency d JOIN work_package w ON w.id=d.predecessor_work_package_id JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY d.status,d.updated_at").bind(PROGRAM_ID).all<WorkPackageDependencyRow>(),
     db.prepare("SELECT * FROM governance_record WHERE program_id=? ORDER BY occurred_at DESC,updated_at DESC").bind(PROGRAM_ID).all<RecordRow>(),
     db.prepare("SELECT l.*, COALESCE(infn.platform_id,infs.platform_id,infi.platform_id,infc.platform_id) AS infrastructure_platform_id,COALESCE(infsr.name,infir.name,infcr.name) AS infrastructure_release_name,COALESCE(i.title,p.canonical_name,r.name,c.name,n.name,pl.code || ' · ' || pl.name,org.name,cr.external_identifier || ' · ' || cr.title,obj.external_identifier || ' · ' || obj.title,w.wbs_code || ' · ' || w.title,infn.code || ' · ' || infn.name,infsn.code || ' · ' || infsr.name,infip.canonical_name || ' on ' || infin.code,infcsn.code || ' → ' || infctn.code,CASE WHEN bo.id IS NOT NULL THEN 'Baseline record' END,'Linked record') AS display_label FROM governance_record_link l LEFT JOIN initiative i ON l.entity_kind='initiative' AND i.id=l.entity_id LEFT JOIN work_package w ON l.entity_kind='work_package' AND w.id=l.entity_id LEFT JOIN product p ON l.entity_kind='product' AND p.id=l.entity_id LEFT JOIN release r ON l.entity_kind='release' AND r.id=l.entity_id LEFT JOIN capability c ON l.entity_kind='capability' AND c.id=l.entity_id LEFT JOIN configuration_node n ON l.entity_kind='configuration_node' AND n.id=l.entity_id LEFT JOIN baseline_occurrence bo ON l.entity_kind='occurrence' AND bo.id=l.entity_id LEFT JOIN platform pl ON l.entity_kind='platform' AND pl.id=l.entity_id LEFT JOIN organization org ON l.entity_kind='organization' AND org.id=l.entity_id LEFT JOIN change_request cr ON l.entity_kind='change_request' AND cr.id=l.entity_id LEFT JOIN incumbent_objective obj ON l.entity_kind='objective' AND obj.id=l.entity_id LEFT JOIN infrastructure_node infn ON l.entity_kind='infrastructure_node' AND infn.id=l.entity_id LEFT JOIN release_infrastructure_node infs ON l.entity_kind='infrastructure_state' AND infs.id=l.entity_id LEFT JOIN infrastructure_node infsn ON infsn.id=infs.infrastructure_node_id LEFT JOIN release infsr ON infsr.id=infs.release_id LEFT JOIN infrastructure_product_installation infi ON l.entity_kind='infrastructure_installation' AND infi.id=l.entity_id LEFT JOIN product infip ON infip.id=infi.product_id LEFT JOIN release_infrastructure_node infirs ON infirs.id=infi.node_state_id LEFT JOIN infrastructure_node infin ON infin.id=infirs.infrastructure_node_id LEFT JOIN release infir ON infir.id=infi.release_id LEFT JOIN infrastructure_connection infc ON l.entity_kind='infrastructure_connection' AND infc.id=l.entity_id LEFT JOIN release_infrastructure_node infcss ON infcss.id=infc.source_node_state_id LEFT JOIN infrastructure_node infcsn ON infcsn.id=infcss.infrastructure_node_id LEFT JOIN release_infrastructure_node infcts ON infcts.id=infc.target_node_state_id LEFT JOIN infrastructure_node infctn ON infctn.id=infcts.infrastructure_node_id LEFT JOIN release infcr ON infcr.id=infc.release_id").all<LinkRow>(),
-    db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
+    db.prepare(`SELECT d.id,d.governance_record_id,d.initiative_id,d.file_name,d.content_type,d.byte_size,d.r2_key,d.description,d.created_at,
+      (SELECT a.after_payload FROM audit_event a WHERE a.program_id=d.program_id AND a.entity_kind='evidence_document' AND a.entity_id=d.id
+       AND a.action IN ('evidence_document_attached','evidence_document_restored','evidence_integrity_sealed') ORDER BY a.created_at DESC,a.id DESC LIMIT 1) AS integrity_payload
+      FROM evidence_document d WHERE d.program_id=? ORDER BY d.created_at DESC`).bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
+    db.prepare("SELECT p.id,p.brief_id,p.format,p.content_hash,p.byte_size,p.source_hash,p.renderer_version,p.artifact_document_id,p.created_at FROM brief_publication p JOIN executive_brief b ON b.id=p.brief_id WHERE b.program_id=? ORDER BY p.created_at DESC").bind(PROGRAM_ID).all<BriefPublicationRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
-    db.prepare("SELECT sp.file_name FROM baseline_occurrence bo LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.program_id=? AND bo.workspace_id=? AND bo.lifecycle_status='active' ORDER BY bo.id").bind(PROGRAM_ID, WORKSPACE_ID).all<{ file_name: string | null }>(),
   ]);
+  // Portfolio reads expose the durable database seal, not a claim that current
+  // object bytes were just re-read. Decision, report, publication, and download
+  // actions independently hash the exact stored bytes before relying on them.
+  const sealedDocumentIds = new Set(documentResult.results.flatMap((document) => evidenceHashFromAuditPayload(document.integrity_payload) ? [document.id] : []));
 
   const scopes = new Map<string, ScopeRow[]>();
   for (const entry of scopeResult.results) scopes.set(entry.initiative_id, [...(scopes.get(entry.initiative_id) ?? []), entry]);
@@ -124,13 +150,19 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
   for (const entry of documentResult.results) if (entry.governance_record_id) documentsByRecord.set(entry.governance_record_id, [...(documentsByRecord.get(entry.governance_record_id) ?? []), entry]);
   const recordLinksByInitiative = new Map<string, number>();
   for (const entry of linkResult.results) if (entry.entity_kind === "initiative") recordLinksByInitiative.set(entry.entity_id, (recordLinksByInitiative.get(entry.entity_id) ?? 0) + 1);
+  const publicationsByBrief = new Map<string, BriefPublicationRow[]>();
+  for (const entry of briefPublicationResult.results) {
+    if (!entry.artifact_document_id || entry.byte_size <= 0 || !/^sha256:[0-9a-f]{64}$/.test(entry.content_hash) || !/^sha256:[0-9a-f]{64}$/.test(entry.source_hash) || entry.renderer_version !== BRIEF_RENDERER_VERSION) continue;
+    publicationsByBrief.set(entry.brief_id, [...(publicationsByBrief.get(entry.brief_id) ?? []), entry]);
+  }
 
   return {
     actor,
-    // Classify the current rendered baseline from each active record's actual
-    // source chain. Retained historical packages must not relabel a newer
-    // synthetic baseline, while analyst-created rows with no source fail closed.
-    handlingMarking: handlingMarkingFromSourceNames(activeSourceLineageResult.results.map((entry) => entry.file_name || "")),
+    // Portfolio views combine analyst-entered governance, decision, evidence,
+    // and baseline data. Composite leadership output therefore always fails
+    // closed to the program working-data marking, even when its baseline rows
+    // originated in the built-in demonstration dataset.
+    handlingMarking: PROGRAM_HANDLING_MARKING,
     initiatives: initiativeResult.results.map((entry) => ({
       id: entry.id, title: entry.title, status: entry.status, priority: entry.priority, owner: entry.owner, targetDate: entry.target_date,
       consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, primaryReleaseId: entry.primary_release_id,
@@ -143,14 +175,19 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     records: recordResult.results.map((entry) => ({
       id: entry.id, recordType: entry.record_type, externalReference: entry.external_reference, title: entry.title, status: entry.status, owner: entry.owner, occurredAt: entry.occurred_at, participants: entry.participants, dueDate: entry.due_date, summary: entry.summary, decisionAsk: entry.decision_ask, actionItems: entry.action_items, impact: entry.impact,
       links: (links.get(entry.id) ?? []).map((link) => ({ id: link.id, entityKind: link.entity_kind, entityId: link.entity_id, relationship: link.relationship, displayLabel: link.display_label, href: governanceLinkHref(link.entity_kind, link.entity_id, link.display_label, link.infrastructure_platform_id, link.infrastructure_release_name) })),
-      documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
+      documents: (documentsByRecord.get(entry.id) ?? []).map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, quarantined: document.content_type === "application/octet-stream" && Boolean(document.description?.startsWith("[QUARANTINED LEGACY EVIDENCE")), integritySealed: sealedDocumentIds.has(document.id), createdAt: document.created_at })),
       createdAt: entry.created_at, updatedAt: entry.updated_at,
     })),
-    documents: documentResult.results.map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, createdAt: document.created_at })),
-    briefs: briefResult.results.map((entry) => ({
-      id: entry.id, initiativeId: entry.initiative_id, initiativeTitle: entry.initiative_title, title: entry.title, status: entry.status, notes: entry.notes,
-      snapshot: json<BriefSnapshot>(entry.snapshot_payload, emptySnapshot()), bodyMarkdown: entry.body_markdown, publishedAt: entry.published_at, createdAt: entry.created_at, updatedAt: entry.updated_at,
-    })),
+    documents: documentResult.results.map((document) => ({ id: document.id, governanceRecordId: document.governance_record_id, initiativeId: document.initiative_id, fileName: document.file_name, contentType: document.content_type, byteSize: document.byte_size, description: document.description, quarantined: document.content_type === "application/octet-stream" && Boolean(document.description?.startsWith("[QUARANTINED LEGACY EVIDENCE")), integritySealed: sealedDocumentIds.has(document.id), createdAt: document.created_at })),
+    briefs: briefResult.results.map((entry) => {
+      const parsedSnapshot = safeBriefSnapshot(entry.snapshot_payload);
+      return {
+        id: entry.id, initiativeId: entry.initiative_id, initiativeTitle: entry.initiative_title, title: entry.title, status: entry.status, notes: entry.notes,
+        snapshot: parsedSnapshot.snapshot, snapshotValid: parsedSnapshot.valid, bodyMarkdown: entry.body_markdown,
+        publications: (publicationsByBrief.get(entry.id) ?? []).map((publication) => ({ id: publication.id, briefId: publication.brief_id, format: publication.format, contentHash: publication.content_hash, byteSize: publication.byte_size, sourceHash: publication.source_hash, rendererVersion: publication.renderer_version, artifactDocumentId: publication.artifact_document_id, createdAt: publication.created_at })),
+        publishedAt: entry.published_at, createdAt: entry.created_at, updatedAt: entry.updated_at,
+      };
+    }),
     activity: activityResult.results.map((entry) => ({ id: entry.id, action: entry.action, entityKind: entry.entity_kind, entityId: entry.entity_id, actorName: entry.actor_name || "Baseline steward", createdAt: entry.created_at })),
   };
 }
@@ -232,6 +269,23 @@ function emptySnapshot(): BriefSnapshot {
   return { asOf: "", handlingMarking: PROGRAM_HANDLING_MARKING, releaseName: "All releases", sourceRows: 0, products: 0, releases: 0, reviewRows: 0, productNames: [], linkedRecords: [] };
 }
 
+function safeBriefSnapshot(value: string): { snapshot: BriefSnapshot; valid: boolean } {
+  const fallback = emptySnapshot();
+  const candidate = json<Partial<BriefSnapshot>>(value, {});
+  const snapshot = {
+    asOf: typeof candidate.asOf === "string" ? candidate.asOf : fallback.asOf,
+    handlingMarking: candidate.handlingMarking === "SYNTHETIC DEMONSTRATION DATA — NOT PROGRAM DATA" ? candidate.handlingMarking : PROGRAM_HANDLING_MARKING,
+    releaseName: typeof candidate.releaseName === "string" ? candidate.releaseName : fallback.releaseName,
+    sourceRows: Number.isSafeInteger(candidate.sourceRows) && Number(candidate.sourceRows) >= 0 ? Number(candidate.sourceRows) : 0,
+    products: Number.isSafeInteger(candidate.products) && Number(candidate.products) >= 0 ? Number(candidate.products) : 0,
+    releases: Number.isSafeInteger(candidate.releases) && Number(candidate.releases) >= 0 ? Number(candidate.releases) : 0,
+    reviewRows: Number.isSafeInteger(candidate.reviewRows) && Number(candidate.reviewRows) >= 0 ? Number(candidate.reviewRows) : 0,
+    productNames: Array.isArray(candidate.productNames) ? candidate.productNames.filter((item): item is string => typeof item === "string").slice(0, 100) : [],
+    linkedRecords: Array.isArray(candidate.linkedRecords) ? candidate.linkedRecords.filter((item): item is { type: string; title: string; status: string } => Boolean(item) && typeof item.type === "string" && typeof item.title === "string" && typeof item.status === "string").slice(0, 200) : [],
+  };
+  return { snapshot, valid: isCurrentBriefSnapshot(candidate) };
+}
+
 async function releaseIdFor(db: Database, releaseName: unknown) {
   const name = clean(releaseName);
   if (!name || name === "All releases") return null;
@@ -290,17 +344,29 @@ export async function updateInitiative(db: Database, actor: Actor, body: Record<
   const status = initiativeStatusSet.has(body.status as InitiativeStatus) ? body.status as InitiativeStatus : current.status;
   const priority = initiativePrioritySet.has(body.priority as InitiativePriority) ? body.priority as InitiativePriority : current.priority;
   const releaseId = body.releaseName === undefined ? current.primary_release_id : await releaseIdFor(db, body.releaseName);
+  const releaseChanged = releaseId !== current.primary_release_id;
+  const scopeWasSupplied = body.productScopes !== undefined || body.entireReleaseScope !== undefined;
+  const products = scopeWasSupplied ? scopeProducts(body.productScopes) : [];
+  const entireReleaseScope = body.entireReleaseScope === true;
+  if (scopeWasSupplied) {
+    if (entireReleaseScope && products.length) throw new Error("Use either the entire release scope or specific products, not both.");
+    if (!entireReleaseScope && !products.length) throw new Error("Choose at least one product or explicitly use the entire release scope.");
+    await assertProductScopes(db, products, releaseId);
+  } else if (releaseChanged) {
+    const retainedProducts = await db.prepare("SELECT scope_id AS id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ id: string }>();
+    await assertProductScopes(db, retainedProducts.results, releaseId);
+  }
   const at = now();
   const next = { title, status, priority, owner: body.owner === undefined ? current.owner : nullable(body.owner), targetDate: body.targetDate === undefined ? current.target_date : nullable(body.targetDate), consequence: body.consequence === undefined ? current.consequence : nullable(body.consequence), desiredOutcome: body.desiredOutcome === undefined ? current.desired_outcome : nullable(body.desiredOutcome), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), releaseId };
   const statements: D1PreparedStatement[] = [
     db.prepare("UPDATE initiative SET primary_release_id=?,title=?,normalized_title=?,status=?,priority=?,owner=?,target_date=?,consequence=?,desired_outcome=?,decision_ask=?,updated_at=? WHERE id=?")
       .bind(releaseId, title, normalized(title), status, priority, next.owner, next.targetDate, next.consequence, next.desiredOutcome, next.decisionAsk, at, initiativeId),
   ];
-  if (body.productScopes !== undefined) {
+  if (scopeWasSupplied) {
     statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId));
-    for (const product of scopeProducts(body.productScopes)) statements.push(db.prepare("INSERT INTO initiative_scope (id,initiative_id,scope_kind,scope_id,display_label,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("scope"), initiativeId, "product", product.id, product.label, at, at));
+    for (const product of products) statements.push(db.prepare("INSERT INTO initiative_scope (id,initiative_id,scope_kind,scope_id,display_label,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("scope"), initiativeId, "product", product.id, product.label, at, at));
   }
-  statements.push(audit(db, actor, "initiative_updated", "initiative", initiativeId, next, current));
+  statements.push(audit(db, actor, "initiative_updated", "initiative", initiativeId, { ...next, ...(scopeWasSupplied ? { entireReleaseScope, products } : {}) }, current));
   await db.batch(statements);
 }
 
@@ -471,29 +537,41 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   await db.batch(statements);
 }
 
-type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null; source_file_name: string | null };
+type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null; source_file_name: string | null; source_key: string | null; source_payload: string | null; projection_payload: string };
 
-export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>, markdownFactory?: (context: { title: string; snapshot: BriefSnapshot }) => string) {
+export type ExecutiveBriefCreationGuard = { auditRowCount: number; auditMaxRowId: number };
+
+export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>, markdownFactory?: (context: { title: string; snapshot: BriefSnapshot }) => string, guard?: ExecutiveBriefCreationGuard) {
   requireWriter(actor);
   const initiativeId = clean(body.initiativeId);
   const initiative = await db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.id=? AND i.program_id=?").bind(initiativeId, PROGRAM_ID).first<InitiativeRow>();
   if (!initiative) throw new Error("Choose a durable initiative before creating a brief.");
   const productScopes = await db.prepare("SELECT scope_id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ scope_id: string }>();
   const scopedProductIds = new Set(productScopes.results.map((entry) => entry.scope_id));
-  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name,sp.file_name AS source_file_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
+  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,bo.projection_payload,p.canonical_name AS product_name,r.name AS release_name,sp.file_name AS source_file_name,sr.source_key,sr.raw_payload AS source_payload FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
   const selectedRows = sourceRows.results.filter((row) => (!initiative.primary_release_id || row.release_id === initiative.primary_release_id) && (!scopedProductIds.size || (row.product_id && scopedProductIds.has(row.product_id))));
   const linkedRecords = await db.prepare("SELECT g.record_type,g.title,g.status FROM governance_record g JOIN governance_record_link l ON l.governance_record_id=g.id WHERE l.entity_kind='initiative' AND l.entity_id=? ORDER BY g.updated_at DESC").bind(initiativeId).all<{ record_type: string; title: string; status: string }>();
   const productNames = [...new Set(selectedRows.map((row) => row.product_name).filter(Boolean))].slice(0, 20) as string[];
   const releaseNames = new Set(selectedRows.map((row) => row.release_name).filter(Boolean));
-  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: handlingMarkingFromSourceNames(selectedRows.map((row) => row.source_file_name || "")), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
+  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: PROGRAM_HANDLING_MARKING, releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
   const title = clean(body.title) || `${initiative.title} - Executive one-pager`;
   const briefId = id("brief");
   const at = now();
   const markdown = markdownFactory ? markdownFactory({ title, snapshot }) : briefMarkdown(title, initiative, snapshot);
-  await db.batch([
-    db.prepare("INSERT INTO executive_brief (id,program_id,initiative_id,title,status,notes,snapshot_payload,body_markdown,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(briefId, PROGRAM_ID, initiativeId, title, "draft", nullable(body.notes), JSON.stringify(snapshot), markdown, actor.id, at, at),
-    audit(db, actor, "executive_brief_created", "executive_brief", briefId, { title, initiativeId, snapshot }),
-  ]);
+  const insert = guard
+    ? db.prepare(`INSERT INTO executive_brief (id,program_id,initiative_id,title,status,notes,snapshot_payload,body_markdown,created_by_user_id,created_at,updated_at)
+        SELECT ?,?,?,?,?,?,?,?,?,?,?
+        WHERE (SELECT COUNT(*) FROM audit_event WHERE program_id=?)=?
+          AND COALESCE((SELECT MAX(rowid) FROM audit_event WHERE program_id=?),0)=?`)
+      .bind(briefId, PROGRAM_ID, initiativeId, title, "draft", nullable(body.notes), JSON.stringify(snapshot), markdown, actor.id, at, at, PROGRAM_ID, guard.auditRowCount, PROGRAM_ID, guard.auditMaxRowId)
+    : db.prepare("INSERT INTO executive_brief (id,program_id,initiative_id,title,status,notes,snapshot_payload,body_markdown,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(briefId, PROGRAM_ID, initiativeId, title, "draft", nullable(body.notes), JSON.stringify(snapshot), markdown, actor.id, at, at);
+  const auditPayload = JSON.stringify({ title, initiativeId, snapshot });
+  const auditInsert = guard
+    ? db.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,after_payload,created_at) SELECT ?,?,?,?,?,?,?,? FROM executive_brief WHERE id=?")
+      .bind(id("audit"), PROGRAM_ID, actor.id, "executive_brief_created", "executive_brief", briefId, auditPayload, at, briefId)
+    : audit(db, actor, "executive_brief_created", "executive_brief", briefId, { title, initiativeId, snapshot });
+  const results = await db.batch([insert, auditInsert]);
+  if (guard && (Number(results[0]?.meta?.changes || 0) !== 1 || Number(results[1]?.meta?.changes || 0) !== 1)) throw new Error("The governed source changed while the report was being created. Review the latest state and save a new snapshot.");
   return briefId;
 }
 
@@ -502,30 +580,36 @@ export async function updateExecutiveBrief(db: Database, actor: Actor, body: Rec
   const briefId = clean(body.briefId);
   const current = await db.prepare("SELECT * FROM executive_brief WHERE id=? AND program_id=?").bind(briefId, PROGRAM_ID).first<BriefRow>();
   if (!current) throw new Error("The requested brief no longer exists.");
+  if (current.status === "superseded") throw new Error("A Superseded report is immutable; create a new frozen report instead.");
   const status = briefStatusSet.has(body.status as BriefStatus) ? body.status as BriefStatus : current.status;
+  if (status === "published" && current.status !== "published") throw new Error("Publish a server-attested artifact to enter the Published lifecycle.");
+  if (current.status === "published" && status !== "published" && status !== "superseded") throw new Error("A Published report may only remain Published or be Superseded.");
   const notes = body.notes === undefined ? current.notes : nullable(body.notes);
-  const publishedAt = status === "published" && !current.published_at ? now() : current.published_at;
+  const publishedAt = current.published_at;
+  const enteringReview = current.status !== "reviewed" && status === "reviewed";
+  if (enteringReview) {
+    if (clean(body.expectedUpdatedAt) !== current.updated_at) throw new Error("The frozen report changed after it was opened. Reload it and review the current source.");
+    let snapshot: unknown;
+    try { snapshot = JSON.parse(current.snapshot_payload) as unknown; }
+    catch { throw new Error("This saved report snapshot is corrupt and must be regenerated before review."); }
+    if (!isCurrentBriefSnapshot(snapshot) || snapshot.handlingMarking !== PROGRAM_HANDLING_MARKING) throw new Error("This legacy or under-marked report must be regenerated before review.");
+    const sourceHash = await briefSourceHash({ id: current.id, title: current.title, snapshot, bodyMarkdown: current.body_markdown });
+    if (!/^sha256:[0-9a-f]{64}$/.test(clean(body.expectedSourceHash)) || clean(body.expectedSourceHash).toLowerCase() !== sourceHash) throw new Error("The review attestation does not match the frozen report source. Reload and review it again.");
+    const attestation = "I reviewed the frozen report text and source snapshot.";
+    if (clean(body.reviewAttestation) !== attestation) throw new Error("Explicit frozen-source review attestation is required before marking this report Reviewed.");
+    const reviewedAt = now();
+    const results = await db.batch([
+      db.prepare("UPDATE executive_brief SET status='reviewed',notes=?,published_at=?,updated_at=? WHERE id=? AND program_id=? AND status=? AND updated_at=?")
+        .bind(notes, publishedAt, reviewedAt, briefId, PROGRAM_ID, current.status, current.updated_at),
+      db.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,before_payload,after_payload,created_at) SELECT ?,?,?,?,?,?,?,?,? FROM executive_brief WHERE id=? AND program_id=? AND status='reviewed' AND updated_at=?")
+        .bind(id("audit"), PROGRAM_ID, actor.id, "executive_brief_reviewed", "executive_brief", briefId, JSON.stringify(current), JSON.stringify({ sourceHash, attestation, frozenUpdatedAt: current.updated_at, reviewedAt }), reviewedAt, briefId, PROGRAM_ID, reviewedAt),
+    ]);
+    if (results.some((result) => !result?.success) || Number(results[0]?.meta?.changes || 0) !== 1 || Number(results[1]?.meta?.changes || 0) !== 1) throw new Error("The frozen report changed during review. Reload and attest the current source.");
+    return;
+  }
   await db.batch([
     db.prepare("UPDATE executive_brief SET status=?,notes=?,published_at=?,updated_at=? WHERE id=?").bind(status, notes, publishedAt, now(), briefId),
     audit(db, actor, "executive_brief_updated", "executive_brief", briefId, { status, notes, publishedAt }, current),
-  ]);
-}
-
-export async function recordBriefPublication(db: Database, actor: Actor, body: Record<string, unknown>) {
-  requireWriter(actor);
-  const briefId = clean(body.briefId);
-  const format = clean(body.format);
-  if (format !== "markdown" && format !== "pdf" && format !== "docx") throw new Error("Unsupported brief publication format.");
-  const contentHash = clean(body.contentHash).toLowerCase();
-  const byteSize = Number(body.byteSize);
-  if (!/^sha256:[0-9a-f]{64}$/.test(contentHash) || !Number.isSafeInteger(byteSize) || byteSize <= 0) throw new Error("A valid SHA-256 artifact hash and byte size are required before recording publication.");
-  const brief = await db.prepare("SELECT snapshot_payload,updated_at FROM executive_brief WHERE id=? AND program_id=?").bind(briefId, PROGRAM_ID).first<{ snapshot_payload: string; updated_at: string }>();
-  if (!brief) throw new Error("The requested brief no longer exists.");
-  const publicationId = id("brief-publication");
-  const at = now();
-  await db.batch([
-    db.prepare("INSERT INTO brief_publication (id,brief_id,format,content_hash,snapshot_payload,created_by_user_id,created_at) VALUES (?,?,?,?,?,?,?)").bind(publicationId, briefId, format, contentHash, brief.snapshot_payload, actor.id, at),
-    audit(db, actor, "executive_brief_exported", "executive_brief", briefId, { publicationId, format, contentHash, byteSize }),
   ]);
 }
 
@@ -535,7 +619,21 @@ function briefMarkdown(title: string, initiative: InitiativeRow, snapshot: Brief
   return `# ${title}\n\n## Decision / outcome\n${initiative.decision_ask || "Decision ask not yet recorded."}\n\n${initiative.desired_outcome || "Desired outcome not yet recorded."}\n\n## Scope snapshot\n- As of: ${snapshot.asOf}\n- Release scope: ${snapshot.releaseName}\n- Baseline records: ${snapshot.sourceRows}\n- Products: ${snapshot.products}\n- Releases: ${snapshot.releases}\n- Records needing review: ${snapshot.reviewRows}\n\n## Consequence\n${initiative.consequence || "Not yet recorded."}\n\n## Representative products\n${products}\n\n## Linked Government record(s)\n${linked}\n`;
 }
 
-export type DocumentBucket = { put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string } }) => Promise<unknown>; get: (key: string) => Promise<{ body: ReadableStream; httpMetadata?: { contentType?: string; contentDisposition?: string } } | null>; head?: (key: string) => Promise<unknown | null>; delete: (key: string) => Promise<void> };
+export type StoredDocumentObject = {
+  body: ReadableStream<Uint8Array>;
+  size?: number;
+  httpMetadata?: { contentType?: string; contentDisposition?: string };
+  customMetadata?: Record<string, string>;
+};
+
+export type StoredDocumentHead = { size?: number; customMetadata?: Record<string, string> };
+
+export type DocumentBucket = {
+  put: (key: string, value: ArrayBuffer, options?: { httpMetadata?: { contentType?: string; contentDisposition?: string }; customMetadata?: Record<string, string> }) => Promise<unknown>;
+  get: (key: string) => Promise<StoredDocumentObject | null>;
+  head?: (key: string) => Promise<StoredDocumentHead | null>;
+  delete: (key: string) => Promise<void>;
+};
 
 export function documentsBucket() {
   return (env as unknown as { DOCUMENTS?: DocumentBucket }).DOCUMENTS;

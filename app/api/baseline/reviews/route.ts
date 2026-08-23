@@ -6,8 +6,9 @@ const statuses = new Set(["not_reviewed", "reviewed", "follow_up"]);
 const clean = (value: unknown) => String(value ?? "").trim();
 type ReviewRow = { baseline_occurrence_id: string; status: string; reviewed_at: string | null; note: string | null };
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    await ensureActor(env.DB, request);
     const result = await env.DB.prepare("SELECT brr.baseline_occurrence_id,brr.status,brr.reviewed_at,brr.note FROM baseline_record_review brr JOIN baseline_occurrence bo ON bo.id=brr.baseline_occurrence_id WHERE bo.workspace_id=?").bind(BASELINE_WORKSPACE_ID).all<ReviewRow>();
     return Response.json({ reviews: Object.fromEntries(result.results.map((row) => [row.baseline_occurrence_id, { status: row.status, reviewedAt: row.reviewed_at, note: row.note }])) });
   } catch (error) { return Response.json({ reviews: {}, error: error instanceof Error ? error.message : "Review history is unavailable." }, { status: 500 }); }

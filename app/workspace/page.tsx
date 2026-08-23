@@ -6,18 +6,41 @@ import type { WorkspacePackagePreview } from "../../lib/workspace-transfer";
 import type { OperatorDiagnostics } from "../../lib/operator-diagnostics";
 
 type ApiResponse = WorkspacePackagePreview & { ok?: boolean; error?: string };
+type CleanupResponse = { ok?: boolean; error?: string; attempted?: number; completed?: number; failed?: number; remaining?: number };
 
 export default function WorkspaceTransferPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<WorkspacePackagePreview | null>(null);
   const [confirmation, setConfirmation] = useState("");
-  const [busy, setBusy] = useState<"export" | "validate" | "replace" | null>(null);
+  const [busy, setBusy] = useState<"export" | "validate" | "replace" | "cleanup" | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [diagnostics, setDiagnostics] = useState<OperatorDiagnostics | null>(null);
   const transferAvailable = diagnostics?.workspaceTransferMode === "local";
+  const cleanupQueued = diagnostics?.checks.some((check) => check.id === "evidence-cleanup" && check.status === "warning") || false;
 
-  useEffect(() => { void fetch("/api/diagnostics").then(async (response) => { if (response.ok) setDiagnostics(await response.json() as OperatorDiagnostics); }); }, []);
+  async function refreshDiagnostics() {
+    const response = await fetch("/api/diagnostics", { cache: "no-store" });
+    if (response.ok) setDiagnostics(await response.json() as OperatorDiagnostics);
+  }
+
+  useEffect(() => { void refreshDiagnostics(); }, []);
+
+  async function retryEvidenceCleanup() {
+    setBusy("cleanup"); setError(""); setMessage("");
+    try {
+      const response = await fetch("/api/evidence-cleanup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ limit: 25 }) });
+      const payload = await response.json() as CleanupResponse;
+      if (!response.ok && response.status !== 202) throw new Error(payload.error || "Evidence object cleanup retry failed.");
+      const completed = Number(payload.completed || 0);
+      const remaining = Number(payload.remaining || 0);
+      setMessage(remaining
+        ? `Removed ${completed} queued evidence object(s); ${remaining} remain queued and discoverable. Review diagnostics and retry or reconcile storage.`
+        : `Evidence object cleanup retry completed. Removed ${completed} queued object(s); no cleanup obligations remain.`);
+      await refreshDiagnostics();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Evidence object cleanup retry failed."); }
+    finally { setBusy(null); }
+  }
 
   async function download() {
     setBusy("export"); setError(""); setMessage("");
@@ -43,7 +66,15 @@ export default function WorkspaceTransferPage() {
       const payload = await response.json() as ApiResponse;
       if (!response.ok) throw new Error(payload.error || "Import failed.");
       if (mode === "validate") { setPreview(payload); setConfirmation(""); setMessage("Package validated. Review the counts before replacement."); }
-      else { setMessage("Workspace replaced. Reloading the application data…"); window.setTimeout(() => window.location.assign("/"), 800); }
+      else {
+        const cleanupWarnings = payload.warnings.filter((warning) => /cleanup|storage object/i.test(warning));
+        if (cleanupWarnings.length) {
+          setPreview(null); setConfirmation(""); setMessage(`Workspace replaced. ${cleanupWarnings.join(" ")}`);
+          await refreshDiagnostics();
+        } else {
+          setMessage("Workspace replaced. Reloading the application data…"); window.setTimeout(() => window.location.assign("/"), 800);
+        }
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Import failed."); }
     finally { setBusy(null); }
   }
@@ -61,7 +92,7 @@ export default function WorkspaceTransferPage() {
       <article className="domain-card transfer-card">
         <span className="eyebrow">IMPORT</span>
         <h2>Validate and Replace Workspace</h2>
-        <p>Validation checks package version, table structure, row counts, document counts, CRC values, and SHA-256 checksums. No application data changes during validation.</p>
+        <p>Validation authenticates the signed manifest with the trusted HMAC-SHA-256 key, then checks package structure, row and document counts, bounded expansion, and SHA-256 content checksums. No application data changes during validation.</p>
         <label className="modal-field">Workspace package<input type="file" disabled={!transferAvailable} accept=".a2oworkspace,application/zip" onChange={(event) => { setFile(event.target.files?.[0] || null); setPreview(null); setConfirmation(""); setError(""); }} /></label>
         <button className="ghost-button" type="button" disabled={!transferAvailable || !file || busy !== null} onClick={() => void submit("validate")}>{busy === "validate" ? "Validating…" : "Validate package"}</button>
         {preview ? <div className="transfer-preview">
@@ -69,6 +100,8 @@ export default function WorkspaceTransferPage() {
           <div><span>Exported</span><strong>{new Date(preview.manifest.exportedAt).toLocaleString()}</strong></div>
           <div><span>Application</span><strong>v{preview.manifest.applicationVersion}</strong></div>
           <div><span>Dataset</span><strong>{preview.manifest.totals.rows.toLocaleString()} rows · {preview.manifest.totals.documents} files</strong></div>
+          <div><span>Verified signer</span><strong>{preview.signature.keyId}</strong></div>
+          <div><span>Manifest SHA-256</span><strong>{preview.signature.manifestSha256}</strong></div>
           {preview.warnings.map((warning) => <p className="warning-copy" key={warning}>{warning}</p>)}
           <p className="destructive-note"><strong>Replacement is destructive.</strong> Export the current workspace first. This operation replaces all application-owned data and retains destination users and access roles.</p>
           <label className="modal-field">Authorization phrase<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="REPLACE WORKSPACE" autoComplete="off" /></label>
@@ -79,6 +112,6 @@ export default function WorkspaceTransferPage() {
     {message ? <p className="success-copy" role="status">{message}</p> : null}
     {error ? <p className="error-copy" role="alert">{error}</p> : null}
     <section className="domain-card transfer-rules"><span className="eyebrow">TRANSFER RULES</span><h2>Controlled movement</h2><ol><li>Export the current workspace before an application upgrade or machine move.</li><li>Retain the package with the application version and transfer date.</li><li>Validate the package in the destination.</li><li>Replace only an empty workspace or a workspace whose current package has been secured.</li><li>Run Analyst Control and the initiative one-page report after import.</li></ol></section>
-    <section className="domain-card operator-readiness"><div className="section-toolbar"><div><span className="eyebrow">OPERATOR DIAGNOSTICS</span><h2>Deployment and recovery readiness</h2></div><span className={`status-pill status-${diagnostics?.overall || "loading"}`}>{diagnostics?.overall || "checking"}</span></div>{diagnostics ? <><div className="transfer-preview"><div><span>Application</span><strong>v{diagnostics.applicationVersion} · {diagnostics.buildSource}</strong></div><div><span>Latest migration</span><strong>{diagnostics.latestMigration || "Not reported"}</strong></div><div><span>Baseline</span><strong>{diagnostics.counts.baselineRecords} records</strong></div><div><span>Decision model</span><strong>{diagnostics.counts.changeRequests} requests · {diagnostics.counts.objectives} Objectives · {diagnostics.counts.initiatives} Initiatives</strong></div></div><div className="diagnostic-list">{diagnostics.checks.map((check) => <div className={`diagnostic-${check.status}`} key={check.id}><span>{check.status}</span><strong>{check.label}</strong><p>{check.detail}</p></div>)}</div><p className="entity-meta">Checked {new Date(diagnostics.generatedAt).toLocaleString()}</p></> : <p>Running database, schema, evidence-storage, and recovery checks…</p>}</section>
+    <section className="domain-card operator-readiness"><div className="section-toolbar"><div><span className="eyebrow">OPERATOR DIAGNOSTICS</span><h2>Deployment and recovery readiness</h2></div><div className="entity-actions">{cleanupQueued ? <button className="ghost-button" type="button" disabled={busy !== null} onClick={() => void retryEvidenceCleanup()}>{busy === "cleanup" ? "Retrying cleanup…" : "Steward: retry object cleanup"}</button> : null}<span className={`status-pill status-${diagnostics?.overall || "loading"}`}>{diagnostics?.overall || "checking"}</span></div></div>{diagnostics ? <><div className="transfer-preview"><div><span>Application</span><strong>v{diagnostics.applicationVersion} · {diagnostics.buildSource}</strong></div><div><span>Latest migration</span><strong>{diagnostics.latestMigration || "Not reported"}</strong></div><div><span>Baseline</span><strong>{diagnostics.counts.baselineRecords} records</strong></div><div><span>Decision model</span><strong>{diagnostics.counts.changeRequests} requests · {diagnostics.counts.objectives} Objectives · {diagnostics.counts.initiatives} Initiatives</strong></div></div><div className="diagnostic-list">{diagnostics.checks.map((check) => <div className={`diagnostic-${check.status}`} key={check.id}><span>{check.status}</span><strong>{check.label}</strong><p>{check.detail}</p></div>)}</div><p className="entity-meta">Checked {new Date(diagnostics.generatedAt).toLocaleString()}</p></> : <p>Running database, schema, evidence-storage, and recovery checks…</p>}</section>
   </DomainPageShell>;
 }

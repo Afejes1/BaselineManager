@@ -1,10 +1,15 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { isLoopbackHostname, readRuntimePolicy } from "../lib/runtime-policy";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  AUTH_MODE?: string;
+  DEMO_ENABLED?: string;
+  WORKSPACE_TRANSFER_MODE?: string;
+  STEWARD_USER_IDS?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -34,10 +39,6 @@ function secured(response: Response, localRequest: boolean) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function isLocalHost(hostname: string) {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
-}
-
 // Image security config. SVG sources with .svg extension auto-skip the
 // optimization endpoint on the client side (served directly, no proxy).
 // To route SVGs through the optimizer (with security headers), set
@@ -47,9 +48,19 @@ function isLocalHost(hostname: string) {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    const localRequest = isLocalHost(url.hostname);
+    let policy;
+    try {
+      policy = readRuntimePolicy(env);
+    } catch (error) {
+      console.error("Runtime policy validation failed", error);
+      return secured(Response.json({ error: "The runtime security policy is invalid." }, { status: 503 }), false);
+    }
+    const localRequest = policy.authMode === "local-single-user";
+    if (localRequest && !isLoopbackHostname(url.hostname)) {
+      return secured(Response.json({ error: "The local single-user runtime accepts loopback requests only." }, { status: 403 }), true);
+    }
 
-    if (url.pathname.startsWith("/api/") && !localRequest) {
+    if (url.pathname.startsWith("/api/") && policy.authMode === "sites") {
       const userId = request.headers.get("oai-authenticated-user-id")?.trim();
       const email = request.headers.get("oai-authenticated-user-email")?.trim();
       if (!userId || !email) return secured(Response.json({ error: "Authentication is required." }, { status: 401 }), localRequest);

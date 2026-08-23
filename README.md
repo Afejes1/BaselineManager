@@ -34,25 +34,45 @@ From this `site` directory:
 
 ```powershell
 npm run local:init
-npm run local:start
-```
-
-`local:init` performs a clean dependency install, creates `.env` with
-demonstration data disabled, and applies all local database migrations.
-`local:start` reapplies pending migrations and starts the application on
-localhost only. Open the address printed in the terminal, normally
-`http://127.0.0.1:3000`.
-
-## Routine operation
-
-After pulling code updates:
-
-```powershell
-npm ci
-npm run local:init
+npm run local:key:export -- `
+  -DestinationDirectory "E:\A2O-Key-Escrow" -ConfirmOfflineEscrow
 npm run local:verify
 npm run local:start
 ```
+
+`local:init` installs the locked dependencies when they are absent, creates
+`.env` with demonstration data disabled, creates the local transfer-signing
+trust root, and applies all local database migrations on a fresh workspace. `local:start`
+refuses pending migrations or an unverified/stale build and starts the
+application on localhost only. Open the address printed in the terminal, normally
+`http://127.0.0.1:3000`.
+
+Record the displayed key ID in the controlled recovery record, then remove the
+escrow media. Never commit, email, or place the `.a2okey` file in a backup or
+Workspace Transfer Package. Verification records a signed active-release
+provenance marker; backups refuse to relabel existing state with a different
+commit merely because that commit has since been pulled.
+
+## Routine operation
+
+Before pulling code updates, stop the runtime and record the still-active
+release. Then pull the exact approved commit and update:
+
+```powershell
+npm run local:verify:fast
+# Pull the approved exact commit.
+npm ci
+npm run local:update
+npm run local:start
+```
+
+`local:update` requires a clean source commit, creates a signed pre-update
+backup, validates that exact returned archive a second time, applies pending
+migrations, rebuilds, and verifies the exact source. The signed backup records
+the active release commit plus applied-migration, migration-source,
+runtime-configuration, and build-manifest hashes separately from the commit and
+script hashes that produced the ZIP. Do not use `local:init` as an update
+command.
 
 Before a code update, before a major import, and at the end of a working
 session:
@@ -62,15 +82,21 @@ npm run local:backup
 ```
 
 Backups are written to `backups` and contain the local D1 database, uploaded
-evidence state, and a readable SQL export. The directory is excluded from Git;
-copy the resulting ZIP file to an approved backup location.
+evidence state, a readable SQL export, a complete SHA-256 inventory, and an
+HMAC-SHA-256 authenticated schema-4 manifest. A partial archive is not
+published under its final name until the restore validator has streamed and
+verified it. The directory is excluded from Git; copy the resulting ZIP file
+to an approved backup location. Keep the separately escrowed signing key away
+from the backup set.
 
 For a portable, application-managed transfer between deployments, open
 **Workspace Transfer** in the application and select **Export full workspace**.
-The resulting `.a2oworkspace` package contains the complete governed dataset,
+The resulting signed `.a2oworkspace` package contains the complete governed dataset,
 relationships, audit history, and attached evidence. It excludes credentials
-and access roles. In the destination, validate the package before authorizing
-workspace replacement. This is the supported path for moving analyst data to a
+and access roles. The destination authenticates the manifest with its trusted
+key before inspecting claims or enabling replacement. Validate the displayed
+signer key ID and manifest SHA-256 before authorizing workspace replacement.
+This is the supported path for moving analyst data to a
 fresh application version; the A2O XLSX file is only the retained stakeholder
 exchange format.
 
@@ -79,12 +105,50 @@ To restore a backup, stop the application and run:
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\local\Restore-A2OWorkspace.ps1 `
-  -BackupPath ".\backups\a2o-workspace-YYYYMMDD-HHMMSS.zip" -Force
+  -BackupPath ".\backups\a2o-workspace-YYYYMMDD-HHMMSSfff.zip" -ValidationOnly
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\local\Restore-A2OWorkspace.ps1 `
+  -BackupPath ".\backups\a2o-workspace-YYYYMMDD-HHMMSSfff.zip" -Force
 ```
 
 Restore preserves the current local state under `.wrangler` before replacing
-it, so the prior state remains recoverable. The explicit PowerShell command is
-used because the selected backup path must be visible and deliberate.
+it, so the prior state remains recoverable. It verifies archive bounds, the
+trusted signature, exact inventory, and content hashes before replacing state.
+The explicit PowerShell command is used because the selected backup path must
+be visible and deliberate.
+
+On a replacement workstation, import the separately escrowed trust root before
+initialization or restore:
+
+```powershell
+npm run local:key:import -- `
+  -KeyPath "E:\A2O-Key-Escrow\a2o-workspace-transfer-a2o-local-….a2okey" `
+  -ExpectedKeyId "a2o-local-…"
+```
+
+Unsigned schema 0–2 backups are accepted only through the documented one-time
+legacy procedure, with an independently recorded whole-archive SHA-256. Create
+a new signed backup immediately afterward. Signed schema-3 backups remain
+recoverable: restore records an explicit signed-schema-3 compatibility
+provenance mode, allowing `local:update` to create a schema-4 recovery point
+before it migrates and verifies the restored state.
+
+If an older installation has operational state but never had a signing trust
+root, `local:init` refuses to invent one silently. Establish the first root only
+against a separately authenticated legacy backup:
+
+```powershell
+npm run local:key:establish-legacy -- `
+  -LegacyBackupPath "E:\A2O-Recovery\legacy-workspace.zip" `
+  -ExpectedLegacySha256 "<independently-recorded-64-hex-value>" `
+  -Confirmation "ESTABLISH A2O LEGACY TRUST ROOT"
+```
+
+Immediately export that new key to separate escrow, validate and restore the
+legacy ZIP, run `local:update` if its backed release differs from the checkout
+(otherwise run `local:verify`), and retain a schema-4 signed backup. This
+command does not accept a signed schema-3/4 archive and never replaces an
+existing key.
 
 ## Daily Lockheed objective feed
 
@@ -103,8 +167,10 @@ Jira identity automatically creates or refreshes the canonical LM Objective;
 an invalid or duplicate identity is the only case that needs analyst
 resolution.
 
-Synthetic fixtures and automated tests are maintained on the full development
-branch. They are intentionally excluded from this AWS Workspace package.
+Synthetic fixture loaders and automated tests remain in source so the exact
+release can be verified. Demonstration loading is disabled unless
+`DEMO_ENABLED` is exactly `true`; the tests do not write operational workspace
+data.
 
 ## Daily Lockheed multi-file delivery
 
@@ -135,8 +201,10 @@ npm run local:verify
 ```
 
 Verification checks the supported Node version, local configuration,
-migrations, database access, and a production build. It does not transmit or
-deploy data.
+migrations, database access, outbound-network boundary, exact source/build
+provenance, runtime-file hashes, and signing-secret ACLs. It does not transmit
+or deploy data. Development release candidates must also pass `npm test`, which
+runs the TypeScript check, production build, and behavioral tests.
 
 Use `npm run local:init:clean` when a completely clean dependency reinstall is
 required. Stop the local application before running it so Windows can replace
@@ -146,7 +214,8 @@ native runtime files.
 
 - This mode is for one user on one approved Windows AWS Workspace.
 - Keep the server bound to localhost. Do not expose the development port.
-- Do not commit `.env`, `.wrangler`, `backups`, exports, or source workbooks.
+- Do not commit `.env`, `.a2o-secrets`, `.wrangler`, `backups`,
+  exports, escrow keys, or source workbooks.
 - GitHub transfers code only. Back up operational data separately.
 - Export a Workspace Transfer Package before changing application versions or
   moving to another Workspace.
@@ -159,11 +228,11 @@ value-producing analyst workflow and recovery procedures. See
 [docs/AUTHORITATIVE_DATA_MODEL.md](docs/AUTHORITATIVE_DATA_MODEL.md) for the
 implemented ownership, lifecycle, intake, export, and delivery boundaries.
 
-## Hardened AWS Workspace branch
+## Release discipline
 
-This branch is the compact single-user operator package. It retains the full
-application, checked-in database migrations, local database, backup/restore,
-workspace transfer, XLSX support, and operator documentation. It excludes
-automated tests, synthetic fixtures, lint and schema-generation tooling, and
-unused starter assets. Development and schema changes belong on
-`codex/model-maturity`; this branch is for installation and operation.
+Development and hosted testing occur on the active development branch. The
+hardened AWS Workspace branch advances only to an exact clean commit that has
+passed TypeScript, behavioral, production-build, network-boundary,
+backup/restore, migration, and operator smoke gates. Git carries code only;
+operational data and trust-root material follow their separate controlled
+transfer procedures.

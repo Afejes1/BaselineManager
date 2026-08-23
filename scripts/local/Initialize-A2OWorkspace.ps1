@@ -13,6 +13,7 @@ try {
     Copy-Item -LiteralPath '.env.example' -Destination '.env'
     Write-Output 'Created .env with demonstration data disabled.'
   }
+  $null = Initialize-A2OTransferSigningMaterial
 
   if ($Install -or -not (Test-Path -LiteralPath 'node_modules')) {
     Invoke-A2OCommand { npm ci } 'Dependency installation failed.'

@@ -40,8 +40,14 @@ yarn-error.log*
 
 /dist/
 /.wrangler/
+/.a2o-secrets/
+/.dev.vars*
+*.a2okey
+*.a2oworkspace
+a2o-workspace-*.zip
 /outputs/
 /work/
 /backups/
 /artifacts/
 /.tmp-*/
+/tmp/

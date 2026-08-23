@@ -16,15 +16,38 @@ try {
     if (-not (Test-Path -LiteralPath $required)) { throw "Required update input is missing: $required" }
   }
   $environmentText = Get-Content -Raw -LiteralPath '.env'
+  if ($environmentText -notmatch '(?m)^\s*AUTH_MODE\s*=\s*["'']?local-single-user["'']?\s*$') {
+    throw 'AUTH_MODE must be local-single-user before updating a local workspace.'
+  }
   if ($environmentText -notmatch '(?m)^\s*DEMO_ENABLED\s*=\s*["'']?false["'']?\s*$') {
     throw 'DEMO_ENABLED must be false before updating a program-data workspace.'
   }
+  if ($environmentText -notmatch '(?m)^\s*WORKSPACE_TRANSFER_MODE\s*=\s*["'']?local["'']?\s*$') {
+    throw 'WORKSPACE_TRANSFER_MODE must be local before updating a local workspace.'
+  }
+  $null = Assert-A2OTransferSigningMaterial
 
-  $existing = @(Get-ChildItem -LiteralPath $backupRoot -Filter 'a2o-workspace-*.zip' -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName)
-  & (Join-Path $PSScriptRoot 'Backup-A2OWorkspace.ps1') -OutputDirectory $backupRoot
-  $created = @(Get-ChildItem -LiteralPath $backupRoot -Filter 'a2o-workspace-*.zip' -File | Where-Object { $_.FullName -notin $existing } | Sort-Object LastWriteTimeUtc -Descending)
-  if (-not $created.Count -or $created[0].Length -le 0) { throw 'The required pre-update backup was not created. No migration was attempted.' }
-  $backupPath = $created[0].FullName
+  $backupOutput = @(& (Join-Path $PSScriptRoot 'Backup-A2OWorkspace.ps1') -OutputDirectory $backupRoot -PassThru)
+  $backupResults = @($backupOutput | Where-Object { $_ -and $_.PSTypeNames -contains 'A2O.LocalBackupResult' })
+  if ($backupResults.Count -ne 1) { throw 'The required pre-update backup did not return exactly one trusted archive result. No migration was attempted.' }
+  $backupResult = $backupResults[0]
+  $backupPath = (Resolve-Path -LiteralPath $backupResult.ArchivePath).Path
+
+  # Consume and revalidate the exact archive returned by the backup command.
+  # Directory timestamps or an unrelated concurrently copied ZIP never select
+  # the recovery point for this update.
+  $validationOutput = @(& (Join-Path $PSScriptRoot 'Restore-A2OWorkspace.ps1') -BackupPath $backupPath -ValidationOnly -PassThru)
+  $validationResults = @($validationOutput | Where-Object { $_ -and $_.PSTypeNames -contains 'A2O.LocalBackupValidationResult' })
+  if ($validationResults.Count -ne 1) { throw "The pre-update recovery archive did not return exactly one validation result: $backupPath" }
+  $validation = $validationResults[0]
+  if ($validation.ArchiveSha256 -ne $backupResult.ArchiveSha256 -or
+      $validation.SchemaVersion -ne $backupResult.SchemaVersion -or
+      $validation.SignerKeyId -ne $backupResult.SignerKeyId -or
+      $validation.ProvenanceMode -ne $backupResult.ProvenanceMode -or
+      $validation.ActiveGitCommit -ne $backupResult.ActiveGitCommit -or
+      -not [string]::Equals($validation.ArchivePath, $backupPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "The pre-update recovery archive changed or failed its exact handoff validation: $backupPath"
+  }
 
   Invoke-A2OCommand {
     npx --no-install wrangler d1 migrations apply DB --config wrangler.local-runtime.jsonc --local --persist-to .wrangler/state

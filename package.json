@@ -13,6 +13,9 @@
     "local:init:clean": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Initialize-A2OWorkspace.ps1 -Install",
     "local:start": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Start-A2OWorkspace.ps1",
     "local:backup": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Backup-A2OWorkspace.ps1",
+    "local:key:export": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Export-A2OTransferSigningKey.ps1",
+    "local:key:establish-legacy": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Establish-A2OLegacySigningTrustRoot.ps1",
+    "local:key:import": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Import-A2OTransferSigningKey.ps1",
     "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
     "local:update": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Update-A2OWorkspace.ps1",
     "local:network-check": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2ONetworkBoundary.ps1",
@@ -21,7 +24,7 @@
     "local:purge-objectives": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Remove-ImportedObjectives.ps1",
     "typecheck": "tsc --noEmit --incremental false --pretty false",
     "test": "npm run typecheck && npm run build && npm run test:meeting",
-    "test:meeting": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/meeting-readiness.test.ts lib/initiative-report.ts lib/initiative-readiness.ts lib/initiative-decision-model.ts lib/governance-model.ts lib/change-model.ts && node --test .test-dist/tests/meeting-readiness.test.js"
+    "test:meeting": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/meeting-readiness.test.ts tests/security-hardening.test.ts lib/initiative-report.ts lib/initiative-readiness.ts lib/initiative-decision-model.ts lib/governance-model.ts lib/change-model.ts && node --test .test-dist/tests/meeting-readiness.test.js .test-dist/tests/security-hardening.test.js"
   },
   "dependencies": {
     "docx": "^9.7.1",

@@ -14,6 +14,7 @@ export function EvidenceRecordEditor({ record, mutate, reload, onDismiss }: { re
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
+  const [cleanupWarning, setCleanupWarning] = useState("");
   const [removeDocument, setRemoveDocument] = useState({ id: "", rationale: "" });
 
   useEffect(() => {
@@ -56,12 +57,15 @@ export function EvidenceRecordEditor({ record, mutate, reload, onDismiss }: { re
 
   async function removeFile() {
     if (!removeDocument.id || !removeDocument.rationale.trim()) return;
-    setSaving(true); setNotice("");
+    setSaving(true); setNotice(""); setCleanupWarning("");
     try {
       const response = await fetch("/api/documents", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify(removeDocument) });
-      const payload = await response.json() as { error?: string };
+      const payload = await response.json() as { error?: string; warning?: string; cleanupPending?: boolean };
       if (!response.ok) throw new Error(payload.error || "Evidence file could not be removed.");
-      await reload(); setRemoveDocument({ id: "", rationale: "" }); onDismiss();
+      await reload(); setRemoveDocument({ id: "", rationale: "" });
+      if (payload.cleanupPending) {
+        setCleanupWarning(payload.warning || "Evidence metadata was removed, but its storage object remains durably queued for steward cleanup.");
+      } else onDismiss();
     } catch (reason) { setNotice(reason instanceof Error ? reason.message : "Evidence file could not be removed."); }
     finally { setSaving(false); }
   }
@@ -74,6 +78,7 @@ export function EvidenceRecordEditor({ record, mutate, reload, onDismiss }: { re
     <section className="object-link-picker"><div className="section-toolbar"><div><span className="eyebrow">HARD LINKS</span><h3>Related objects</h3></div><span>{selected.length} linked</span></div><label className="search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find Product, MCP, Objective, Platform, server, VM, installation, or connection" /></label><div className="object-link-results">{visible.map((item) => { const key = `${item.kind}|${item.id}`; return <label key={key} className={selected.includes(key) ? "selected" : ""}><input aria-label={`Link ${item.label}`} type="checkbox" checked={selected.includes(key)} onChange={() => toggle(item)} /><span><strong>{item.label}</strong><small>{displayStatus(item.kind)} · {item.detail}</small></span></label>; })}</div></section>
     <label className="modal-field">Attach another file<input type="file" accept=".pdf,.docx,.xlsx,.pptx,.png,.jpg,.jpeg,.txt,.md,.csv,.json" onChange={(event) => setFile(event.target.files?.[0] || null)} /><small>Approved types: PDF, modern Office, image, or text evidence up to 10 MB. Files are stored as linked evidence and are not analyzed automatically.</small></label>
     {record.documents.length ? <section className="evidence-file-editor"><span className="eyebrow">ATTACHED FILES</span>{record.documents.map((document) => <div key={document.id}><a href={`/api/documents?id=${encodeURIComponent(document.id)}`}>{document.fileName}</a><button className="text-action danger-text" type="button" onClick={() => setRemoveDocument({ id: document.id, rationale: "" })}>Remove</button></div>)}{removeDocument.id ? <div className="lifecycle-field"><label className="modal-field">Removal rationale<input value={removeDocument.rationale} onChange={(event) => setRemoveDocument({ ...removeDocument, rationale: event.target.value })} /></label><button className="danger-button" disabled={saving || !removeDocument.rationale.trim()} onClick={() => void removeFile()}>Confirm removal</button></div> : null}</section> : null}
+    {cleanupWarning ? <p className="warning-copy" role="status">{cleanupWarning} Open Workspace Transfer to run the bounded cleanup retry.</p> : null}
     {notice ? <p className="error-copy" role="alert">{notice}</p> : null}<footer><button className="ghost-button" type="button" disabled={saving} onClick={onDismiss}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save evidence record"}</button></footer>
   </ViewportModal>;
 }

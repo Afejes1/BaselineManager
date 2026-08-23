@@ -1,13 +1,11 @@
-"use client";
-
-import { AlignmentType, Document, ExternalHyperlink, Footer, Header, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
+import { AlignmentType, Document, Footer, Header, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { jsPDF } from "jspdf";
 import type { ExecutiveBrief } from "./governance-model.js";
 
 const safeName = (title: string) => (title || "Executive-Brief").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "Executive-Brief";
 const defaultMarking = "PROGRAM WORKING DATA — DRAFT / UNCONTROLLED";
 const handlingMarking = (brief: ExecutiveBrief) => brief.snapshot.handlingMarking || defaultMarking;
-const markedMarkdown = (brief: ExecutiveBrief) => brief.bodyMarkdown.includes(handlingMarking(brief)) ? brief.bodyMarkdown : `> **${handlingMarking(brief)}**\n> Snapshot ${brief.snapshot.asOf || brief.updatedAt}.\n\n${brief.bodyMarkdown}`;
+const markedMarkdown = (brief: ExecutiveBrief) => brief.bodyMarkdown.includes(handlingMarking(brief)) ? brief.bodyMarkdown : `> **${handlingMarking(brief)}**\n> Snapshot ${brief.snapshot.asOf || brief.createdAt}.\n\n${brief.bodyMarkdown}`;
 
 export function downloadPreparedBrief(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -93,18 +91,10 @@ export function parseBriefMarkdown(markdown: string): BriefMarkdownBlock[] {
 
 const plainInline = (inline: BriefInline[]) => inline.map((item) => item.text).join("");
 
-function resolvedHref(value: string) {
-  if (/^(?:https?:|mailto:)/i.test(value)) return value;
-  if (value.startsWith("/") && typeof window !== "undefined") return new URL(value, window.location.origin).href;
-  return null;
-}
-
 function docxRuns(inline: BriefInline[]) {
-  return inline.map((item) => {
-    const link = item.href ? resolvedHref(item.href) : null;
-    const run = new TextRun({ text: item.text, bold: item.bold, italics: item.italics, color: link ? "1155CC" : undefined, underline: link ? {} : undefined });
-    return link ? new ExternalHyperlink({ link, children: [run] }) : run;
-  });
+  // Saved reports retain their evidence labels in visible text. Exported Office
+  // artifacts deliberately contain no external relationships or active links.
+  return inline.map((item) => new TextRun({ text: item.text, bold: item.bold, italics: item.italics, color: item.href ? "1155CC" : undefined, underline: item.href ? {} : undefined }));
 }
 
 function markdownParagraphs(markdown: string, marking: string) {
@@ -125,7 +115,7 @@ export async function prepareBriefDocx(brief: ExecutiveBrief) {
     sections: [{
       properties: { page: { margin: { top: 900, right: 900, bottom: 900, left: 900 } } },
       headers: { default: new Header({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: marking, bold: true, size: 16 })] })] }) },
-      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `Generated ${brief.snapshot.asOf || brief.updatedAt} · decision-support draft`, size: 14 })] })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `Generated ${brief.snapshot.asOf || brief.createdAt} · decision-support draft`, size: 14 })] })] }) },
       children: markdownParagraphs(markedMarkdown(brief), marking),
     }],
   });
@@ -138,6 +128,7 @@ export function prepareBriefPdf(brief: ExecutiveBrief) {
   const marking = handlingMarking(brief);
   const left = 54;
   const right = 558;
+  const top = 48;
   const bottom = 738;
   const markPage = () => {
     pdf.setFont("helvetica", "bold");
@@ -145,30 +136,57 @@ export function prepareBriefPdf(brief: ExecutiveBrief) {
     pdf.text(marking, 306, 24, { align: "center" });
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7);
-    pdf.text(`Generated ${brief.snapshot.asOf || brief.updatedAt} · decision-support draft`, 306, 770, { align: "center" });
+    pdf.text(`Generated ${brief.snapshot.asOf || brief.createdAt} · decision-support draft`, 306, 770, { align: "center" });
   };
   markPage();
-  let y = 48;
+  let y = top;
+  const addMarkedPage = () => {
+    pdf.addPage();
+    markPage();
+    y = top;
+  };
   for (const block of parseBriefMarkdown(markedMarkdown(brief)).filter((item) => !(item.kind === "quote" && plainInline(item.inline) === marking))) {
     const isTitle = block.kind === "title";
     const isHeading = block.kind === "heading1" || block.kind === "heading2";
     const prefix = block.kind === "bullet" ? "• " : "";
     const content = `${prefix}${plainInline(block.inline)}`;
-    if (!content.trim()) { y += 10; continue; }
+    if (!content.trim()) {
+      if (y + 10 > bottom) addMarkedPage();
+      else y += 10;
+      continue;
+    }
     const x = block.kind === "quote" || block.kind === "bullet" ? left + 14 : left;
-    pdf.setFont("helvetica", isTitle || isHeading ? "bold" : block.inline.some((item) => item.italics) ? "italic" : "normal");
-    pdf.setFontSize(isTitle ? 18 : block.kind === "heading1" ? 12 : block.kind === "heading2" ? 10.5 : 9.5);
-    const lines = pdf.splitTextToSize(content, right - x);
+    const fontStyle = isTitle || isHeading ? "bold" : block.inline.some((item) => item.italics) ? "italic" : "normal";
+    pdf.setFont("helvetica", fontStyle);
+    const fontSize = isTitle ? 18 : block.kind === "heading1" ? 12 : block.kind === "heading2" ? 10.5 : 9.5;
+    pdf.setFontSize(fontSize);
+    const lines = pdf.splitTextToSize(content, right - x) as string[];
     const lineHeight = isTitle ? 21 : isHeading ? 15 : 12;
-    const needed = lines.length * lineHeight + 8;
-    if (y + needed > bottom) { pdf.addPage(); markPage(); y = 48; }
-    pdf.text(lines, x, y);
-    const link = block.inline.find((item) => item.href)?.href;
-    const resolved = link ? resolvedHref(link) : null;
-    if (resolved && lines.length === 1) pdf.link(x, y - lineHeight + 3, Math.min(pdf.getTextWidth(content), right - x), lineHeight, { url: resolved });
-    y += needed;
+    let lineIndex = 0;
+    while (lineIndex < lines.length) {
+      let availableLines = Math.floor((bottom - y) / lineHeight);
+      if (availableLines < 1) {
+        addMarkedPage();
+        availableLines = Math.floor((bottom - y) / lineHeight);
+      }
+      const chunk = lines.slice(lineIndex, lineIndex + availableLines);
+      pdf.setFont("helvetica", fontStyle);
+      pdf.setFontSize(fontSize);
+      pdf.text(chunk, x, y, { lineHeightFactor: lineHeight / fontSize });
+      y += chunk.length * lineHeight;
+      lineIndex += chunk.length;
+      if (lineIndex < lines.length) addMarkedPage();
+    }
+    y += 8;
   }
-  return { blob: pdf.output("blob"), fileName: `${safeName(brief.title)}.pdf` };
+  const bytes = new Uint8Array(pdf.output("arraybuffer"));
+  // jsPDF emits a benign initial-view /OpenAction by default. The hardened
+  // evidence policy rejects every PDF action, so neutralize only the final
+  // catalog key with an equal-length private name to preserve xref offsets.
+  const pdfText = new TextDecoder("latin1").decode(bytes);
+  const catalogOpenAction = pdfText.lastIndexOf("/OpenAction [");
+  if (catalogOpenAction >= 0) bytes.set(new TextEncoder().encode("/A2OInitial"), catalogOpenAction);
+  return { blob: new Blob([bytes], { type: "application/pdf" }), fileName: `${safeName(brief.title)}.pdf` };
 }
 
 export function prepareBriefMarkdown(brief: ExecutiveBrief) {

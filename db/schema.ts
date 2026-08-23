@@ -1269,12 +1269,17 @@ export const briefPublications = sqliteTable("brief_publication", {
   briefId: text("brief_id").notNull().references(() => executiveBriefs.id),
   format: text("format").notNull(),
   contentHash: text("content_hash").notNull(),
+  byteSize: integer("byte_size").notNull().default(0),
+  sourceHash: text("source_hash").notNull().default("legacy-unverified"),
+  rendererVersion: text("renderer_version").notNull().default("legacy"),
+  artifactDocumentId: text("artifact_document_id").references(() => evidenceDocuments.id),
   snapshotPayload: text("snapshot_payload").notNull(),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   createdAt: text("created_at").notNull(),
 }, (t) => [
   check("brief_publication_format", sql`${t.format} IN ('markdown','pdf','docx')`),
   index("brief_publication_brief_ix").on(t.briefId, t.createdAt),
+  uniqueIndex("brief_publication_artifact_uq").on(t.artifactDocumentId),
 ]);
 
 // Every file import follows one governed lifecycle even when a source-specific

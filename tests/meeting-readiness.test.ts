@@ -6,8 +6,11 @@ import type { BriefSnapshot, EvidenceDocument, ExecutiveBrief } from "../lib/gov
 import type { InitiativeAssessment, InitiativeDecisionBundle } from "../lib/initiative-decision-model.js";
 import { EvidenceValidationError, validateEvidenceBytes } from "../lib/evidence-validation.js";
 import { parseBriefMarkdown, prepareBriefDocx, prepareBriefMarkdown, prepareBriefPdf } from "../lib/brief-export.js";
+import { isCurrentBriefSnapshot } from "../lib/brief-publication.js";
 import { buildInitiativeReportMarkdown } from "../lib/initiative-report.js";
-import { PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceNames } from "../lib/output-handling.js";
+import { assessInitiative } from "../lib/initiative-readiness.js";
+import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "../lib/initiative-workflow-invariants.js";
+import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -24,7 +27,7 @@ function reportFixture() {
     changes: { requests: [], effects: [], dependencies: [] },
   } as unknown as InitiativeDecisionBundle;
   const assessment: InitiativeAssessment = { stage: "decision_ready", score: 100, blockers: 0, warnings: 0, decisionsPending: 0, requirementsTraced: 1, criteriaPassed: 1, findings: [] };
-  const documents: EvidenceDocument[] = [{ id: "document-1", governanceRecordId: null, initiativeId: "initiative-1", fileName: "synthetic-verification.pdf", contentType: "application/pdf", byteSize: 2048, description: "Tier 4 verification result", createdAt: "2026-08-20T18:00:00.000Z" }];
+  const documents: EvidenceDocument[] = [{ id: "document-1", governanceRecordId: null, initiativeId: "initiative-1", fileName: "synthetic-verification.pdf", contentType: "application/pdf", byteSize: 2048, description: "Tier 4 verification result", quarantined: false, integritySealed: true, createdAt: "2026-08-20T18:00:00.000Z" }];
   const baseline: BriefSnapshot = { asOf: "2026-08-21T00:00:00.000Z", handlingMarking: "SYNTHETIC DEMONSTRATION DATA — NOT PROGRAM DATA", releaseName: "Release 1", sourceRows: 12, products: 3, releases: 1, reviewRows: 0, productNames: ["Synthetic Product"], linkedRecords: [{ type: "decision", title: "Synthetic authority decision", status: "approved" }] };
   return { bundle, assessment, documents, baseline };
 }
@@ -46,16 +49,29 @@ test("saved leadership report escapes imported markdown and remote-content injec
 });
 
 test("current and scoped outputs derive a fail-closed marking from record lineage", () => {
-  assert.equal(handlingMarkingFromSourceNames(["JSF Synthetic Demonstration.xlsx", "demo-objectives.csv"]), SYNTHETIC_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceNames([DEMONSTRATION_SOURCE_FILE_NAME], true), SYNTHETIC_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceNames([DEMONSTRATION_SOURCE_FILE_NAME], false), PROGRAM_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceNames(["non-demo-data.xlsx"]), PROGRAM_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceLineage([{ fileName: DEMONSTRATION_SOURCE_FILE_NAME, sourceKey: "DEMO-001", projectionMatchesSource: true }], true), SYNTHETIC_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceLineage([{ fileName: DEMONSTRATION_SOURCE_FILE_NAME, sourceKey: "PROGRAM-001", projectionMatchesSource: true }]), PROGRAM_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceLineage([{ fileName: DEMONSTRATION_SOURCE_FILE_NAME, sourceKey: "DEMO-001", projectionMatchesSource: false }]), PROGRAM_HANDLING_MARKING);
+  assert.equal(workspaceClassificationFromSourceLineage([DEMONSTRATION_SOURCE_FILE_NAME], ["DEMO-001"], true, true), "SYNTHETIC DEMONSTRATION DATA");
+  assert.equal(workspaceClassificationFromSourceLineage([DEMONSTRATION_SOURCE_FILE_NAME], ["DEMO-001"], true, false), "PROGRAM WORKING DATA");
+  assert.equal(workspaceClassificationFromSourceLineage([DEMONSTRATION_SOURCE_FILE_NAME], ["DEMO-001"], false), "PROGRAM WORKING DATA");
+  assert.equal(sourceNameIsSynthetic("ＪＳＦ＿Ｖ３＿Ｄｅｍｏｎｓｔｒａｔｉｏｎ＿Ｂａｓｅｌｉｎｅ．ｘｌｓｘ"), true);
+  assert.equal(sourceKeyIsSynthetic("ＤＥＭＯ－001"), true);
+  assert.equal(workspaceClassificationFromSourceLineage([DEMONSTRATION_SOURCE_FILE_NAME], [], true), "PROGRAM WORKING DATA");
   assert.equal(handlingMarkingFromSourceNames(["demo.xlsx", "program-baseline.xlsx"]), PROGRAM_HANDLING_MARKING);
   assert.equal(handlingMarkingFromSourceNames(["demo.xlsx", ""]), PROGRAM_HANDLING_MARKING);
   assert.equal(handlingMarkingFromSourceNames([]), PROGRAM_HANDLING_MARKING);
   const server = read("lib/governance-server.ts");
+  const workspaceTransfer = read("lib/workspace-transfer.ts");
   const onePager = read("app/initiatives/[initiative]/one-pager/page.tsx");
   const reports = read("app/reports/page.tsx");
   assert.match(server, /LEFT JOIN source_row_24 sr ON sr\.id=bo\.source_row_id LEFT JOIN source_package sp ON sp\.id=sr\.source_package_id/);
-  assert.match(server, /handlingMarkingFromSourceNames\(activeSourceLineageResult\.results/);
-  assert.match(server, /handlingMarkingFromSourceNames\(selectedRows\.map\(\(row\) => row\.source_file_name \|\| ""\)\)/);
+  assert.match(server, /handlingMarking: PROGRAM_HANDLING_MARKING/);
+  assert.doesNotMatch(server, /handlingMarkingFromSourceLineage/);
+  assert.match(workspaceTransfer, /const classification = "PROGRAM WORKING DATA" as const/);
   assert.doesNotMatch(server, /SELECT file_name FROM source_package WHERE program_id/);
   assert.match(onePager, /portfolio\.handlingMarking/);
   assert.match(reports, /governance\?\.handlingMarking/);
@@ -91,21 +107,44 @@ test("leadership DOCX and PDF are real artifacts without changing the Markdown s
   ].join("\n");
   const brief: ExecutiveBrief = {
     id: "brief-1", initiativeId: "initiative-1", initiativeTitle: "Synthetic modernization", title: "Executive #1", status: "draft", notes: null,
-    snapshot: { ...reportFixture().baseline, handlingMarking: SYNTHETIC_HANDLING_MARKING }, bodyMarkdown, publishedAt: null,
+    snapshot: { ...reportFixture().baseline, handlingMarking: SYNTHETIC_HANDLING_MARKING }, snapshotValid: true, bodyMarkdown, publications: [], publishedAt: null,
     createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z",
   };
   assert.equal(await prepareBriefMarkdown(brief).blob.text(), bodyMarkdown);
   const docx = await prepareBriefDocx(brief);
   const docxBytes = new Uint8Array(await docx.blob.arrayBuffer());
   assert.equal(new TextDecoder().decode(docxBytes.slice(0, 2)), "PK");
+  assert.equal((await validateEvidenceBytes(docx.fileName, docxBytes)).contentType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   const zip = await JSZip.loadAsync(docxBytes);
   const documentXml = await zip.file("word/document.xml")?.async("string");
   assert.ok(documentXml);
   assert.match(documentXml, /Dependency analysis/);
   assert.match(documentXml, /artifact \[final\]\.pdf/);
   assert.doesNotMatch(documentXml, /### Dependency|\\#1|\*\*Evidence|\]\(\/api/);
+  const relationships = (await zip.file("word/_rels/document.xml.rels")?.async("string")) || "";
+  assert.doesNotMatch(relationships, /TargetMode="External"/);
   const pdf = prepareBriefPdf(brief);
-  assert.equal(new TextDecoder().decode(new Uint8Array(await pdf.blob.arrayBuffer()).slice(0, 5)), "%PDF-");
+  const pdfBytes = new Uint8Array(await pdf.blob.arrayBuffer());
+  assert.equal(new TextDecoder().decode(pdfBytes.slice(0, 5)), "%PDF-");
+  assert.equal((await validateEvidenceBytes(pdf.fileName, pdfBytes)).contentType, "application/pdf");
+});
+
+test("leadership PDF paginates a single long paragraph without truncating its tail", async () => {
+  const tail = "PDF-LONG-BLOCK-END-SENTINEL";
+  const bodyMarkdown = `${"Long paragraph content ".repeat(1_400)}${tail}`;
+  assert.ok(bodyMarkdown.length > 30_000);
+  const brief: ExecutiveBrief = {
+    id: "brief-long", initiativeId: "initiative-1", initiativeTitle: "Synthetic modernization", title: "Long block", status: "draft", notes: null,
+    snapshot: { ...reportFixture().baseline, handlingMarking: SYNTHETIC_HANDLING_MARKING }, snapshotValid: true, bodyMarkdown, publications: [], publishedAt: null,
+    createdAt: "2026-08-21T00:00:00.000Z", updatedAt: "2026-08-21T00:00:00.000Z",
+  };
+  const pdf = prepareBriefPdf(brief);
+  const pdfText = new TextDecoder("latin1").decode(await pdf.blob.arrayBuffer());
+  const pageCount = pdfText.match(/\/Type \/Page\b/g)?.length ?? 0;
+  assert.ok(pageCount >= 5, `expected the long paragraph to span at least 5 pages, received ${pageCount}`);
+  assert.equal(pdfText.match(/SYNTHETIC DEMONSTRATION DATA/g)?.length, pageCount);
+  assert.equal(pdfText.match(/Generated 2026-08-21T00:00:00.000Z/g)?.length, pageCount);
+  assert.match(pdfText, new RegExp(tail));
 });
 
 test("initiative evidence and report controls are first-class and synchronized", () => {
@@ -117,6 +156,100 @@ test("initiative evidence and report controls are first-class and synchronized",
   assert.match(page, /await governance\.reload\(\)/);
   const portfolio = read("lib/governance-model.ts");
   assert.match(portfolio, /documents: EvidenceDocument\[\]/);
+});
+
+test("meeting report and Objective editors expose only governed, complete actions", () => {
+  const reports = read("app/reports/page.tsx");
+  assert.match(reports, /baselineState\.loading \|\| platformState\.loading \|\| changeState\.loading \|\| governanceState\.loading \|\| decisionState\.loading/);
+  assert.match(reports, /evidenceIntegrityStatus === "not_checked"/);
+  assert.match(reports, /if \(!reportReady\) return/);
+  assert.match(reports, /disabled=\{exportBlocked\}/);
+  const briefs = read("app/briefs/page.tsx");
+  assert.match(briefs, /if \(status === "published"\) return \["published", "superseded"\]/);
+  assert.match(briefs, /if \(!briefTitleCustomized\) setBriefTitle/);
+  const technicalScope = read("components/objective-technical-scope.tsx");
+  assert.match(technicalScope, /setDependency\(\{ id: item\.id/);
+  assert.match(technicalScope, /setAttribution\(\{ id: item\.id/);
+  assert.match(technicalScope, /disabled=\{Boolean\(dependency\.id\)\}/);
+  assert.match(technicalScope, /disabled=\{Boolean\(attribution\.id\)\}/);
+});
+
+test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
+  const legacySnapshot = {
+    asOf: "2026-08-18T17:35:08.460Z",
+    releaseName: "Release 5",
+    sourceRows: 3,
+    products: 3,
+    releases: 1,
+    reviewRows: 0,
+    productNames: ["Data Gateway"],
+    linkedRecords: [],
+  };
+  assert.equal(isCurrentBriefSnapshot(legacySnapshot), false);
+  const server = read("lib/governance-server.ts");
+  const detail = read("app/briefs/[id]/page.tsx");
+  assert.match(server, /snapshotValid: parsedSnapshot\.valid/);
+  assert.match(detail, /!brief\.snapshotValid \|\| brief\.snapshot\.handlingMarking !== PROGRAM_HANDLING_MARKING/);
+  assert.match(detail, /if \(underMarkedHistoricalReport\) throw new Error\("This historical report is under-marked\. Regenerate it before export or distribution\."\)/);
+  assert.match(detail, /disabled=\{exporting \|\| underMarkedHistoricalReport\}/);
+});
+
+test("Objective reparenting preserves dependency and effect-attribution integrity", () => {
+  const server = read("lib/initiative-decision-server.ts");
+  const objectivePage = read("app/objectives/[id]/page.tsx");
+  const initiativePage = read("app/initiatives/[initiative]/page.tsx");
+  assert.match(server, /const parentChanged = Boolean\(before && clean\(before\.change_request_id\) !== \(changeRequestId \|\| ""\)\)/);
+  assert.match(server, /dependent_change_request_id=\? AND status IN \('proposed','accepted'\)/);
+  assert.match(server, /Reparenting would turn an active cross-package dependency into a Change Request dependency on its own Objective/);
+  assert.match(server, /objective_effect_attribution[\s\S]*l\.relationship<>'primary'/);
+  assert.match(server, /Reparenting would strand a technical-effect attribution outside the Objective's surviving Change Request links/);
+  assert.match(server, /reparentReason: parentChanged \? nullable\(body\.reparentReason\) : null/);
+  assert.match(objectivePage, /"LM Objective updated\.", \(\) => setEdit\(\{\}\)\)/);
+  assert.match(initiativePage, /!objectiveDraft\.id && objectiveDraft\.reparentReason[\s\S]*reparentReason: ""/);
+});
+
+test("Objective, milestone, requirement, and unlink invariants fail closed", () => {
+  assert.deepEqual(objectiveLifecycleIssues({ status: "complete", plannedStart: "2026-09-02", plannedFinish: "2026-09-01", actualStart: "2026-09-04", actualFinish: "" }), ["planned_window_reversed", "complete_without_actual_finish"]);
+  assert.deepEqual(objectiveLifecycleIssues({ status: "in_progress", actualStart: "2026-09-04", actualFinish: "2026-09-03" }), ["actual_window_reversed"]);
+  assert.deepEqual(milestoneLifecycleIssues({ status: "complete", actualDate: null }), ["complete_without_actual_date"]);
+  assert.equal(requirementNeedsAcceptancePath("not_applicable"), false);
+  assert.equal(requirementNeedsAcceptancePath("verified"), true);
+  assert.equal(requirementHasAcceptancePath("requirement-1", [{ requirementTraceId: "requirement-1" }]), true);
+  assert.deepEqual(objectiveIdsLeavingInitiativeScope({
+    removedChangeRequestId: "cr-removed",
+    remainingChangeRequestIds: ["cr-retained"],
+    relations: [
+      { objectiveId: "objective-owned-only", changeRequestId: "cr-removed" },
+      { objectiveId: "objective-shared", changeRequestId: "cr-removed" },
+      { objectiveId: "objective-shared", changeRequestId: "cr-retained" },
+      { objectiveId: "objective-reported-only", changeRequestId: "cr-removed" },
+    ],
+  }), ["objective-owned-only", "objective-reported-only"]);
+
+  const fixture = reportFixture();
+  fixture.bundle.objectives[0].status = "complete";
+  fixture.bundle.objectives[0].actualFinish = null;
+  fixture.bundle.requirements = [
+    { ...fixture.bundle.requirements[0], id: "requirement-applicable", traceStatus: "verified" },
+    { ...fixture.bundle.requirements[0], id: "requirement-na", externalIdentifier: "REQ-NA", traceStatus: "not_applicable", rationale: null },
+  ];
+  fixture.bundle.criteria[0].requirementTraceId = null;
+  fixture.bundle.criteria[0].actualDate = "2026-08-20";
+  fixture.bundle.milestones[0].status = "complete";
+  fixture.bundle.milestones[0].actualDate = null;
+  const assessment = assessInitiative(fixture.bundle, new Date("2026-08-21T00:00:00.000Z"));
+  const findingTitles = assessment.findings.map((finding) => finding.title);
+  assert.ok(findingTitles.some((title) => title.includes("complete without an actual finish")));
+  assert.ok(findingTitles.includes("REQ-001 has no acceptance path"));
+  assert.ok(findingTitles.includes("REQ-NA lacks a not-applicable rationale"));
+  assert.ok(findingTitles.some((title) => title.includes("complete without an actual date")));
+
+  const server = read("lib/initiative-decision-server.ts");
+  assert.match(server, /A complete Objective requires an actual finish date/);
+  assert.match(server, /A not-applicable requirement trace requires a documented rationale/);
+  assert.match(server, /Link at least one acceptance criterion before marking this requirement traced or verified/);
+  assert.match(server, /work_package_objective/);
+  assert.match(server, /Reassign or remove \$\{dependencies\} before unlinking this Change Request/);
 });
 
 test("hosted APIs fail closed and evidence downloads are non-sniffable", () => {
@@ -158,19 +291,26 @@ test("scope and workspace transfer controls fail closed", () => {
   const initiatives = read("lib/governance-server.ts");
   assert.match(initiatives, /explicitly use the entire release scope/);
   assert.match(initiatives, /active in the selected baseline release/);
+  assert.match(initiatives, /const releaseChanged = releaseId !== current\.primary_release_id/);
+  assert.match(initiatives, /else if \(releaseChanged\)[\s\S]*SELECT scope_id AS id FROM initiative_scope WHERE initiative_id=\? AND scope_kind='product'[\s\S]*assertProductScopes\(db, retainedProducts\.results, releaseId\)/);
   const transfer = read("lib/workspace-transfer.ts");
-  assert.match(transfer, /workspaceClassificationFromSourceNames/);
-  assert.match(transfer, /classification does not match its source-package lineage/);
+  assert.match(transfer, /workspaceClassificationFromSourceLineage/);
+  assert.match(transfer, /classification overstates its source-package lineage/);
   assert.match(transfer, /download-only quarantine/);
   assert.match(transfer, /Imported report Markdown cannot contain raw HTML/);
   assert.match(transfer, /spec\.logicalName === "auditEvents"/);
   assert.match(transfer, /validateEvidenceBytes/);
 });
 
-test("recorded report publication is confirmed before refresh and download", () => {
+test("report publication uses server-rendered durable artifacts before refresh and download", () => {
   const page = read("app/briefs/[id]/page.tsx");
-  assert.match(page, /record_brief_publication[\s\S]*\{ refresh: false \}/);
-  assert.match(page, /downloadPreparedBrief\(prepared\.blob, prepared\.fileName\);[\s\S]*void reload\(\)/);
+  const route = read("app/api/brief-publications/route.ts");
+  const server = read("lib/brief-publication-server.ts");
+  assert.doesNotMatch(page, /record_brief_publication/);
+  assert.match(page, /fetch\("\/api\/brief-publications"[\s\S]*await response\.blob\(\)[\s\S]*await reload\(\)/);
+  assert.doesNotMatch(route, /formData\(|instanceof File|expectedContentHash/);
+  assert.match(server, /prepareBriefPdf/);
+  assert.match(server, /validateEvidenceBytes/);
 });
 
 test("the air-gapped runtime fails closed on stale builds and unbacked upgrades", () => {
@@ -185,7 +325,8 @@ test("the air-gapped runtime fails closed on stale builds and unbacked upgrades"
   assert.match(common, /Assert-A2OBuildManifest/);
   assert.match(common, /failed integrity validation/);
   assert.match(start, /Assert-A2OBuildManifest[\s\S]*Assert-A2ONoPendingMigrations/);
-  assert.match(backup, /schemaVersion = 2/);
+  assert.match(backup, /schemaVersion = 4/);
+  assert.match(backup, /Get-A2OHmacSha256/);
   assert.match(backup, /sha256 = Get-A2OFileSha256/);
   assert.match(restore, /Backup integrity validation failed/);
   assert.match(update, /Backup-A2OWorkspace\.ps1[\s\S]*d1 migrations apply[\s\S]*npm run build[\s\S]*Test-A2OWorkspace\.ps1/);

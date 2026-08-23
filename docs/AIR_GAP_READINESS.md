@@ -10,13 +10,13 @@ This application is being matured for an eventual JSF air-gapped deployment. The
 - An erroneous baseline record is voided and restorable; it is never silently hard-deleted.
 - Release roles (`historical`, `as_is`, `to_be`, `reported`) are analytical perspectives. They are not approval states.
 - Change Requests are references to the external incumbent system. This application owns Government priority, impact links, dependencies, consequences, and the `fund` / `defer` / `decline` decision record.
-- Reports are deterministic and traceable to working baseline records, intake snapshots, and governed evidence links.
+- Reports are deterministic and traceable to working baseline records, intake snapshots, and governed evidence links. Published PDF/DOCX/Markdown artifacts are rendered, validated, hashed, and retained by the server; lifecycle cannot be advanced to Published by an independent client status edit.
 - The local Lockheed objective feed importer accepts a selected JSON file,
   preserves immutable daily receipts, multi-valued JPO/MCP references,
   dependency references, and field-level deltas. It makes no GitLab network
   request and does not create Government ownership or funding decisions from
   supplier data.
-- A versioned Workspace Transfer Package carries the complete application-owned dataset, relationships, audit history, and attached evidence between compatible deployments. It never carries credentials or destination access roles.
+- A versioned Workspace Transfer Package carries the complete application-owned dataset, relationships, audit history, and attached evidence between compatible deployments. Its manifest is authenticated with HMAC-SHA-256 before claims are trusted. It never carries credentials, destination access roles, or its signing key.
 
 ## Outbound network boundary
 
@@ -48,7 +48,13 @@ Do not claim production air-gap readiness until those five decisions are recorde
 
 ## Operational configuration
 
-Set `DEMO_ENABLED=false` in an operational environment. The `/api/demo` mutation endpoint then returns HTTP 403 and the steward UI hides the demo loader.
+Set `AUTH_MODE=local-single-user`, `DEMO_ENABLED=false`, and
+`WORKSPACE_TRANSFER_MODE=local` in the single-user operator environment. These
+values are exact and fail closed when missing or misspelled. The server must be
+bound to `127.0.0.1`; local authentication is not a multi-user identity
+substitute. A hosted environment uses `AUTH_MODE=sites`, disables Workspace
+Transfer, and configures an explicit `STEWARD_USER_IDS` allowlist for fresh
+database bootstrap.
 
 Required deployment contents:
 
@@ -61,7 +67,8 @@ Required deployment contents:
 
 ## Acceptance gates before real JSF data
 
-1. The full development branch passes build, lint, and contract tests; the
+1. The full development branch passes TypeScript, production build, and
+   behavioral/contract tests; the
    hardened operator package passes its production build and local runtime
    verification from the locked dependency set.
 2. Exact 24-column workbook round-trip preserves headers, order, blanks, zeroes, booleans, and all Notes fields.
@@ -70,8 +77,8 @@ Required deployment contents:
 5. ALOU → OCK → OBK → PMA hierarchy rejects cycles and shows product/release/organization rollups.
 6. As-Is → To-Be comparison is deterministic across at least three plausible releases.
 7. Change Request effects and dependency chains are complete enough to support a fund/defer/decline decision.
-8. Backup/restore and Workspace Transfer are tested against a copy of the relational database and evidence store, including checksum validation and a fresh-destination import.
-9. `DEMO_ENABLED=false`, approved identity mapping, least-privilege roles, TLS, audit retention, session timeout, and log handling are verified.
+8. Backup/restore and Workspace Transfer are tested against a copy of the relational database and evidence store, including signature/authenticity failure, checksum validation, bounded archive expansion, and a fresh-destination import.
+9. Exact auth/demo/transfer modes, approved identity mapping, explicit steward bootstrap, least-privilege roles, TLS, audit retention, session timeout, and log handling are verified.
 10. A representative sanitized workbook passes smoke testing before controlled real-data ingestion.
 11. Two sanitized JSON receipts are imported in sequence and the preview
     demonstrates added, changed, unchanged, removed, no-JPO, multi-JPO, and
@@ -82,6 +89,31 @@ Required deployment contents:
 - Back up the relational database and evidence-object store as one recovery set.
 - Retain the application version, migrations, configuration, and manifest with each recovery point.
 - Encrypt backup media under the enclave's key-management policy.
+- Authenticate every new backup and Workspace Transfer manifest. Escrow the
+  signing key on separately controlled encrypted media, record its non-secret
+  key ID, test import on a fresh host, and never store the key with the data backup.
 - Perform a documented restore drill; a backup that has not been restored is not accepted.
 - Verify the restored database preserves source packages, raw source rows, Baseline Records, reviews, audit events, Platform hierarchy, Change Requests, effects, dependencies, and decision authority/rationale.
+
+## Evidence-processing boundary
+
+Uploads are restricted by extension, signature, size, and structure. Modern
+Office files with macros, embedded objects, or external relationships are
+rejected. PDFs must be passive, structurally complete documents; actions,
+scripts, external links, embedded files, forms/XFA, encryption, multimedia, and
+object streams are rejected. Legacy evidence that cannot satisfy the current
+policy restores into quarantine and cannot count toward readiness, sign-off,
+report generation, or in-application download. These controls do not replace
+the enclave's approved malware-scanning process. Legacy evidence that does
+satisfy the content policy but predates paired audit/storage hashes remains
+non-authoritative until a steward validates and seals its exact bytes or
+reattaches the source.
+
+## Offline dependency prerequisite
+
+An air-gapped installation must receive the approved Node.js runtime and the
+exact locked production dependency artifact through the enclave software
+supply-chain process. A successful connected `npm ci` is not evidence that the
+same dependencies are available offline. Exercise installation, build, and
+verification with the actual offline artifact before operational acceptance.
 
