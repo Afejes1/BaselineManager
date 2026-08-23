@@ -36,6 +36,7 @@ export type TopologyExtensions = {
 
 export type InfrastructureNodeType = "ups" | "network_switch" | "chassis" | "blade" | "physical_server" | "storage_array" | "logical_drive" | "virtual_machine" | "appliance" | "other";
 export type InfrastructureLifecycle = "active" | "planned" | "retired";
+export type InfrastructureConfidence = "reported" | "assessed" | "confirmed";
 export type ReleaseNodeLifecycle = "planned" | "active" | "retired" | "absent";
 export type InfrastructureOperatingState = "unknown" | "operational" | "degraded" | "offline" | "not_installed";
 export type InstallationRole = "operating_system" | "hypervisor" | "application" | "middleware" | "database" | "runtime" | "firmware" | "agent" | "other";
@@ -54,6 +55,7 @@ export type InfrastructureReferenceValue = {
 export type InfrastructureNode = {
   id: string;
   platformId: string;
+  configurationNodeId: string | null;
   nodeType: InfrastructureNodeType;
   code: string;
   name: string;
@@ -77,6 +79,7 @@ export type ReleaseInfrastructureNode = {
   parentStateId: string | null;
   lifecycleStatus: ReleaseNodeLifecycle;
   operatingState: InfrastructureOperatingState;
+  confidence: InfrastructureConfidence;
   cpuCores: number | null;
   memoryGb: number | null;
   storageGb: number | null;
@@ -105,6 +108,7 @@ export type InfrastructureProductInstallation = {
   instanceName: string | null;
   version: string | null;
   deploymentStatus: InstallationStatus;
+  confidence: InfrastructureConfidence;
   sourceReference: string | null;
   sourceAsOf: string | null;
   notes: string | null;

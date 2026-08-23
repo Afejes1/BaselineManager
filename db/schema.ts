@@ -405,6 +405,9 @@ export const infrastructureNodes = sqliteTable("infrastructure_node", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
   platformId: text("platform_id").notNull().references(() => platforms.id),
+  // When an A2O HW_Host is the evidence for this identity, retain the
+  // governed source placement link instead of relying on another name match.
+  configurationNodeId: text("configuration_node_id").references(() => configurationNodes.id),
   nodeType: text("node_type").notNull(),
   code: text("code").notNull(),
   normalizedCode: text("normalized_code").notNull(),
@@ -422,6 +425,7 @@ export const infrastructureNodes = sqliteTable("infrastructure_node", {
   check("infrastructure_node_type", sql`${t.nodeType} IN ('ups','network_switch','chassis','blade','physical_server','storage_array','logical_drive','virtual_machine','appliance','other')`),
   check("infrastructure_node_lifecycle", sql`${t.lifecycleStatus} IN ('active','planned','retired')`),
   uniqueIndex("infrastructure_node_code_uq").on(t.platformId, t.normalizedCode),
+  uniqueIndex("infrastructure_node_configuration_uq").on(t.platformId, t.configurationNodeId),
   index("infrastructure_node_platform_type_ix").on(t.platformId, t.nodeType, t.lifecycleStatus),
   index("infrastructure_node_hardware_product_ix").on(t.hardwareProductId),
 ]);
@@ -460,6 +464,9 @@ export const releaseInfrastructureNodes = sqliteTable("release_infrastructure_no
   parentStateId: text("parent_state_id"),
   lifecycleStatus: text("lifecycle_status").notNull().default("active"),
   operatingState: text("operating_state").notNull().default("unknown"),
+  // Reported values may be refreshed by a later source import. Assessed and
+  // confirmed values are steward-controlled and imports must not overwrite them.
+  confidence: text("confidence").notNull().default("reported"),
   cpuCores: real("cpu_cores"),
   memoryGb: real("memory_gb"),
   storageGb: real("storage_gb"),
@@ -476,6 +483,7 @@ export const releaseInfrastructureNodes = sqliteTable("release_infrastructure_no
 }, (t) => [
   check("release_infrastructure_lifecycle", sql`${t.lifecycleStatus} IN ('planned','active','retired','absent')`),
   check("release_infrastructure_operating_state", sql`${t.operatingState} IN ('unknown','operational','degraded','offline','not_installed')`),
+  check("release_infrastructure_confidence", sql`${t.confidence} IN ('reported','assessed','confirmed')`),
   check("release_infrastructure_not_self", sql`${t.parentStateId} IS NULL OR ${t.parentStateId} <> ${t.id}`),
   check("release_infrastructure_capacity", sql`(${t.cpuCores} IS NULL OR ${t.cpuCores} >= 0) AND (${t.memoryGb} IS NULL OR ${t.memoryGb} >= 0) AND (${t.storageGb} IS NULL OR ${t.storageGb} >= 0)`),
   uniqueIndex("release_infrastructure_node_uq").on(t.releaseId, t.infrastructureNodeId),
@@ -500,8 +508,12 @@ export const infrastructureProductInstallations = sqliteTable("infrastructure_pr
   installationRole: text("installation_role").notNull(),
   instanceName: text("instance_name"),
   normalizedInstanceName: text("normalized_instance_name").notNull().default(""),
+  // Source identity distinguishes parallel imported rows without pretending
+  // the A2O source-record key is an application-instance name.
+  sourceIdentity: text("source_identity").notNull().default(""),
   version: text("version"),
   deploymentStatus: text("deployment_status").notNull().default("installed"),
+  confidence: text("confidence").notNull().default("reported"),
   sourceReference: text("source_reference"),
   sourceAsOf: text("source_as_of"),
   notes: text("notes"),
@@ -510,7 +522,8 @@ export const infrastructureProductInstallations = sqliteTable("infrastructure_pr
 }, (t) => [
   check("infrastructure_installation_role", sql`${t.installationRole} IN ('operating_system','hypervisor','application','middleware','database','runtime','firmware','agent','other')`),
   check("infrastructure_installation_status", sql`${t.deploymentStatus} IN ('planned','installed','retired','absent')`),
-  uniqueIndex("infrastructure_installation_position_uq").on(t.nodeStateId, t.productId, t.installationRole, t.normalizedInstanceName),
+  check("infrastructure_installation_confidence", sql`${t.confidence} IN ('reported','assessed','confirmed')`),
+  uniqueIndex("infrastructure_installation_position_uq").on(t.nodeStateId, t.productId, t.installationRole, t.normalizedInstanceName, t.sourceIdentity),
   uniqueIndex("infrastructure_installation_occurrence_uq").on(t.baselineOccurrenceId),
   index("infrastructure_installation_product_ix").on(t.productId, t.releaseId),
   index("infrastructure_installation_platform_ix").on(t.platformId, t.releaseId, t.installationRole),

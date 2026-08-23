@@ -169,6 +169,13 @@
       "when": 1787972400000,
       "tag": "0023_infrastructure_governance",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788058800000,
+      "tag": "0024_a2o_governed_infrastructure",
+      "breakpoints": true
     }
   ]
 }

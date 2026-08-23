@@ -28,7 +28,7 @@ export function BaselineConfigurationRelationships({ occurrenceId, productId }: 
   const nodeById = new Map(portfolio.nodes.map((item) => [item.id, item]));
   const platformById = new Map(portfolio.platforms.map((item) => [item.id, item]));
   const releaseById = new Map(portfolio.releases.map((item) => [item.id, item]));
-  const referenceById = new Map(portfolio.referenceValues.map((item) => [item.id, item]));
+    const referenceById = new Map(portfolio.referenceValues.map((item) => [item.id, item]));
 
   if (loading) return <section className="domain-card"><h5>Governed system configuration</h5><p>Loading canonical infrastructure relationships…</p></section>;
   if (error) return <section className="domain-card"><h5>Governed system configuration</h5><p className="error-copy">{error}</p></section>;
@@ -44,6 +44,7 @@ export function BaselineConfigurationRelationships({ occurrenceId, productId }: 
     const focus = encodeURIComponent(`infrastructure_installation:${installation.id}`);
     const releaseName = release?.name || state?.releaseName || "Unknown Release";
     const platformHref = platform ? `/platforms/${encodeURIComponent(platform.id)}?release=${encodeURIComponent(releaseName)}&focus=${focus}` : "/platforms";
+    const connections = state ? portfolio.connections.filter((item) => item.releaseId === installation.releaseId && (item.sourceNodeStateId === state.id || item.targetNodeStateId === state.id)) : [];
     return <article className="domain-card" key={installation.id}>
       <div className="section-toolbar"><div><span className="eyebrow">{releaseName.toUpperCase()} · {readable(installation.installationRole).toUpperCase()}</span><h3>{installation.productName}</h3></div><span className={`status-pill status-${installation.deploymentStatus}`}>{readable(installation.deploymentStatus)}</span></div>
       <div className="record-facts">
@@ -51,6 +52,7 @@ export function BaselineConfigurationRelationships({ occurrenceId, productId }: 
         <div><dt>Infrastructure node</dt><dd>{node ? <Link href={platformHref}>{node.code} · {node.name}</Link> : "Identity not found"}</dd></div>
         <div><dt>Node type</dt><dd>{node ? nodeTypeLabels[node.nodeType] : "Not recorded"}</dd></div>
         <div><dt>Node state</dt><dd>{state ? `${readable(state.lifecycleStatus)} · ${readable(state.operatingState)}` : "Not recorded"}</dd></div>
+        <div><dt>Evidence confidence</dt><dd>{state ? `${readable(state.confidence)} node state · ${readable(installation.confidence)} installation` : readable(installation.confidence)}</dd></div>
         <div><dt>Version / instance</dt><dd>{installation.version || "Not recorded"}{installation.instanceName ? ` · ${installation.instanceName}` : ""}</dd></div>
         <div><dt>CPU / memory</dt><dd>{state ? `${measured(state.cpuCores, "cores")} · ${measured(state.memoryGb, "GB RAM")}` : "Not recorded"}</dd></div>
         <div><dt>Storage</dt><dd>{state ? `${measured(state.storageGb, "GB")} · ${storageMedium ? `${storageMedium.code} · ${storageMedium.name}` : state.storageType || "medium not recorded"}` : "Not recorded"}</dd></div>
@@ -60,6 +62,13 @@ export function BaselineConfigurationRelationships({ occurrenceId, productId }: 
         <div><dt>Asset identity</dt><dd>{[node?.assetTag, node?.serialNumber].filter(Boolean).join(" · ") || "Not recorded"}</dd></div>
         <div><dt>Supporting source</dt><dd>{installation.sourceReference || state?.sourceReference || "Not recorded"}{installation.sourceAsOf || state?.sourceAsOf ? ` · as of ${installation.sourceAsOf || state?.sourceAsOf}` : ""}</dd></div>
       </div>
+      {connections.length ? <div className="infra-installations"><strong>Node connections</strong>{connections.map((connection) => {
+        const otherStateId = connection.sourceNodeStateId === state?.id ? connection.targetNodeStateId : connection.sourceNodeStateId;
+        const otherState = stateById.get(otherStateId);
+        const otherNode = otherState ? nodeById.get(otherState.infrastructureNodeId) : undefined;
+        const connectionHref = platform ? `/platforms/${encodeURIComponent(platform.id)}?release=${encodeURIComponent(releaseName)}&focus=${encodeURIComponent(`infrastructure_connection:${connection.id}`)}` : "/topology";
+        return <span className="infra-product" key={connection.id}><b>{readable(connection.connectionType)}</b><Link href={connectionHref}>{connection.label || `${node?.code || "This node"} ↔ ${otherNode?.code || "Unidentified node"}`}</Link><small>{readable(connection.status)}{connection.capacityMbps == null ? "" : ` · ${connection.capacityMbps.toLocaleString()} Mbps`}</small></span>;
+      })}</div> : null}
       <p className="entity-actions"><Link className="mini-action" href={platformHref}>Open Platform configuration</Link><Link className="mini-action" href={`/releases/${encodeURIComponent(releaseName)}?tab=topology&focus=${focus}`}>Open Release topology</Link><Link className="mini-action" href={`/products/${encodeURIComponent(installation.productId)}`}>Open Product</Link></p>
     </article>;
   })}</div></section>;

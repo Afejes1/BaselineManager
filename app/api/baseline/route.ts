@@ -8,7 +8,13 @@ import { audit, ensureActor, requireWriter } from "../../../lib/governance-serve
 const nowIso = () => new Date().toISOString();
 export type CurrentBaselineRecord = { source_row_id: string | null; release_id: string | null; product_id: string | null; configuration_node_id: string | null; deployment_id: string | null; revision: number; projection_payload: string | null; lifecycle_status: string };
 type Current = CurrentBaselineRecord;
-type Ids = { releaseId: string; baselineId: string; baselineRevision: number; baselineParentId: string | null; baselineIsNew: boolean; tierId: string; resourceId: string; hostId: string; resourcePlatformId: string; productId: string | null; supplierId: string | null; deploymentId: string | null };
+type Ids = {
+  releaseId: string; baselineId: string; baselineRevision: number; baselineParentId: string | null; baselineIsNew: boolean;
+  tierId: string; resourceId: string; hostId: string; resourcePlatformId: string; effectivePlatformId: string;
+  productId: string | null; supplierId: string | null; deploymentId: string | null;
+  infrastructureNodeId: string | null; releaseInfrastructureStateId: string | null; infrastructureInstallationId: string | null;
+  storageMediumId: string | null;
+};
 
 export type BaselineResolver = {
   releases: Map<string, string>;
@@ -22,10 +28,15 @@ export type BaselineResolver = {
   products: Map<string, string>;
   suppliers: Map<string, string>;
   deployments: Map<string, string>;
+  platformAssignments: Map<string, { platformId: string; confidence: string }>;
+  infrastructureNodes: Map<string, string>;
+  releaseInfrastructureStates: Map<string, string>;
+  infrastructureInstallations: Map<string, string>;
+  storageMedia: Map<string, string>;
 };
 
 export async function createBaselineResolver(db: D1Database): Promise<BaselineResolver> {
-  const [releases, sets, nodes, products, aliases, suppliers, deployments, resourcePlatforms] = await Promise.all([
+  const [releases, sets, nodes, products, aliases, suppliers, deployments, resourcePlatforms, assignments, infrastructureNodes, infrastructureStates, infrastructureInstallations, storageMedia] = await Promise.all([
     db.prepare("SELECT id,normalized_name FROM release WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
     db.prepare("SELECT id,release_id,revision_number,approval_status FROM configuration_baseline WHERE program_id=? ORDER BY revision_number DESC,updated_at DESC").bind(BASELINE_PROGRAM_ID).all<{ id: string; release_id: string; revision_number: number; approval_status: string }>(),
     db.prepare("SELECT id,parent_id,node_type,normalized_name FROM configuration_node WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; parent_id: string | null; node_type: string; normalized_name: string }>(),
@@ -34,6 +45,11 @@ export async function createBaselineResolver(db: D1Database): Promise<BaselineRe
     db.prepare("SELECT id,normalized_name FROM organization WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_name: string }>(),
     db.prepare("SELECT id,product_id,configuration_node_id FROM deployment WHERE program_id=? AND environment='unknown' AND site='unknown'").bind(BASELINE_PROGRAM_ID).all<{ id: string; product_id: string; configuration_node_id: string }>(),
     db.prepare("SELECT id,configuration_node_id FROM platform WHERE program_id=? AND configuration_node_id IS NOT NULL").bind(BASELINE_PROGRAM_ID).all<{ id: string; configuration_node_id: string }>(),
+    db.prepare("SELECT baseline_occurrence_id,platform_id,confidence FROM platform_baseline_assignment WHERE program_id=? AND assignment_role='primary'").bind(BASELINE_PROGRAM_ID).all<{ baseline_occurrence_id: string; platform_id: string; confidence: string }>(),
+    db.prepare("SELECT id,platform_id,configuration_node_id FROM infrastructure_node WHERE program_id=? AND configuration_node_id IS NOT NULL").bind(BASELINE_PROGRAM_ID).all<{ id: string; platform_id: string; configuration_node_id: string }>(),
+    db.prepare("SELECT id,release_id,infrastructure_node_id FROM release_infrastructure_node WHERE program_id=?").bind(BASELINE_PROGRAM_ID).all<{ id: string; release_id: string; infrastructure_node_id: string }>(),
+    db.prepare("SELECT id,baseline_occurrence_id FROM infrastructure_product_installation WHERE program_id=? AND baseline_occurrence_id IS NOT NULL").bind(BASELINE_PROGRAM_ID).all<{ id: string; baseline_occurrence_id: string }>(),
+    db.prepare("SELECT id,normalized_code FROM infrastructure_reference_value WHERE program_id=? AND category='storage_medium' AND lifecycle_status='active'").bind(BASELINE_PROGRAM_ID).all<{ id: string; normalized_code: string }>(),
   ]);
   const workingSets = new Map<string, { id: string; revision: number }>();
   const latestSets = new Map<string, { id: string; revision: number }>();
@@ -59,12 +75,34 @@ export async function createBaselineResolver(db: D1Database): Promise<BaselineRe
     releases: new Map(releases.results.map((item) => [item.normalized_name, item.id])), workingSets, latestSets, underReviewReleases,
     tiers, resources, hosts, resourcePlatforms: new Map(resourcePlatforms.results.map((item) => [item.configuration_node_id, item.id])), products: productMap, suppliers: supplierMap,
     deployments: new Map(deployments.results.map((item) => [`${item.product_id}|${item.configuration_node_id}`, item.id])),
+    platformAssignments: new Map(assignments.results.map((item) => [item.baseline_occurrence_id, { platformId: item.platform_id, confidence: item.confidence }])),
+    infrastructureNodes: new Map(infrastructureNodes.results.map((item) => [`${item.platform_id}|${item.configuration_node_id}`, item.id])),
+    releaseInfrastructureStates: new Map(infrastructureStates.results.map((item) => [`${item.release_id}|${item.infrastructure_node_id}`, item.id])),
+    infrastructureInstallations: new Map(infrastructureInstallations.results.map((item) => [item.baseline_occurrence_id, item.id])),
+    storageMedia: new Map(storageMedia.results.map((item) => [item.normalized_code, item.id])),
   };
 }
 
 async function firstId(db: D1Database, sql: string, ...params: unknown[]) { return (await db.prepare(sql).bind(...params).first<{ id: string }>())?.id || null; }
 
-async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolver): Promise<Ids> {
+function installationRole(row: A2ORow) {
+  const value = `${textCell(row.TechStackType)} ${textCell(row.LongName)} ${textCell(row.ShortName)}`.toLowerCase();
+  if (/operating system|windows server|red hat|\blinux\b/.test(value)) return "operating_system";
+  if (/hypervisor|vmware|hyper-v|\besxi\b/.test(value)) return "hypervisor";
+  if (/database|\bdbms\b|sql server|postgres/.test(value)) return "database";
+  if (/\bruntime\b|\bjava\s*(8|11|17|21)?\b/.test(value)) return "runtime";
+  if (/middleware/.test(value)) return "middleware";
+  if (/firmware/.test(value)) return "firmware";
+  if (/\bagent\b/.test(value)) return "agent";
+  return "application";
+}
+
+function hasReportedIdentity(value: unknown) {
+  const key = normalized(value);
+  return Boolean(key) && !["unassigned", "not reported", "n/a", "na", "unknown", "none"].includes(key);
+}
+
+async function resolveIds(db: D1Database, occurrenceId: string, row: A2ORow, resolver?: BaselineResolver): Promise<Ids> {
   const releaseName = textCell(row.ReleaseName) || "Unassigned";
   const releaseKey = normalized(releaseName);
   const releaseId = resolver ? resolver.releases.get(releaseKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM release WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, releaseKey) || crypto.randomUUID();
@@ -87,6 +125,10 @@ async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolv
   const generatedResourcePlatformId = `a2o-resource-platform-${resourceId}`;
   const resourcePlatformId = resolver ? resolver.resourcePlatforms.get(resourceId) || generatedResourcePlatformId : await firstId(db, "SELECT id FROM platform WHERE program_id=? AND configuration_node_id=?", BASELINE_PROGRAM_ID, resourceId) || generatedResourcePlatformId;
   if (resolver) resolver.resourcePlatforms.set(resourceId, resourcePlatformId);
+  const existingAssignment = resolver?.platformAssignments.get(occurrenceId) || await db.prepare("SELECT platform_id AS platformId,confidence FROM platform_baseline_assignment WHERE program_id=? AND baseline_occurrence_id=? AND assignment_role='primary' LIMIT 1").bind(BASELINE_PROGRAM_ID, occurrenceId).first<{ platformId: string; confidence: string }>();
+  // A later A2O import may refresh a reported Resource Platform, but it cannot
+  // silently move an analyst-assessed or confirmed fielding assignment.
+  const effectivePlatformId = existingAssignment && existingAssignment.confidence !== "reported" ? existingAssignment.platformId : resourcePlatformId;
   const productName = textCell(row.LongName) || textCell(row.ShortName);
   // Baseline Record editing assigns a Product; it does not rename the Product
   // already linked to other releases. Canonical renames use the Product editor.
@@ -94,12 +136,23 @@ async function resolveIds(db: D1Database, row: A2ORow, resolver?: BaselineResolv
   const supplierName = textCell(row.OEM);
   const supplierKey = normalized(supplierName); const supplierId = supplierName ? resolver ? resolver.suppliers.get(supplierKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM organization WHERE program_id=? AND normalized_name=?", BASELINE_PROGRAM_ID, supplierKey) || await firstId(db, "SELECT entity_id AS id FROM canonical_alias WHERE program_id=? AND entity_kind='organization' AND namespace='name' AND status='accepted' AND normalized_alias=?", BASELINE_PROGRAM_ID, supplierKey) || crypto.randomUUID() : null; if (resolver && supplierId) resolver.suppliers.set(supplierKey, supplierId);
   const deploymentKey = productId ? `${productId}|${hostId}` : ""; const deploymentId = productId ? resolver ? resolver.deployments.get(deploymentKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM deployment WHERE program_id=? AND product_id=? AND configuration_node_id=? AND environment='unknown' AND site='unknown'", BASELINE_PROGRAM_ID, productId, hostId) || crypto.randomUUID() : null; if (resolver && deploymentId) resolver.deployments.set(deploymentKey, deploymentId);
-  return { releaseId, baselineId, baselineRevision, baselineParentId: editableSet ? null : latestSet?.id || null, baselineIsNew, tierId, resourceId, hostId, resourcePlatformId, productId, supplierId, deploymentId };
+  const hasReportedHost = hasReportedIdentity(row.HW_Host);
+  const nodeKey = `${effectivePlatformId}|${hostId}`;
+  const infrastructureNodeId = hasReportedHost ? resolver ? resolver.infrastructureNodes.get(nodeKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM infrastructure_node WHERE program_id=? AND platform_id=? AND configuration_node_id=?", BASELINE_PROGRAM_ID, effectivePlatformId, hostId) || crypto.randomUUID() : null;
+  if (resolver && infrastructureNodeId) resolver.infrastructureNodes.set(nodeKey, infrastructureNodeId);
+  const stateKey = infrastructureNodeId ? `${releaseId}|${infrastructureNodeId}` : "";
+  const releaseInfrastructureStateId = infrastructureNodeId ? resolver ? resolver.releaseInfrastructureStates.get(stateKey) || crypto.randomUUID() : await firstId(db, "SELECT id FROM release_infrastructure_node WHERE program_id=? AND release_id=? AND infrastructure_node_id=?", BASELINE_PROGRAM_ID, releaseId, infrastructureNodeId) || crypto.randomUUID() : null;
+  if (resolver && releaseInfrastructureStateId) resolver.releaseInfrastructureStates.set(stateKey, releaseInfrastructureStateId);
+  const infrastructureInstallationId = productId && releaseInfrastructureStateId ? resolver ? resolver.infrastructureInstallations.get(occurrenceId) || crypto.randomUUID() : await firstId(db, "SELECT id FROM infrastructure_product_installation WHERE program_id=? AND baseline_occurrence_id=?", BASELINE_PROGRAM_ID, occurrenceId) || crypto.randomUUID() : null;
+  if (resolver && infrastructureInstallationId) resolver.infrastructureInstallations.set(occurrenceId, infrastructureInstallationId);
+  const storageKey = normalized(textCell(row.HW_Storage_Type));
+  const storageMediumId = storageKey ? resolver ? resolver.storageMedia.get(storageKey) || null : await firstId(db, "SELECT id FROM infrastructure_reference_value WHERE program_id=? AND category='storage_medium' AND normalized_code=? AND lifecycle_status='active'", BASELINE_PROGRAM_ID, storageKey) : null;
+  return { releaseId, baselineId, baselineRevision, baselineParentId: editableSet ? null : latestSet?.id || null, baselineIsNew, tierId, resourceId, hostId, resourcePlatformId, effectivePlatformId, productId, supplierId, deploymentId, infrastructureNodeId, releaseInfrastructureStateId, infrastructureInstallationId, storageMediumId };
 }
 
 /** Materialize a database-authoritative record. JSON persists only as a legacy fallback. */
 export async function materializeBaselineRecord(db: D1Database, occurrenceId: string, row: A2ORow, revision: number, beforePayload: string | null, sourceRowId: string | null, resolver?: BaselineResolver, actorId?: string | null) {
-  const now = nowIso(); const ids = await resolveIds(db, row, resolver); const status = recordRequiresReview(row) ? "review" : "materialized";
+  const now = nowIso(); const ids = await resolveIds(db, occurrenceId, row, resolver); const status = recordRequiresReview(row) ? "review" : "materialized";
   const releaseName = textCell(row.ReleaseName) || "Unassigned"; const tierName = textCell(row.Tier) || "Unassigned"; const resourceName = textCell(row.Resource) || "Unassigned"; const hostName = textCell(row.HW_Host) || "Unassigned"; const productName = textCell(row.LongName) || textCell(row.ShortName); const supplierName = textCell(row.OEM);
   const statements: D1PreparedStatement[] = [
     db.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(BASELINE_PROGRAM_ID, "Joint Strike Fighter", "F-35 technical baseline program", "America/New_York", now, now),
@@ -129,6 +182,21 @@ export async function materializeBaselineRecord(db: D1Database, occurrenceId: st
   // OEM creates only a supplier relationship. Ownership requires a separate governed action.
   if (ids.productId && ids.supplierId) statements.push(db.prepare("INSERT INTO product_supplier (product_id,organization_id,supplier_role,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(product_id,organization_id,supplier_role) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.productId, ids.supplierId, "supplier", now, now));
   if (ids.deploymentId && ids.productId) statements.push(db.prepare("INSERT INTO deployment (id,program_id,product_id,configuration_node_id,environment,site,deployment_role,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.deploymentId, BASELINE_PROGRAM_ID, ids.productId, ids.hostId, "unknown", "unknown", null, now, now));
+  // Materialize the reported host into the governed configuration model. The
+  // source does not establish whether HW_Host is physical, virtual, or an
+  // appliance, so the stable identity begins as "other" and is explicitly
+  // marked reported. Analysts can classify the node and raise confidence from
+  // the Platform workspace without a later import overwriting that judgment.
+  if (ids.infrastructureNodeId && ids.releaseInfrastructureStateId) statements.push(
+    db.prepare("INSERT INTO infrastructure_node (id,program_id,platform_id,configuration_node_id,node_type,code,normalized_code,name,normalized_name,lifecycle_status,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at").bind(ids.infrastructureNodeId, BASELINE_PROGRAM_ID, ids.effectivePlatformId, ids.hostId, "other", hostName, normalized(hostName), hostName, normalized(hostName), "active", "Reported A2O HW_Host. Physical, virtual, or appliance classification has not been independently confirmed.", actorId || null, now, now),
+    db.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,confidence,cpu_cores,memory_gb,storage_gb,storage_medium_id,storage_type,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET platform_id=excluded.platform_id,cpu_cores=excluded.cpu_cores,memory_gb=excluded.memory_gb,storage_gb=excluded.storage_gb,storage_medium_id=excluded.storage_medium_id,storage_type=excluded.storage_type,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,updated_at=excluded.updated_at WHERE release_infrastructure_node.confidence='reported'").bind(ids.releaseInfrastructureStateId, BASELINE_PROGRAM_ID, ids.releaseId, ids.effectivePlatformId, ids.infrastructureNodeId, null, "active", "unknown", "reported", numberCell(row.HW_CPU_CORES), numberCell(row["HW_RAM (GB)"]), numberCell(row["HW_Storage (GB)"]), ids.storageMediumId, textCell(row.HW_Storage_Type), `A2O Tech Stack · HW_Host: ${hostName}`, now.slice(0, 10), "Reported capacity. Confirm host type and containment before treating this as an assessed configuration.", actorId || null, now, now),
+  );
+  if (ids.infrastructureInstallationId && ids.releaseInfrastructureStateId && ids.productId) statements.push(
+    db.prepare("INSERT INTO infrastructure_product_installation (id,program_id,release_id,platform_id,node_state_id,product_id,baseline_occurrence_id,installation_role,instance_name,normalized_instance_name,source_identity,version,deployment_status,confidence,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET release_id=excluded.release_id,platform_id=excluded.platform_id,node_state_id=excluded.node_state_id,product_id=excluded.product_id,installation_role=excluded.installation_role,deployment_status=excluded.deployment_status,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,updated_at=excluded.updated_at WHERE infrastructure_product_installation.confidence='reported'").bind(ids.infrastructureInstallationId, BASELINE_PROGRAM_ID, ids.releaseId, ids.effectivePlatformId, ids.releaseInfrastructureStateId, ids.productId, occurrenceId, installationRole(row), null, "", `a2o:${occurrenceId}`, null, "installed", "reported", `A2O Tech Stack · Baseline record ${textCell(row["#"]) || occurrenceId}`, now.slice(0, 10), "Reported Product placement. Installation role is an import classification and requires analyst confirmation.", actorId || null, now, now),
+  );
+  if (!ids.infrastructureNodeId && resolver?.infrastructureInstallations.get(occurrenceId)) statements.push(
+    db.prepare("UPDATE infrastructure_product_installation SET deployment_status='absent',updated_at=? WHERE baseline_occurrence_id=? AND confidence='reported'").bind(now, occurrenceId),
+  );
   if (sourceRowId) statements.push(
     db.prepare("UPDATE baseline_record_source SET disposition='superseded',updated_at=? WHERE baseline_occurrence_id=? AND source_row_id<>? AND disposition='current'").bind(now, occurrenceId, sourceRowId),
     db.prepare("INSERT INTO baseline_record_source (id,baseline_occurrence_id,source_row_id,relationship,disposition,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(baseline_occurrence_id,source_row_id) DO UPDATE SET relationship=excluded.relationship,disposition=excluded.disposition,updated_at=excluded.updated_at").bind(crypto.randomUUID(), occurrenceId, sourceRowId, "imported", "current", now, now),
