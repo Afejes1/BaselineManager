@@ -45,15 +45,18 @@ test("saved leadership report escapes imported markdown and remote-content injec
   assert.match(markdown, /\\<img/);
 });
 
-test("all outputs derive a fail-closed marking from source-package lineage", () => {
+test("current and scoped outputs derive a fail-closed marking from record lineage", () => {
   assert.equal(handlingMarkingFromSourceNames(["JSF Synthetic Demonstration.xlsx", "demo-objectives.csv"]), SYNTHETIC_HANDLING_MARKING);
   assert.equal(handlingMarkingFromSourceNames(["demo.xlsx", "program-baseline.xlsx"]), PROGRAM_HANDLING_MARKING);
+  assert.equal(handlingMarkingFromSourceNames(["demo.xlsx", ""]), PROGRAM_HANDLING_MARKING);
   assert.equal(handlingMarkingFromSourceNames([]), PROGRAM_HANDLING_MARKING);
   const server = read("lib/governance-server.ts");
   const onePager = read("app/initiatives/[initiative]/one-pager/page.tsx");
   const reports = read("app/reports/page.tsx");
-  assert.match(server, /handlingMarkingFromSourceNames\(sourcePackageResult/);
-  assert.doesNotMatch(server, /intake_package|bo\.source_package_id/);
+  assert.match(server, /LEFT JOIN source_row_24 sr ON sr\.id=bo\.source_row_id LEFT JOIN source_package sp ON sp\.id=sr\.source_package_id/);
+  assert.match(server, /handlingMarkingFromSourceNames\(activeSourceLineageResult\.results/);
+  assert.match(server, /handlingMarkingFromSourceNames\(selectedRows\.map\(\(row\) => row\.source_file_name \|\| ""\)\)/);
+  assert.doesNotMatch(server, /SELECT file_name FROM source_package WHERE program_id/);
   assert.match(onePager, /portfolio\.handlingMarking/);
   assert.match(reports, /governance\?\.handlingMarking/);
 });

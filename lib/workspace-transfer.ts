@@ -307,8 +307,9 @@ export async function exportWorkspacePackage(db: Database, bucket: DocumentBucke
   }
 
   const sourceNames = (rowsByPhysicalName.get("source_package") ?? []).map((row) => String(row.file_name || ""));
-  // The same source-package lineage drives every UI and exported-artifact
-  // marking. Mixed, absent, or unlabeled provenance fails closed as program data.
+  // A portable package contains retained history, not only the currently
+  // rendered baseline. Therefore every retained source package contributes to
+  // the package classification; mixed, absent, or unlabeled history fails closed.
   const classification = workspaceClassificationFromSourceNames(sourceNames);
   const manifest: WorkspacePackageManifest = {
     packageType: WORKSPACE_PACKAGE_TYPE,

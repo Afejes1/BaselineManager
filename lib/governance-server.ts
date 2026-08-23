@@ -98,7 +98,7 @@ type BriefRow = { id: string; initiative_id: string | null; initiative_title: st
 type ActivityRow = { id: string; action: string; entity_kind: string; entity_id: string; actor_name: string | null; created_at: string };
 
 export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> {
-  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult, sourcePackageResult] = await Promise.all([
+  const [initiativeResult, scopeResult, workPackageResult, workObjectiveResult, workDependencyResult, recordResult, linkResult, documentResult, briefResult, activityResult, activeSourceLineageResult] = await Promise.all([
     db.prepare("SELECT i.*, r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT s.id,s.initiative_id,s.scope_kind,s.scope_id,s.display_label FROM initiative_scope s JOIN initiative i ON i.id=s.initiative_id WHERE i.program_id=? ORDER BY s.created_at ASC").bind(PROGRAM_ID).all<ScopeRow>(),
     db.prepare("SELECT w.id,w.initiative_id,w.parent_id,w.wbs_code,w.title,w.owner,w.planned_start,w.due_date,w.actual_start,w.actual_finish,w.status,w.work_type,w.definition_of_done,w.progress_basis,w.notes,w.sort_order,w.created_at,w.updated_at FROM work_package w JOIN initiative i ON i.id=w.initiative_id WHERE i.program_id=? ORDER BY w.initiative_id,w.sort_order,w.wbs_code").bind(PROGRAM_ID).all<WorkPackageRow>(),
@@ -109,7 +109,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     db.prepare("SELECT id,governance_record_id,initiative_id,file_name,content_type,byte_size,description,created_at FROM evidence_document WHERE program_id=? ORDER BY created_at DESC").bind(PROGRAM_ID).all<DocumentRow>(),
     db.prepare("SELECT b.*, i.title AS initiative_title FROM executive_brief b LEFT JOIN initiative i ON i.id=b.initiative_id WHERE b.program_id=? ORDER BY b.updated_at DESC").bind(PROGRAM_ID).all<BriefRow>(),
     db.prepare("SELECT a.id,a.action,a.entity_kind,a.entity_id,u.display_name AS actor_name,a.created_at FROM audit_event a LEFT JOIN app_user u ON u.id=a.actor_id WHERE a.program_id=? ORDER BY a.created_at DESC LIMIT 30").bind(PROGRAM_ID).all<ActivityRow>(),
-    db.prepare("SELECT file_name FROM source_package WHERE program_id=? ORDER BY received_at,id").bind(PROGRAM_ID).all<{ file_name: string }>(),
+    db.prepare("SELECT sp.file_name FROM baseline_occurrence bo LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.program_id=? AND bo.workspace_id=? AND bo.lifecycle_status='active' ORDER BY bo.id").bind(PROGRAM_ID, WORKSPACE_ID).all<{ file_name: string | null }>(),
   ]);
 
   const scopes = new Map<string, ScopeRow[]>();
@@ -127,7 +127,10 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
 
   return {
     actor,
-    handlingMarking: handlingMarkingFromSourceNames(sourcePackageResult.results.map((entry) => entry.file_name)),
+    // Classify the current rendered baseline from each active record's actual
+    // source chain. Retained historical packages must not relabel a newer
+    // synthetic baseline, while analyst-created rows with no source fail closed.
+    handlingMarking: handlingMarkingFromSourceNames(activeSourceLineageResult.results.map((entry) => entry.file_name || "")),
     initiatives: initiativeResult.results.map((entry) => ({
       id: entry.id, title: entry.title, status: entry.status, priority: entry.priority, owner: entry.owner, targetDate: entry.target_date,
       consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, primaryReleaseId: entry.primary_release_id,
@@ -468,7 +471,7 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   await db.batch(statements);
 }
 
-type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null };
+type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null; source_file_name: string | null };
 
 export async function createExecutiveBrief(db: Database, actor: Actor, body: Record<string, unknown>, markdownFactory?: (context: { title: string; snapshot: BriefSnapshot }) => string) {
   requireWriter(actor);
@@ -477,13 +480,12 @@ export async function createExecutiveBrief(db: Database, actor: Actor, body: Rec
   if (!initiative) throw new Error("Choose a durable initiative before creating a brief.");
   const productScopes = await db.prepare("SELECT scope_id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ scope_id: string }>();
   const scopedProductIds = new Set(productScopes.results.map((entry) => entry.scope_id));
-  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
+  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,p.canonical_name AS product_name,r.name AS release_name,sp.file_name AS source_file_name FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
   const selectedRows = sourceRows.results.filter((row) => (!initiative.primary_release_id || row.release_id === initiative.primary_release_id) && (!scopedProductIds.size || (row.product_id && scopedProductIds.has(row.product_id))));
   const linkedRecords = await db.prepare("SELECT g.record_type,g.title,g.status FROM governance_record g JOIN governance_record_link l ON l.governance_record_id=g.id WHERE l.entity_kind='initiative' AND l.entity_id=? ORDER BY g.updated_at DESC").bind(initiativeId).all<{ record_type: string; title: string; status: string }>();
   const productNames = [...new Set(selectedRows.map((row) => row.product_name).filter(Boolean))].slice(0, 20) as string[];
   const releaseNames = new Set(selectedRows.map((row) => row.release_name).filter(Boolean));
-  const sourcePackageNames = await db.prepare("SELECT file_name FROM source_package WHERE program_id=? ORDER BY received_at,id").bind(PROGRAM_ID).all<{ file_name: string }>();
-  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: handlingMarkingFromSourceNames(sourcePackageNames.results.map((entry) => entry.file_name)), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
+  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: handlingMarkingFromSourceNames(selectedRows.map((row) => row.source_file_name || "")), releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
   const title = clean(body.title) || `${initiative.title} - Executive one-pager`;
   const briefId = id("brief");
   const at = now();
