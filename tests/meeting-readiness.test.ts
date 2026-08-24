@@ -205,6 +205,19 @@ test("Change Request dependencies explain finish-to-finish, blockers, and enable
   assert.match(changePage, /FF: \[this MCP\] cannot complete until \[related MCP\] completes/);
 });
 
+test("Initiative scope distinguishes Government outcome, affected objects, and baseline evidence", () => {
+  const helper = read("components/initiative-scope-helper.tsx");
+  const createPage = read("app/initiatives/page.tsx");
+  const detailPage = read("app/initiatives/[initiative]/page.tsx");
+  assert.match(helper, /Initiative title = Government outcome/);
+  assert.match(helper, /Affected object = linked MCP/);
+  assert.match(helper, /Platform → PMA/);
+  assert.match(helper, /Baseline evidence scope = this form/);
+  assert.match(createPage, /Baseline evidence release/);
+  assert.match(createPage, /Baseline evidence scope — not affected objects/);
+  assert.match(detailPage, /InitiativeScopeHelper/);
+});
+
 test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
   const legacySnapshot = {
     asOf: "2026-08-18T17:35:08.460Z",

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "../../../components/app-link";
 import { ProvenanceKey } from "../../../components/provenance-key";
 import { DomainPageShell } from "../../../components/domain-shell";
+import { InitiativeScopeHelper } from "../../../components/initiative-scope-helper";
 import { AnalyticsLink } from "../../../components/analytics-link";
 import { ViewportModal } from "../../../components/viewport-modal";
 import { AuditHistoryPanel } from "../../../components/governed-object";
@@ -258,9 +259,10 @@ export default function InitiativeDetailPage() {
     {tab === "history" ? <AuditHistoryPanel kind="initiative" id={bundle.initiative.id} label={bundle.initiative.title} /> : null}
     {initiativeEditOpen ? <ViewportModal onDismiss={() => setInitiativeEditOpen(false)} dismissDisabled={saving} labelledBy="initiative-editor-title" className="wide-modal">
       <span className="eyebrow">INITIATIVE LIFECYCLE</span><h2 id="initiative-editor-title">Edit Initiative</h2>
+      <InitiativeScopeHelper />
       <div className="form-grid">
         <label className="modal-field">Title<input required value={initiativeEdit.title} onChange={field(setInitiativeEdit, "title")} /></label>
-        <label className="modal-field">Release scope<select value={initiativeEdit.releaseName} onChange={(event) => { const releaseName = event.target.value; setInitiativeEdit((current) => ({ ...current, releaseName })); setInitiativeProducts(new Set()); setInitiativeScopeMode("release_wide"); }}><option value="">Cross-release</option>{Array.from(new Set(rows.map((row) => String(row.ReleaseName || "")).filter(Boolean))).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label className="modal-field">Baseline evidence release<select value={initiativeEdit.releaseName} onChange={(event) => { const releaseName = event.target.value; setInitiativeEdit((current) => ({ ...current, releaseName })); setInitiativeProducts(new Set()); setInitiativeScopeMode("release_wide"); }}><option value="">Cross-release</option>{Array.from(new Set(rows.map((row) => String(row.ReleaseName || "")).filter(Boolean))).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label className="modal-field">Status<select value={initiativeEdit.status} onChange={field(setInitiativeEdit, "status")}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label>
         <label className="modal-field">Priority<select value={initiativeEdit.priority} onChange={field(setInitiativeEdit, "priority")}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label>
         <label className="modal-field">Accountable owner<input value={initiativeEdit.owner} onChange={field(setInitiativeEdit, "owner")} /></label>
@@ -269,8 +271,8 @@ export default function InitiativeDetailPage() {
       <label className="modal-field">Desired outcome<textarea rows={3} value={initiativeEdit.desiredOutcome} onChange={field(setInitiativeEdit, "desiredOutcome")} /></label>
       <label className="modal-field">Decision required<textarea rows={3} value={initiativeEdit.decisionAsk} onChange={field(setInitiativeEdit, "decisionAsk")} /></label>
       <label className="modal-field">Consequence of delay<textarea rows={3} value={initiativeEdit.consequence} onChange={field(setInitiativeEdit, "consequence")} /></label>
-      <fieldset className="modal-field"><legend>Baseline evidence scope</legend>
-        <label><input type="radio" name="initiative-scope-mode" checked={initiativeScopeMode === "release_wide"} onChange={() => { setInitiativeScopeMode("release_wide"); setInitiativeProducts(new Set()); }} /> Whole {initiativeEdit.releaseName || "cross-release baseline"} scope</label>
+      <fieldset className="modal-field"><legend>Baseline evidence scope — not affected objects</legend>
+        <label><input type="radio" name="initiative-scope-mode" checked={initiativeScopeMode === "release_wide"} onChange={() => { setInitiativeScopeMode("release_wide"); setInitiativeProducts(new Set()); }} /> All evidence in the {initiativeEdit.releaseName || "cross-release baseline"}</label>
         <label><input type="radio" name="initiative-scope-mode" checked={initiativeScopeMode === "products"} onChange={() => setInitiativeScopeMode("products")} /> Selected products only</label>
         {initiativeScopeMode === "products" ? <div className="object-link-results">{[...editableProductLabels.entries()].map(([productId, label]) => <label key={productId} className={initiativeProducts.has(productId) ? "selected" : ""}><input aria-label={`Add ${label} to initiative scope`} type="checkbox" checked={initiativeProducts.has(productId)} onChange={() => { setInitiativeScopeMode("products"); setInitiativeProducts((current) => { const next = new Set(current); if (next.has(productId)) next.delete(productId); else next.add(productId); return next; }); }} /><span><strong>{label}</strong><small>Active in {initiativeEdit.releaseName || "the baseline"}</small></span></label>)}</div> : <p className="entity-meta">All active products in the selected release scope will be included. This choice is explicit and audited.</p>}
         {initiativeScopeMode === "products" && !initiativeProducts.size ? <p className="error-copy">Choose at least one product; an empty selection will not silently broaden to the whole release.</p> : null}
