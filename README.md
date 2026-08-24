@@ -227,6 +227,8 @@ See [docs/LOCAL_OPERATOR_RUNBOOK.md](docs/LOCAL_OPERATOR_RUNBOOK.md) for the
 value-producing analyst workflow and recovery procedures. See
 [docs/AUTHORITATIVE_DATA_MODEL.md](docs/AUTHORITATIVE_DATA_MODEL.md) for the
 implemented ownership, lifecycle, intake, export, and delivery boundaries.
+For an operator-facing walkthrough, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+and the rendered [PDF user guide](output/pdf/A2O-Technical-Baseline-Manager-User-Guide.pdf).
 
 ## Release discipline
 
