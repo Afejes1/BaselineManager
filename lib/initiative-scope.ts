@@ -17,7 +17,10 @@ export type DerivedInitiativeScope = {
   explicitBaselineRecordCount: number;
   attributedEffectCount: number;
   unattributedEffectCount: number;
-  releaseNames: string[];
+  /** Releases recorded on an affected object's From/To transition. */
+  transitionReleaseNames: string[];
+  /** Requested delivery releases on the Initiative's linked Change Requests. */
+  requestedReleaseNames: string[];
 };
 
 /**
@@ -40,10 +43,10 @@ export function deriveInitiativeScope(bundle: InitiativeDecisionBundle): Derived
   }
 
   const objectByKey = new Map<string, DerivedAffectedObject>();
-  const releaseNames = new Set<string>();
+  const transitionReleaseNames = new Set<string>();
   for (const effect of effects) {
-    if (effect.fromReleaseName) releaseNames.add(effect.fromReleaseName);
-    if (effect.toReleaseName) releaseNames.add(effect.toReleaseName);
+    if (effect.fromReleaseName) transitionReleaseNames.add(effect.fromReleaseName);
+    if (effect.toReleaseName) transitionReleaseNames.add(effect.toReleaseName);
     const key = `${effect.subjectKind}:${effect.subjectId}`;
     const current = objectByKey.get(key) || { kind: effect.subjectKind, id: effect.subjectId, label: effect.subjectLabel, effects: [], objectiveIds: [], releaseNames: [] };
     current.effects.push(effect);
@@ -51,7 +54,7 @@ export function deriveInitiativeScope(bundle: InitiativeDecisionBundle): Derived
     for (const releaseName of [effect.fromReleaseName, effect.toReleaseName]) if (releaseName && !current.releaseNames.includes(releaseName)) current.releaseNames.push(releaseName);
     objectByKey.set(key, current);
   }
-  for (const request of bundle.changeRequests) if (request.requestedReleaseName) releaseNames.add(request.requestedReleaseName);
+  const requestedReleaseNames = new Set(bundle.changeRequests.map((request) => request.requestedReleaseName).filter((name): name is string => Boolean(name)));
 
   const affectedObjects = [...objectByKey.values()].sort((left, right) => `${left.kind}:${left.label}`.localeCompare(`${right.kind}:${right.label}`));
   const objectCountByKind = new Map<ChangeSubjectKind, number>();
@@ -64,7 +67,8 @@ export function deriveInitiativeScope(bundle: InitiativeDecisionBundle): Derived
     explicitBaselineRecordCount: objectCountByKind.get("occurrence") || 0,
     attributedEffectCount,
     unattributedEffectCount: effects.length - attributedEffectCount,
-    releaseNames: [...releaseNames].sort((left, right) => left.localeCompare(right)),
+    transitionReleaseNames: [...transitionReleaseNames].sort((left, right) => left.localeCompare(right)),
+    requestedReleaseNames: [...requestedReleaseNames].sort((left, right) => left.localeCompare(right)),
   };
 }
 

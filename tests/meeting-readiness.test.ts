@@ -56,6 +56,8 @@ test("Initiative scope derives only the explicit affected objects on linked Chan
   assert.equal(scope.explicitBaselineRecordCount, 1);
   assert.equal(scope.attributedEffectCount, 1);
   assert.equal(scope.unattributedEffectCount, 2);
+  assert.deepEqual(scope.transitionReleaseNames, ["Future PMA release"]);
+  assert.deepEqual(scope.requestedReleaseNames, ["Future PMA release"]);
 });
 
 test("saved leadership report escapes imported markdown and remote-content injection", () => {
@@ -244,6 +246,12 @@ test("Initiative scope distinguishes Government outcome, affected objects, and d
   assert.match(detailPage, /InitiativeScopeHelper/);
   assert.match(detailPage, /DERIVED, NOT MANUALLY SELECTED/);
   assert.match(detailPage, /A Platform effect does not expand to every record/);
+  assert.match(detailPage, /Effect transitions:/);
+  assert.match(detailPage, /Delivery targets:/);
+  const onePager = read("app/initiatives/[initiative]/one-pager/page.tsx");
+  const report = read("lib/initiative-report.ts");
+  assert.match(onePager, /Scoped effects \/ attribution/);
+  assert.match(report, /Release context \(effect transition \/ CR delivery target\)/);
 });
 
 test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
