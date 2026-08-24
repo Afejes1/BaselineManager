@@ -15,6 +15,8 @@ export type PlatformRecord = {
   countryCode: string | null;
   /** True when this Platform is materialized from A2O Resource. */
   isA2OResourcePlatform: boolean;
+  /** True once this record is part of the Government-owned fielding hierarchy. */
+  isGovernedPlatform: boolean;
   /** The source Tier that describes an A2O Resource Platform. */
   reportedTierName: string | null;
   directOccurrenceCount: number;

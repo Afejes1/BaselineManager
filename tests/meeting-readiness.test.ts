@@ -228,6 +228,8 @@ test("platform and configuration workspaces make stable and release-specific edi
   const platformServer = read("lib/platform-server.ts");
   assert.match(platforms, /contextMode="filter"/);
   assert.match(platforms, /Needs Government mapping/);
+  assert.match(platforms, /isGovernedPlatform/);
+  assert.match(platforms, /treePlatforms/);
   assert.match(platforms, /Baseline assignments/);
   assert.match(platform, /contextMode="filter"/);
   assert.match(platform, /const assignable = releaseLens \?/);
@@ -239,6 +241,7 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(configuration, /Edit Release configuration/);
   assert.match(platformServer, /Object\.prototype\.hasOwnProperty\.call\(body, "configurationNodeId"\)/);
   assert.match(platformServer, /retain their Configuration Node link/);
+  assert.match(platformServer, /isGovernedPlatform/);
   assert.match(infrastructure, /Where to edit/);
   assert.match(infrastructure, /Edit capacity &amp; Release state/);
   assert.match(infrastructure, /Add infrastructure node \/ VM/);
