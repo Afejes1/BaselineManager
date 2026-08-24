@@ -195,6 +195,16 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(platformServer, /retain their Configuration Node link/);
 });
 
+test("Change Request dependencies explain finish-to-finish, blockers, and enablers at entry", () => {
+  const changePage = read("app/changes/[id]/page.tsx");
+  assert.match(changePage, /DEPENDENCY HELPER/);
+  assert.match(changePage, /Hard completion gate\. Use for finish-to-finish/);
+  assert.match(changePage, /Makes the other request viable or easier/);
+  assert.match(changePage, /A current condition is preventing progress/);
+  assert.match(changePage, /Selected request → this request/);
+  assert.match(changePage, /FF: \[this MCP\] cannot complete until \[related MCP\] completes/);
+});
+
 test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
   const legacySnapshot = {
     asOf: "2026-08-18T17:35:08.460Z",

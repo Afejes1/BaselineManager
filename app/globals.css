@@ -592,8 +592,10 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 .dependency-meaning{display:grid;gap:4px;margin:14px 0;border-left:4px solid #3b7c5c;background:#f3f8f5;padding:10px 12px;}
 .dependency-meaning strong{color:#1e4b36;font:750 12px var(--font-geist-mono);overflow-wrap:anywhere;}
 .dependency-meaning span{color:#596d62;font-size:11px;line-height:1.45;}
+.dependency-helper{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(0,2fr);gap:14px;margin:14px 0;border:1px solid #cbdad2;border-left:4px solid #3b7c5c;background:#f4f9f6;padding:14px;}.dependency-helper h4{margin:4px 0 6px;color:#1e4b36;font-size:14px}.dependency-helper p{margin:0;color:#50655a;font-size:11px;line-height:1.5}.dependency-helper dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:0}.dependency-helper dl>div{border:1px solid #d9e6df;background:#fff;padding:9px 10px}.dependency-helper dt{color:#23563f;font-size:11px;font-weight:800}.dependency-helper dd{margin:4px 0 0;color:#586b61;font-size:10px;line-height:1.45}.dependency-helper-direction{grid-column:1/-1;border-top:1px solid #d6e3dc;padding-top:10px}.dependency-helper-direction b{color:#1e4b36;}
 
 @media(max-width:900px){
+.dependency-helper{grid-template-columns:1fr}.dependency-helper dl{grid-template-columns:1fr}
   .dependency-tools{width:100%;}
   .dependency-tools .search{flex:1 1 240px;min-width:0;}
   .dependency-tools select{flex:1 1 220px;min-width:0;}
