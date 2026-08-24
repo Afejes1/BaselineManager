@@ -409,14 +409,22 @@ test("evidence validation rejects disguised or active files", async () => {
   await assert.rejects(() => validateEvidenceBytes("active.pdf", new TextEncoder().encode("%PDF-1.7\n/OpenAction /JavaScript")), EvidenceValidationError);
 });
 
-test("page-one truncation is disclosed and full detail remains available in the annex", () => {
+test("one-page and four-page Initiative print modes are bounded and disclose retained detail", () => {
   const onePager = read("app/initiatives/[initiative]/one-pager/page.tsx");
+  const styles = read("app/globals.css");
   assert.match(onePager, /changeRequests\.slice\(0, 4\)/);
-  assert.match(onePager, /detail items continue in annex/);
+  assert.match(onePager, /One-page decision brief/);
+  assert.match(onePager, /Four-page detail packet/);
+  assert.match(onePager, /printMode === "four"/);
+  assert.doesNotMatch(onePager, /Include the annex before printing/);
+  assert.match(onePager, /detail items continue in the four-page packet/);
   assert.match(onePager, /Supporting documents/);
   assert.match(onePager, /Milestones and readiness findings/);
   assert.match(onePager, /governanceError/);
   assert.match(onePager, /Data through/);
+  assert.match(styles, /\.packet-page-two\{grid-template-rows:16px 58px 126px 276px 294px 24px\}/);
+  assert.match(styles, /\.packet-page-three\{grid-template-rows:16px 58px 212px 224px 260px 24px\}/);
+  assert.match(styles, /\.packet-page-four\{grid-template-rows:16px 58px 252px 390px 54px 24px\}/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {
