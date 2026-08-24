@@ -13,6 +13,7 @@ export default function ConfigurationPage() {
   const master = useMasterData();
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const releaseQuery = releaseLens ? `?release=${encodeURIComponent(releaseLens)}` : "";
 
 
   const nodes = useMemo<ConfigNodeSummary[]>(() => getConfigurationNodeSummaries(scopedRows), [scopedRows]);
@@ -49,13 +50,14 @@ export default function ConfigurationPage() {
         <div className="metric"><span>Products</span><strong>{nodes.reduce((sum, node) => sum + node.productCount, 0)}</strong><small>Associated placements</small></div>
       </section>
 
-      <section className="domain-section"><div className="section-heading"><div><span className="eyebrow">CANONICAL HIERARCHY</span><h3>Governed Configuration Nodes</h3></div><span>{master.portfolio.configurationNodes.length}</span></div><div className="domain-list">{master.portfolio.configurationNodes.filter((item) => !query.trim() || `${item.name} ${item.code || ""} ${item.nodeType}`.toLowerCase().includes(query.trim().toLowerCase())).map((item) => <article className="domain-card" key={item.id}><span className={`status-pill status-${item.lifecycleStatus}`}>{item.lifecycleStatus}</span><h3><Link href={`/configuration/${encodeURIComponent(item.id)}`}>{item.code ? `${item.code} · ` : ""}{item.name}</Link></h3><p>{item.description || "Description not recorded."}</p><p className="entity-meta">{item.nodeType} · Parent {master.portfolio.configurationNodes.find((parent) => parent.id === item.parentId)?.name || "none"}</p><p className="entity-actions"><Link className="mini-action" href={`/configuration/${encodeURIComponent(item.id)}`}>Open Configuration Node</Link></p></article>)}</div></section>
+      <section className="contract-strip"><strong>Editing model</strong><span>The Release Lens filters reported placements below. Canonical Configuration Nodes are stable identities; open one to edit its Government context, then select a Release to review its specific placement and configuration.</span></section>
+      <section className="domain-section"><div className="section-heading"><div><span className="eyebrow">CANONICAL HIERARCHY</span><h3>Governed Configuration Nodes</h3></div><span>{master.portfolio.configurationNodes.length}</span></div><div className="domain-list">{master.portfolio.configurationNodes.filter((item) => !query.trim() || `${item.name} ${item.code || ""} ${item.nodeType}`.toLowerCase().includes(query.trim().toLowerCase())).map((item) => <article className="domain-card" key={item.id}><span className={`status-pill status-${item.lifecycleStatus}`}>{item.lifecycleStatus}</span><h3><Link href={`/configuration/${encodeURIComponent(item.id)}${releaseQuery}`}>{item.code ? `${item.code} · ` : ""}{item.name}</Link></h3><p>{item.description || "Description not recorded."}</p><p className="entity-meta">{item.nodeType} · Parent {master.portfolio.configurationNodes.find((parent) => parent.id === item.parentId)?.name || "none"}</p><p className="entity-actions"><Link className="mini-action" href={`/configuration/${encodeURIComponent(item.id)}${releaseQuery}`}>Open Configuration Node</Link></p></article>)}</div></section>
       <section className="domain-section">
         <div className="section-heading"><div><span className="eyebrow">RELEASE-SPECIFIC PLACEMENTS</span><h3>Reported Tier descriptor, Resource Platform, and host combinations</h3></div><span>{filtered.length} / {nodes.length}</span></div>
         <section className="domain-list">
           {filtered.map((node) => (
             <article key={node.id} className="domain-card">
-              <h3><Link href={`/configuration/${encodeURIComponent(node.id)}`}>{node.release} / {node.tier} / {node.resource}</Link></h3>
+              <h3><Link href={`/configuration/${encodeURIComponent(node.id)}${releaseQuery}`}>{node.release} / {node.tier} / {node.resource}</Link></h3>
               <p className="entity-metric">Host: <strong>{node.host || "Unassigned"}</strong> · {node.rowCount} baseline records</p>
               <p className="entity-meta">{node.productCount} products reported in this node</p>
               <p className="entity-actions"><Link href={`/releases/${encodeURIComponent(node.release)}`}>View release</Link></p>

@@ -81,10 +81,16 @@ export async function savePlatform(db: Database, actor: Actor, body: Record<stri
   if (!code || !name || !platformTypes.has(platformType) || !platformStatuses.has(status)) throw new Error("Platform code, name, type, and valid status are required.");
   await assertValidParent(db, platformId, platformType, parentId);
   const at = now();
-  const existing = await db.prepare("SELECT id,code,name,parent_id,platform_type,status FROM platform WHERE id=? AND program_id=?").bind(platformId, PROGRAM_ID).first<Record<string, unknown>>();
+  const existing = await db.prepare("SELECT id,code,name,parent_id,configuration_node_id,platform_type,status FROM platform WHERE id=? AND program_id=?").bind(platformId, PROGRAM_ID).first<Record<string, unknown>>();
+  // Source-derived A2O Resource Platforms retain their Configuration Node link
+  // when a reviewer edits the Government Platform context. Delinking must be an
+  // explicit API action, never an accidental omission from an edit form.
+  const configurationNodeId = Object.prototype.hasOwnProperty.call(body, "configurationNodeId")
+    ? nullable(body.configurationNodeId)
+    : typeof existing?.configuration_node_id === "string" ? existing.configuration_node_id : null;
   await db.batch([
     db.prepare("INSERT INTO platform (id,program_id,parent_id,configuration_node_id,platform_type,code,normalized_code,name,normalized_name,status,description,installation_location,country_code,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET parent_id=excluded.parent_id,configuration_node_id=excluded.configuration_node_id,platform_type=excluded.platform_type,code=excluded.code,normalized_code=excluded.normalized_code,name=excluded.name,normalized_name=excluded.normalized_name,status=excluded.status,description=excluded.description,installation_location=excluded.installation_location,country_code=excluded.country_code,updated_at=excluded.updated_at")
-      .bind(platformId, PROGRAM_ID, parentId, nullable(body.configurationNodeId), platformType, code, normalized(code), name, normalized(name), status, nullable(body.description), nullable(body.installationLocation), nullable(body.countryCode)?.toUpperCase() || null, actor.id, at, at),
+      .bind(platformId, PROGRAM_ID, parentId, configurationNodeId, platformType, code, normalized(code), name, normalized(name), status, nullable(body.description), nullable(body.installationLocation), nullable(body.countryCode)?.toUpperCase() || null, actor.id, at, at),
     audit(db, actor, existing ? "platform_updated" : "platform_created", "platform", platformId, { code, name, platformType, status, parentId }, existing || undefined),
   ]);
   return platformId;

@@ -174,6 +174,27 @@ test("meeting report and Objective editors expose only governed, complete action
   assert.match(technicalScope, /disabled=\{Boolean\(attribution\.id\)\}/);
 });
 
+test("platform and configuration workspaces make stable and release-specific edits explicit", () => {
+  const platforms = read("app/platforms/page.tsx");
+  const platform = read("app/platforms/[id]/page.tsx");
+  const configurations = read("app/configuration/page.tsx");
+  const configuration = read("app/configuration/[id]/page.tsx");
+  const platformServer = read("lib/platform-server.ts");
+  assert.match(platforms, /contextMode="filter"/);
+  assert.match(platforms, /Needs Government mapping/);
+  assert.match(platforms, /Baseline assignments/);
+  assert.match(platform, /contextMode="filter"/);
+  assert.match(platform, /const assignable = releaseLens \?/);
+  assert.match(platform, /Save Release mapping/);
+  assert.match(platform, /Edit Platform context/);
+  assert.match(platform, /System configuration/);
+  assert.match(configurations, /const releaseQuery = releaseLens/);
+  assert.match(configuration, /scopedRows/);
+  assert.match(configuration, /Edit Release configuration/);
+  assert.match(platformServer, /Object\.prototype\.hasOwnProperty\.call\(body, "configurationNodeId"\)/);
+  assert.match(platformServer, /retain their Configuration Node link/);
+});
+
 test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
   const legacySnapshot = {
     asOf: "2026-08-18T17:35:08.460Z",
