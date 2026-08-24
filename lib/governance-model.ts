@@ -1,4 +1,5 @@
 import type { OutputHandlingMarking } from "./output-handling.js";
+import type { InformationOrigin } from "./information-status.js";
 
 export const initiativeStatuses = ["draft", "active", "decision_required", "closed"] as const;
 export const initiativePriorities = ["low", "medium", "high", "critical"] as const;
@@ -110,6 +111,7 @@ export type EvidenceDocument = {
 export type GovernanceRecord = {
   id: string;
   recordType: GovernanceRecordType;
+  informationOrigin: InformationOrigin;
   externalReference: string | null;
   title: string;
   status: GovernanceRecordStatus;
@@ -121,6 +123,9 @@ export type GovernanceRecord = {
   decisionAsk: string | null;
   actionItems: string | null;
   impact: string | null;
+  adjudicationAuthority: string | null;
+  adjudicatedAt: string | null;
+  adjudicationRationale: string | null;
   links: GovernanceLink[];
   documents: EvidenceDocument[];
   createdAt: string;
@@ -136,7 +141,7 @@ export type BriefSnapshot = {
   releases: number;
   reviewRows: number;
   productNames: string[];
-  linkedRecords: Array<{ type: string; title: string; status: string }>;
+  linkedRecords: Array<{ type: string; title: string; status: string; informationOrigin?: InformationOrigin; adjudicationAuthority?: string | null; adjudicatedAt?: string | null }>;
 };
 
 export type ExecutiveBrief = {

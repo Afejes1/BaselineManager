@@ -9,6 +9,7 @@ import { useInitiativeDecisions } from "../../../../lib/initiative-decision-clie
 import { objectiveIsRelatedToChangeRequest, readable } from "../../../../lib/initiative-decision-model";
 import { criterionIsAccepted } from "../../../../lib/initiative-readiness";
 import { PROGRAM_HANDLING_MARKING } from "../../../../lib/output-handling";
+import { claimStatusLabel, informationStatusSummary } from "../../../../lib/information-status";
 
 const display = (value: string | null | undefined, fallback = "Not recorded") => value?.trim() || fallback;
 const dateLabel = (value: string | null | undefined) => {
@@ -50,6 +51,7 @@ export default function ChangeDecisionBriefPage() {
         <div><span>JSF TECHNICAL BASELINE · GOVERNMENT DECISION BRIEF</span><h1>{request.externalIdentifier} · {request.title}</h1><p>{request.typeCode} · External system: {display(request.externalSystem)} · Source checked: {dateLabel(request.sourceAsOf)} · Brief generated: {dateLabel(request.updatedAt)}</p></div>
         <div className={`decision-brief-status decision-${request.decisionStatus}`}><strong>{readable(request.decisionStatus)}</strong><span>{request.decisionStatus === "pending" ? "Government decision required" : display(request.decisionAuthority, "Decision authority not recorded")}</span></div>
       </header>
+      <p className="decision-brief-method"><strong>Information status:</strong> {informationStatusSummary}</p>
 
       <section className="decision-brief-ask">
         <div><span>DECISION REQUIRED</span><h2>Fund this Change Request?</h2><p>{display(request.summary, "Decision summary has not been assessed.")}</p></div>
@@ -65,7 +67,7 @@ export default function ChangeDecisionBriefPage() {
 
       <section className="decision-brief-section">
         <header><div><span>WHAT · WHERE · WHEN</span><h2>Hard-linked technical effects</h2></div><strong>{effects.length} affected object{effects.length === 1 ? "" : "s"}</strong></header>
-        {effects.length ? <div className="decision-brief-effects">{effects.map((effect) => <article key={effect.id}><div><span>{readable(effect.subjectKind)}</span><b>{readable(effect.action)}</b></div><h3>{effect.subjectLabel}</h3><p><strong>{effect.aspect}</strong>{effect.currentValue || effect.targetValue ? ` · ${effect.currentValue || "Not present"} → ${effect.targetValue || "Not present"}` : ""}</p><small>{effect.fromReleaseName || "Current / unspecified"} → {effect.toReleaseName || request.requestedReleaseName || "Target unspecified"} · {readable(effect.confidence)}</small><p>{display(effect.consequence, "Consequence not assessed.")}</p></article>)}</div> : <p className="decision-brief-gap">No Product, Platform, Configuration Node, baseline record, Release, or Organization has been linked as an affected object. Do not treat imported MCP/JPO references as technical-scope evidence.</p>}
+        {effects.length ? <div className="decision-brief-effects">{effects.map((effect) => <article key={effect.id}><div><span>{readable(effect.subjectKind)}</span><b>{readable(effect.action)}</b></div><h3>{effect.subjectLabel}</h3><p><strong>{effect.aspect}</strong>{effect.currentValue || effect.targetValue ? ` · ${effect.currentValue || "Not present"} → ${effect.targetValue || "Not present"}` : ""}</p><small>{effect.fromReleaseName || "Current / unspecified"} → {effect.toReleaseName || request.requestedReleaseName || "Target unspecified"} · {claimStatusLabel(effect.confidence)}</small><p>{display(effect.consequence, "Consequence not assessed.")}</p></article>)}</div> : <p className="decision-brief-gap">No Product, Platform, Configuration Node, baseline record, Release, or Organization has been linked as an affected object. Do not treat imported MCP/JPO references as technical-scope evidence.</p>}
       </section>
 
       <section className="decision-brief-section">
@@ -89,7 +91,7 @@ export default function ChangeDecisionBriefPage() {
 
       <section className="decision-brief-section">
         <header><div><span>DEPENDENCY NARRATIVE</span><h2>Request chain and implementation constraints</h2></div><strong>{dependencies.length} recorded link{dependencies.length === 1 ? "" : "s"}</strong></header>
-        {dependencies.length ? <div className="decision-brief-dependencies">{dependencies.map((dependency) => { const predecessor = requestById.get(dependency.predecessorRequestId)?.externalIdentifier || dependency.predecessorRequestId; const successor = requestById.get(dependency.successorRequestId)?.externalIdentifier || dependency.successorRequestId; return <article key={dependency.id}><h3>{dependencyStatement(dependency, predecessor, successor)}</h3><p><strong>Basis:</strong> {display(dependency.rationale)}</p><p><strong>If unmet:</strong> {display(dependency.consequenceIfUnmet)}</p><small>{readable(dependency.confidence)} · Owner: {display(dependency.owner, "Unassigned")} · {display(dependency.sourceReference, "Source not recorded")}{dependency.sourceAsOf ? ` · ${dateLabel(dependency.sourceAsOf)}` : ""}</small></article>; })}</div> : <p className="decision-brief-gap">No request-to-request dependency is recorded. This means no dependency conclusion should be drawn from this brief.</p>}
+        {dependencies.length ? <div className="decision-brief-dependencies">{dependencies.map((dependency) => { const predecessor = requestById.get(dependency.predecessorRequestId)?.externalIdentifier || dependency.predecessorRequestId; const successor = requestById.get(dependency.successorRequestId)?.externalIdentifier || dependency.successorRequestId; return <article key={dependency.id}><h3>{dependencyStatement(dependency, predecessor, successor)}</h3><p><strong>Basis:</strong> {display(dependency.rationale)}</p><p><strong>If unmet:</strong> {display(dependency.consequenceIfUnmet)}</p><small>{claimStatusLabel(dependency.confidence)} · Owner: {display(dependency.owner, "Unassigned")} · {display(dependency.sourceReference, "Source not recorded")}{dependency.sourceAsOf ? ` · ${dateLabel(dependency.sourceAsOf)}` : ""}</small></article>; })}</div> : <p className="decision-brief-gap">No request-to-request dependency is recorded. This means no dependency conclusion should be drawn from this brief.</p>}
       </section>
 
       <footer className="decision-brief-footer"><span>{PROGRAM_HANDLING_MARKING}. Government analysis record; external MCP and Objective systems remain authoritative for their own lifecycle state.</span><span>Evidence source: {display(request.sourceLocator, request.externalIdentifier)}</span></footer>

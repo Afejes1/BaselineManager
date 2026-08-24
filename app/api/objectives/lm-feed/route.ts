@@ -81,7 +81,7 @@ export async function GET(request: Request) {
         let payload: Record<string, unknown> = {};
         try { payload = item.normalized_payload ? JSON.parse(item.normalized_payload) as Record<string, unknown> : {}; } catch { /* corrupt historic payload remains visible as receipt */ }
         const changes = deltaBySnapshot.get(`${item.snapshot_id}:${item.subject_id}`) || { diffs: [], kinds: [] };
-        return { receivedAt: item.observed_at, sourceAsOf: item.source_as_of, sourceUrl: safeExternalUrl(item.source_locator) || safeExternalUrl(typeof payload.url === "string" ? payload.url : null), jpoIdentifiers: Array.isArray(payload.jpoIds) ? payload.jpoIds : [], blocks: Array.isArray(payload.blocks) ? payload.blocks : [], blockedBy: Array.isArray(payload.blockedBy) ? payload.blockedBy : [], fields: payload, diffs: changes.diffs, changeKinds: [...new Set(changes.kinds)] };
+        return { receivedAt: item.observed_at, sourceAsOf: item.source_as_of, jpoIdentifiers: Array.isArray(payload.jpoIds) ? payload.jpoIds : [], blocks: Array.isArray(payload.blocks) ? payload.blocks : [], blockedBy: Array.isArray(payload.blockedBy) ? payload.blockedBy : [], fields: payload, diffs: changes.diffs, changeKinds: [...new Set(changes.kinds)] };
       });
       return Response.json({ snapshots });
     }

@@ -1195,6 +1195,7 @@ export const governanceRecords = sqliteTable("governance_record", {
   id: text("id").primaryKey(),
   programId: text("program_id").notNull().references(() => programs.id),
   recordType: text("record_type").notNull(),
+  informationOrigin: text("information_origin").notNull().default("unclassified"),
   externalReference: text("external_reference"),
   title: text("title").notNull(),
   status: text("status").notNull().default("open"),
@@ -1206,12 +1207,17 @@ export const governanceRecords = sqliteTable("governance_record", {
   decisionAsk: text("decision_ask"),
   actionItems: text("action_items"),
   impact: text("impact"),
+  adjudicationAuthority: text("adjudication_authority"),
+  adjudicatedAt: text("adjudicated_at"),
+  adjudicationRationale: text("adjudication_rationale"),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
 }, (t) => [
   check("governance_record_type", sql`${t.recordType} IN ('mcp','technical_call','decision','risk','question','technical_note')`),
   check("governance_record_status", sql`${t.status} IN ('open','in_review','approved','closed','superseded')`),
+  check("governance_record_origin", sql`${t.informationOrigin} IN ('incumbent','government','independent','joint','unclassified')`),
   index("governance_record_program_type_ix").on(t.programId, t.recordType, t.status, t.occurredAt),
+  index("governance_record_origin_ix").on(t.programId, t.informationOrigin, t.recordType, t.status),
   index("governance_record_external_reference_ix").on(t.programId, t.externalReference),
 ]);
 

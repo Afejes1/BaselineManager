@@ -36,7 +36,29 @@ function reportFixture() {
 test("saved leadership report contains the governed decision and evidence chain", () => {
   const fixture = reportFixture();
   const markdown = buildInitiativeReportMarkdown({ title: "Synthetic leadership report", generatedAt: "2026-08-21T00:00:00.000Z", dataLastChangedAt: "2026-08-20T18:00:00.000Z", ...fixture });
-  for (const expected of ["SYNTHETIC DEMONSTRATION DATA", "## Leadership decision", "Authorize the bounded change", "## Decision readiness", "100% (Decision Ready)", "MCP-001", "OBJ-001", "REQ-001", "T4-001", "synthetic-verification.pdf", "document-1", "Dependency and affected-object analysis", "Linked calls, decisions, and risks", "Synthetic authority decision", "## Derived technical scope snapshot"]) assert.match(markdown, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const expected of ["SYNTHETIC DEMONSTRATION DATA", "## Information status", "## Leadership decision", "Authorize the bounded change", "## Decision readiness", "100% (Decision Ready)", "MCP-001", "OBJ-001", "REQ-001", "T4-001", "synthetic-verification.pdf", "document-1", "Dependency and affected-object analysis", "Linked calls, decisions, and risks", "Synthetic authority decision", "## Derived technical scope snapshot"]) assert.match(markdown, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("information origin, lifecycle, and adjudication are kept distinct across governed records", () => {
+  const migration = read("drizzle/0027_information_status_clarity.sql");
+  const model = read("lib/governance-model.ts");
+  const server = read("lib/governance-server.ts");
+  const evidence = read("app/evidence/page.tsx");
+  const editor = read("components/evidence-record-editor.tsx");
+  const key = read("components/provenance-key.tsx");
+  const report = read("lib/initiative-report.ts");
+  const objective = read("app/objectives/[id]/page.tsx");
+  assert.match(migration, /information_origin/);
+  assert.match(migration, /adjudication_authority/);
+  assert.match(model, /informationOrigin: InformationOrigin/);
+  assert.match(server, /An approved decision record requires a decision authority, decision date, and rationale/);
+  assert.match(evidence, /Information origin/);
+  assert.match(editor, /Record lifecycle/);
+  assert.match(key, /Source claim/);
+  assert.match(key, /Verification \/ acceptance/);
+  assert.match(report, /## Information status/);
+  assert.match(objective, /outbound navigation is disabled/);
+  assert.doesNotMatch(objective, /target="_blank"/);
 });
 
 test("Initiative scope derives only the explicit affected objects on linked Change Requests", () => {
