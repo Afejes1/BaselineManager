@@ -5,6 +5,7 @@ import { MAX_GOVERNED_EVIDENCE_BYTES, MAX_GOVERNED_EVIDENCE_REFERENCES, storedEv
 import { changePortfolio } from "./change-server";
 import { assessInitiative, criterionIsAccepted } from "./initiative-readiness";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "./initiative-workflow-invariants";
+import { LM_OBJECTIVE_FEED_SYSTEM, parseReportedRom } from "./lm-objective-feed";
 import type {
   AcceptanceCriterion, AcceptanceSignoff, AcceptanceStatus, AcceptanceTier, EstimateConfidence, EstimateSource,
   ChangeRequestObjectiveDependency, IncumbentObjective, InitiativeChangeLink, InitiativeChangeRelationship, InitiativeDecisionBundle, InitiativeDecisionProfile,
@@ -29,6 +30,7 @@ type ObjectiveChangeRequestLinkRow = { id: string; objective_id: string; change_
 type ObjectiveDependencyRow = { id: string; dependent_change_request_id: string; prerequisite_objective_id: string; relationship: ObjectiveDependencyRelationship; status: ObjectiveDependencyStatus; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; updated_at: string };
 type ObjectiveAttributionRow = { id: string; objective_id: string; change_effect_id: string; attribution: ObjectiveAttribution; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; confidence: ObjectiveAttributionConfidence; updated_at: string };
 type EstimateRow = { id: string; objective_id: string; estimate_source: EstimateSource; hours_low: number | null; hours_likely: number | null; hours_high: number | null; cost_low: number | null; cost_likely: number | null; cost_high: number | null; basis: string; assumptions: string | null; source_reference: string | null; as_of: string; confidence: EstimateConfidence; created_at: string };
+type FeedRomRow = { subject_id: string; canonical_objective_id: string; feed_key: string; rom: string; file_name: string; source_as_of: string | null; observed_at: string; updated_at: string };
 type RequirementRow = { id: string; objective_id: string; requirement_id: string; version_label: string; external_identifier: string; title: string; source_system: string; source_locator: string | null; source_as_of: string | null; change_action: RequirementAction; before_text: string | null; after_text: string | null; rationale: string | null; trace_status: RequirementTraceStatus; updated_at: string };
 type CriterionRow = { id: string; objective_id: string; requirement_trace_id: string | null; objective_requirement_id: string | null; tier: AcceptanceTier; code: string; statement: string; verification_method: VerificationMethod; status: AcceptanceStatus; planned_date: string | null; actual_date: string | null; evidence_reference: string | null; updated_at: string };
 type SignoffRow = { id: string; criterion_id: string; signoff_role: string; signer: string | null; decision: SignoffDecision; decided_at: string | null; rationale: string | null; evidence_document_id: string | null; evidence_record_id: string | null; evidence_file_name: string | null; evidence_content_type: string | null; evidence_byte_size: number | null; evidence_description: string | null; evidence_r2_key: string | null; evidence_integrity_payload: string | null; updated_at: string };
@@ -51,7 +53,7 @@ async function findVerifiedEvidenceSupport(rows: readonly EvidenceSupportRow[]) 
 
 export async function initiativeDecisionWorkspace(db: Database, actor: Actor, evidenceScope: EvidenceVerificationScope = {}): Promise<InitiativeDecisionWorkspace> {
   const changes = await changePortfolio(db);
-  const [initiativeResult, linkResult, objectiveResult, objectiveChangeRequestLinkResult, dependencyResult, attributionResult, estimateResult, requirementResult, criterionResult, signoffResult, milestoneResult] = await Promise.all([
+  const [initiativeResult, linkResult, objectiveResult, objectiveChangeRequestLinkResult, dependencyResult, attributionResult, estimateResult, feedRomResult, requirementResult, criterionResult, signoffResult, milestoneResult] = await Promise.all([
     db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT l.id,l.initiative_id,l.change_request_id,l.relationship,l.contribution_summary,l.sort_order FROM initiative_change_request l JOIN initiative i ON i.id=l.initiative_id WHERE i.program_id=? ORDER BY l.initiative_id,l.sort_order,l.created_at").bind(PROGRAM_ID).all<LinkRow>(),
     db.prepare("SELECT o.* FROM incumbent_objective o WHERE o.program_id=? ORDER BY o.planned_start,o.external_identifier").bind(PROGRAM_ID).all<ObjectiveRow>(),
@@ -59,6 +61,7 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
     db.prepare("SELECT d.* FROM change_request_objective_dependency d JOIN change_request cr ON cr.id=d.dependent_change_request_id JOIN incumbent_objective o ON o.id=d.prerequisite_objective_id WHERE cr.program_id=? AND o.program_id=? ORDER BY d.status,d.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveDependencyRow>(),
     db.prepare("SELECT a.* FROM objective_effect_attribution a JOIN incumbent_objective o ON o.id=a.objective_id JOIN change_effect e ON e.id=a.change_effect_id WHERE o.program_id=? AND e.change_request_id IN (SELECT id FROM change_request WHERE program_id=?) ORDER BY a.objective_id,a.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveAttributionRow>(),
     db.prepare("SELECT e.* FROM objective_estimate e JOIN incumbent_objective o ON o.id=e.objective_id WHERE o.program_id=? ORDER BY e.objective_id,e.as_of DESC,e.created_at DESC").bind(PROGRAM_ID).all<EstimateRow>(),
+    db.prepare("SELECT s.subject_id,f.canonical_objective_id,s.feed_key,s.rom,snapshot.file_name,snapshot.source_as_of,snapshot.observed_at,s.updated_at FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id JOIN lm_objective_feed_snapshot snapshot ON snapshot.id=s.latest_snapshot_id WHERE f.program_id=? AND f.external_system=? AND f.canonical_objective_id IS NOT NULL AND TRIM(COALESCE(s.rom,''))<>'' ORDER BY f.canonical_objective_id,COALESCE(snapshot.source_as_of,snapshot.observed_at) DESC,s.updated_at DESC").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<FeedRomRow>(),
     db.prepare("SELECT oq.id,oq.objective_id,oq.requirement_id,oq.version_label,r.external_identifier,r.title,r.source_system,COALESCE(oq.source_reference,r.source_locator) AS source_locator,COALESCE(oq.source_as_of,r.source_as_of) AS source_as_of,oq.change_action,oq.before_text,oq.after_text,oq.rationale,oq.disposition AS trace_status,oq.updated_at FROM objective_requirement oq JOIN requirement r ON r.id=oq.requirement_id JOIN incumbent_objective o ON o.id=oq.objective_id WHERE o.program_id=? ORDER BY oq.objective_id,r.external_identifier,oq.version_label").bind(PROGRAM_ID).all<RequirementRow>(),
     db.prepare("SELECT c.* FROM acceptance_criterion c JOIN incumbent_objective o ON o.id=c.objective_id WHERE o.program_id=? ORDER BY c.objective_id,c.tier,c.code").bind(PROGRAM_ID).all<CriterionRow>(),
     db.prepare(`SELECT s.*,d.id AS evidence_record_id,d.file_name AS evidence_file_name,d.content_type AS evidence_content_type,d.byte_size AS evidence_byte_size,d.description AS evidence_description,d.r2_key AS evidence_r2_key,
@@ -127,6 +130,29 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
   }
   const estimatesByObjective = new Map<string, ObjectiveEstimate[]>();
   for (const row of estimateResult.results) estimatesByObjective.set(row.objective_id, [...(estimatesByObjective.get(row.objective_id) || []), { id: row.id, objectiveId: row.objective_id, estimateSource: row.estimate_source, hoursLow: row.hours_low, hoursLikely: row.hours_likely, hoursHigh: row.hours_high, costLow: row.cost_low, costLikely: row.cost_likely, costHigh: row.cost_high, basis: row.basis, assumptions: row.assumptions, sourceReference: row.source_reference, asOf: row.as_of, confidence: row.confidence, createdAt: row.created_at }]);
+  for (const row of feedRomResult.results) {
+    const rom = parseReportedRom(row.rom);
+    if (!rom) continue;
+    const asOf = /^\d{4}-\d{2}-\d{2}/.test(row.source_as_of || "") ? row.source_as_of!.slice(0, 10) : row.observed_at.slice(0, 10);
+    const estimate: ObjectiveEstimate = {
+      id: `lm-feed-rom-${row.subject_id}`,
+      objectiveId: row.canonical_objective_id,
+      estimateSource: "incumbent",
+      hoursLow: rom.unit === "hours" ? rom.low : null,
+      hoursLikely: rom.unit === "hours" ? rom.likely : null,
+      hoursHigh: rom.unit === "hours" ? rom.high : null,
+      costLow: rom.unit === "cost" ? rom.low : null,
+      costLikely: rom.unit === "cost" ? rom.likely : null,
+      costHigh: rom.unit === "cost" ? rom.high : null,
+      basis: `Lockheed-reported ROM from ${row.file_name}`,
+      assumptions: [rom.assumptions, `Raw source ROM: ${rom.raw}.`].filter(Boolean).join(" "),
+      sourceReference: `${LM_OBJECTIVE_FEED_SYSTEM} · ${row.file_name} · feed key ${row.feed_key}`,
+      asOf,
+      confidence: "unassessed",
+      createdAt: row.updated_at,
+    };
+    estimatesByObjective.set(row.canonical_objective_id, [...(estimatesByObjective.get(row.canonical_objective_id) || []), estimate]);
+  }
   const signoffsByCriterion = new Map<string, AcceptanceSignoff[]>();
   for (const row of signoffResult.results) {
     const evidenceDocumentId = row.evidence_document_id;

@@ -9,7 +9,8 @@ import { parseBriefMarkdown, prepareBriefDocx, prepareBriefMarkdown, prepareBrie
 import { isCurrentBriefSnapshot } from "../lib/brief-publication.js";
 import { buildInitiativeReportMarkdown } from "../lib/initiative-report.js";
 import { deriveInitiativeScope } from "../lib/initiative-scope.js";
-import { assessInitiative } from "../lib/initiative-readiness.js";
+import { assessInitiative, estimateVariance } from "../lib/initiative-readiness.js";
+import { parseReportedRom } from "../lib/lm-objective-feed.js";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "../lib/initiative-workflow-invariants.js";
 import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
 
@@ -246,6 +247,21 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(infrastructure, /Edit capacity &amp; Release state/);
   assert.match(infrastructure, /Add infrastructure node \/ VM/);
   assert.match(infrastructure, /Virtual machine/);
+});
+
+test("Lockheed ROM is derived as an unassessed incumbent estimate when its unit is clear", () => {
+  assert.deepEqual(parseReportedRom("$125K"), { raw: "$125K", unit: "cost", low: null, likely: 125000, high: null, assumptions: null });
+  assert.deepEqual(parseReportedRom("80-120 hours"), { raw: "80-120 hours", unit: "hours", low: 80, likely: 100, high: 120, assumptions: "Likely is the derived midpoint of the reported range." });
+  assert.equal(parseReportedRom("3 days"), null);
+  const variance = estimateVariance({ objectives: [{ id: "objective-rom", estimates: [{ id: "feed-rom", objectiveId: "objective-rom", estimateSource: "incumbent", hoursLow: null, hoursLikely: 240, hoursHigh: null, costLow: null, costLikely: null, costHigh: null, basis: "Lockheed-reported ROM", assumptions: null, sourceReference: "FOR_JPO.json", asOf: "2026-08-24", confidence: "unassessed", createdAt: "2026-08-24T10:00:00.000Z" }] }] } as unknown as InitiativeDecisionBundle);
+  assert.equal(variance.incumbentHours, 240);
+  assert.equal(variance.incumbentHoursCoverage, 1);
+  const initiativePage = read("app/initiatives/[initiative]/page.tsx");
+  const workspace = read("lib/initiative-decision-server.ts");
+  assert.match(initiativePage, /Open Change Request/);
+  assert.match(initiativePage, /Open Objective/);
+  assert.match(workspace, /parseReportedRom/);
+  assert.match(workspace, /lm_objective_feed_state/);
 });
 
 test("Change Request dependencies explain finish-to-finish, blockers, and enablers at entry", () => {

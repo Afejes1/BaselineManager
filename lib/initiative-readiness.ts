@@ -106,7 +106,7 @@ export function assessInitiative(bundle: InitiativeDecisionBundle, asOf = new Da
 
 export function estimateVariance(bundle: InitiativeDecisionBundle) {
   const latest = (objectiveId: string, sources: string[]) => bundle.objectives.find((item) => item.id === objectiveId)?.estimates
-    .filter((item) => sources.includes(item.estimateSource)).sort((a, b) => b.asOf.localeCompare(a.asOf))[0];
+    .filter((item) => sources.includes(item.estimateSource)).sort((a, b) => `${b.asOf}|${b.createdAt}|${b.id}`.localeCompare(`${a.asOf}|${a.createdAt}|${a.id}`))[0];
   let incumbentHours: number | null = null;
   let assessedHours: number | null = null;
   let incumbentCost: number | null = null;

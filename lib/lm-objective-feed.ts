@@ -37,6 +37,14 @@ export type LmObjectiveFeedDisposition = "add" | "change" | "unchanged" | "block
 export type LmObjectiveFeedPreviewItem = { record: LmObjectiveFeedRecord; disposition: LmObjectiveFeedDisposition; changedFields: string[]; issues: LmObjectiveFeedIssue[]; objectiveId: string | null };
 export type LmObjectiveFeedPreview = { items: LmObjectiveFeedPreviewItem[]; added: number; changed: number; unchanged: number; blocked: number; removed: Array<{ sourceKey: string; objectiveId: string | null }>; canApply: boolean };
 export type ExistingLmFeedItem = { sourceKey: string; objectiveId: string | null; normalizedPayload: string };
+export type ParsedReportedRom = {
+  raw: string;
+  unit: "hours" | "cost";
+  low: number | null;
+  likely: number;
+  high: number | null;
+  assumptions: string | null;
+};
 
 const clean = (value: unknown): string | null => {
   if (value == null) return null;
@@ -52,6 +60,35 @@ const numeric = (value: unknown): number | null => {
 };
 const canonicalValue = (value: unknown) => JSON.stringify(value ?? null);
 const sourceFields = new Set(["url", "jpo", "jira", "rel-to", "cel-to", "title", "roadmap_parent", "scope", "domains", "i-n", "1-n", "blocks", "blocked_by", "target_start", "target_finish", "rom", "percent_complete", "funding", "release", "overview", "background"]);
+
+/**
+ * Converts only an unambiguous Lockheed ROM into the application estimate
+ * shape. The source field remains authoritative and is retained verbatim;
+ * this helper merely gives initiative math a typed, clearly-labelled view.
+ */
+export function parseReportedRom(value: LmObjectiveFeedRecord["rom"]): ParsedReportedRom | null {
+  const raw = clean(value);
+  if (!raw || /^\s*-/.test(raw)) return null;
+  const normalized = raw.toLocaleLowerCase("en-US");
+  const cost = /[$€£]|\b(?:usd|dollars?|cost|budget)\b/.test(normalized);
+  const hours = /\b(?:hours?|hrs?|hr|labor|effort|person[-\s]?hours?|fte)\b/.test(normalized);
+  // A day-based source ROM needs an explicit workday assumption, which this
+  // application must not invent. Mixed money-and-hours text is likewise kept
+  // as source evidence rather than guessing which value is authoritative.
+  if ((cost && hours) || /\b(?:days?|workdays?)\b/.test(normalized)) return null;
+  const values = [...raw.matchAll(/(?:[$€£]\s*)?(\d+(?:,\d{3})*(?:\.\d+)?|\d*\.\d+)\s*([kmb])?/gi)]
+    .map((match) => Number(match[1].replaceAll(",", "")) * (match[2]?.toLocaleLowerCase("en-US") === "k" ? 1_000 : match[2]?.toLocaleLowerCase("en-US") === "m" ? 1_000_000 : match[2]?.toLocaleLowerCase("en-US") === "b" ? 1_000_000_000 : 1))
+    .filter((item) => Number.isFinite(item) && item >= 0);
+  if (!values.length || values.length > 3) return null;
+  const [first, second, third] = values;
+  if (values.length === 1) return { raw, unit: cost ? "cost" : "hours", low: null, likely: first, high: null, assumptions: hours || cost ? null : "The source did not state a unit; the numeric ROM is interpreted as labor hours." };
+  if (values.length === 2) {
+    if (first! > second!) return null;
+    return { raw, unit: cost ? "cost" : "hours", low: first!, likely: (first! + second!) / 2, high: second!, assumptions: `${hours || cost ? "" : "The source did not state a unit; values are interpreted as labor hours. "}Likely is the derived midpoint of the reported range.`.trim() };
+  }
+  if (first! > second! || second! > third!) return null;
+  return { raw, unit: cost ? "cost" : "hours", low: first!, likely: second!, high: third!, assumptions: hours || cost ? null : "The source did not state a unit; values are interpreted as labor hours." };
+}
 
 export function splitJpo(value: unknown) {
   return [...new Set((clean(value) || "").split(/[,;]/).map((item) => item.trim()).filter(Boolean))];
