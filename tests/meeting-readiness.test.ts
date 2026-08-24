@@ -179,6 +179,7 @@ test("platform and configuration workspaces make stable and release-specific edi
   const platform = read("app/platforms/[id]/page.tsx");
   const configurations = read("app/configuration/page.tsx");
   const configuration = read("app/configuration/[id]/page.tsx");
+  const infrastructure = read("components/infrastructure-workspace.tsx");
   const platformServer = read("lib/platform-server.ts");
   assert.match(platforms, /contextMode="filter"/);
   assert.match(platforms, /Needs Government mapping/);
@@ -193,6 +194,10 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(configuration, /Edit Release configuration/);
   assert.match(platformServer, /Object\.prototype\.hasOwnProperty\.call\(body, "configurationNodeId"\)/);
   assert.match(platformServer, /retain their Configuration Node link/);
+  assert.match(infrastructure, /Where to edit/);
+  assert.match(infrastructure, /Edit capacity &amp; Release state/);
+  assert.match(infrastructure, /Add infrastructure node \/ VM/);
+  assert.match(infrastructure, /Virtual machine/);
 });
 
 test("Change Request dependencies explain finish-to-finish, blockers, and enablers at entry", () => {
