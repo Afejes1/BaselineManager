@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param()
+param([string]$TrustedCaBundlePath)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Common-A2OWorkspace.ps1')
@@ -8,6 +8,7 @@ $projectRoot = Get-A2OProjectRoot
 Push-Location $projectRoot
 try {
   Assert-A2ONodeVersion
+  Assert-A2OTlsVerificationEnabled
   if (-not (Test-Path -LiteralPath 'node_modules')) {
     throw 'Dependencies are not installed. Run npm run local:init first.'
   }
@@ -23,6 +24,13 @@ try {
 
   Assert-A2OBuildManifest
   Assert-A2ONoPendingMigrations
+
+  $enrolledCaBundle = Join-Path $projectRoot '.a2o-secrets\node-extra-ca.pem'
+  if (-not [string]::IsNullOrWhiteSpace($TrustedCaBundlePath)) {
+    Set-A2ONodeTrustedCaBundle -CertificatePath $TrustedCaBundlePath
+  } elseif (Test-Path -LiteralPath $enrolledCaBundle -PathType Leaf) {
+    Set-A2ONodeTrustedCaBundle -CertificatePath $enrolledCaBundle
+  }
 
   Write-Output 'Starting the verified A2O Worker bundle on http://127.0.0.1:3000.'
   Invoke-A2OCommand {

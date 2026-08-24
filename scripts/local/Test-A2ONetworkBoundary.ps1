@@ -87,6 +87,18 @@ foreach ($file in ($files | Sort-Object FullName -Unique)) {
   }
 }
 
+$commonWorkspaceScript = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'scripts\local\Common-A2OWorkspace.ps1')
+if ($commonWorkspaceScript -notmatch '\$env:CLOUDFLARE_CF_FETCH_ENABLED\s*=\s*''false''') {
+  $findings.Add('scripts\\local\\Common-A2OWorkspace.ps1 [local runtime policy] Request.cf network metadata fetching must be disabled.')
+}
+if ($commonWorkspaceScript -notmatch '\$env:WRANGLER_SEND_METRICS\s*=\s*''false''' -or $commonWorkspaceScript -notmatch '\$env:DO_NOT_TRACK\s*=\s*''1''') {
+  $findings.Add('scripts\\local\\Common-A2OWorkspace.ps1 [local runtime policy] Wrangler telemetry must be disabled.')
+}
+$startWorkspaceScript = Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'scripts\local\Start-A2OWorkspace.ps1')
+if ($startWorkspaceScript -match '(?i)--(?:remote|tunnel)(?:\s|$)') {
+  $findings.Add('scripts\\local\\Start-A2OWorkspace.ps1 [local runtime policy] Remote execution and tunnels are not permitted in the local operator runtime.')
+}
+
 if ($findings.Count -gt 0) {
   Write-Output 'Outbound network boundary check failed. Review the following source locations:'
   $findings | ForEach-Object { Write-Output " - $_" }

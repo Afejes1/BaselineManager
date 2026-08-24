@@ -317,6 +317,7 @@ test("the air-gapped runtime fails closed on stale builds and unbacked upgrades"
   const packageJson = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   const common = read("scripts/local/Common-A2OWorkspace.ps1");
   const start = read("scripts/local/Start-A2OWorkspace.ps1");
+  const certificate = read("scripts/local/Set-A2OLocalCertificate.ps1");
   const backup = read("scripts/local/Backup-A2OWorkspace.ps1");
   const restore = read("scripts/local/Restore-A2OWorkspace.ps1");
   const update = read("scripts/local/Update-A2OWorkspace.ps1");
@@ -325,6 +326,12 @@ test("the air-gapped runtime fails closed on stale builds and unbacked upgrades"
   assert.match(common, /Assert-A2OBuildManifest/);
   assert.match(common, /failed integrity validation/);
   assert.match(start, /Assert-A2OBuildManifest[\s\S]*Assert-A2ONoPendingMigrations/);
+  assert.match(common, /CLOUDFLARE_CF_FETCH_ENABLED = 'false'/);
+  assert.match(common, /NODE_TLS_REJECT_UNAUTHORIZED=0 is not permitted/);
+  assert.match(start, /Set-A2ONodeTrustedCaBundle/);
+  assert.doesNotMatch(start, /--(?:remote|tunnel)(?:\s|$)/i);
+  assert.match(certificate, /BEGIN CERTIFICATE/);
+  assert.match(packageJson.scripts["local:certificate:trust"], /Set-A2OLocalCertificate\.ps1/);
   assert.match(backup, /schemaVersion = 4/);
   assert.match(backup, /Get-A2OHmacSha256/);
   assert.match(backup, /sha256 = Get-A2OFileSha256/);

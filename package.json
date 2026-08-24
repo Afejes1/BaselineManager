@@ -16,6 +16,7 @@
     "local:key:export": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Export-A2OTransferSigningKey.ps1",
     "local:key:establish-legacy": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Establish-A2OLegacySigningTrustRoot.ps1",
     "local:key:import": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Import-A2OTransferSigningKey.ps1",
+    "local:certificate:trust": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Set-A2OLocalCertificate.ps1",
     "local:restore": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Restore-A2OWorkspace.ps1",
     "local:update": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Update-A2OWorkspace.ps1",
     "local:network-check": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Test-A2ONetworkBoundary.ps1",

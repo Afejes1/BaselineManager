@@ -49,6 +49,24 @@ files locally. `npm ci` and Git operations are separate, operator-initiated
 network activities; use approved offline packages or an internal package source
 when working in an air-gapped environment.
 
+### AWS Workspace proxy certificate
+
+The local runtime disables Wrangler's `Request.cf` metadata refresh and sends
+no Wrangler metrics, so starting A2O does not need an Internet connection. Do
+not work around an enterprise proxy certificate by disabling TLS verification.
+If approved local tooling needs the AWS Workspace proxy root, obtain the
+approved PEM-encoded CA bundle and enroll it once:
+
+```powershell
+npm run local:certificate:trust -- -CertificatePath 'C:\approved\aws-workspace-proxy-ca.pem'
+```
+
+The bundle is copied to `.a2o-secrets\node-extra-ca.pem`, excluded from Git and
+ACL-protected. `npm run local:start` uses it only for its Node process while
+keeping certificate verification enabled. A temporary bundle can instead be
+used for one launch with `npm run local:start -- -TrustedCaBundlePath
+'C:\approved\aws-workspace-proxy-ca.pem'`.
+
 ## Workspace transfer between application versions
 
 Use **Workspace Transfer** for a clean deployment move or version change. This

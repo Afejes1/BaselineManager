@@ -5,6 +5,10 @@ $env:WRANGLER_WRITE_LOGS = 'false'
 $env:WRANGLER_LOG_PATH = Join-Path $script:A2OProjectRoot '.wrangler\logs'
 $env:WRANGLER_SEND_METRICS = 'false'
 $env:DO_NOT_TRACK = '1'
+# Miniflare otherwise refreshes Request.cf from workers.cloudflare.com. The
+# local operator runtime does not need Cloudflare request metadata, so prohibit
+# that fetch rather than relying on an offline fallback after a failed request.
+$env:CLOUDFLARE_CF_FETCH_ENABLED = 'false'
 $env:npm_config_cache = Join-Path $script:A2OProjectRoot '.npm-cache'
 # Do not make optional npm audit, funding, or update-notification calls during
 # local setup. Package acquisition is still an explicit operator action.
@@ -32,6 +36,28 @@ function Assert-A2ONodeVersion {
     throw "Node.js $minimum or newer is required. Installed: $installed"
   }
   Write-Output "Node.js $installed"
+}
+
+function Assert-A2OTlsVerificationEnabled {
+  if ([string]$env:NODE_TLS_REJECT_UNAUTHORIZED -eq '0') {
+    throw 'NODE_TLS_REJECT_UNAUTHORIZED=0 is not permitted. Enroll the approved PEM CA bundle with npm run local:certificate:trust instead.'
+  }
+}
+
+function Set-A2ONodeTrustedCaBundle {
+  param([Parameter(Mandatory=$true)][string]$CertificatePath)
+
+  Assert-A2OTlsVerificationEnabled
+  if (-not (Test-Path -LiteralPath $CertificatePath -PathType Leaf)) {
+    throw "The selected CA bundle does not exist: $CertificatePath"
+  }
+  $resolved = (Resolve-Path -LiteralPath $CertificatePath).Path
+  $pem = Get-Content -Raw -LiteralPath $resolved
+  if ($pem -notmatch '(?s)-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----') {
+    throw 'The selected CA bundle must be PEM-encoded and contain at least one X.509 certificate.'
+  }
+  $env:NODE_EXTRA_CA_CERTS = $resolved
+  Write-Output 'Using the operator-enrolled PEM CA bundle for this Node process. TLS certificate verification remains enabled.'
 }
 
 function Invoke-A2OCommand {
