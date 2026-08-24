@@ -8,6 +8,7 @@ import { EvidenceValidationError, validateEvidenceBytes } from "../lib/evidence-
 import { parseBriefMarkdown, prepareBriefDocx, prepareBriefMarkdown, prepareBriefPdf } from "../lib/brief-export.js";
 import { isCurrentBriefSnapshot } from "../lib/brief-publication.js";
 import { buildInitiativeReportMarkdown } from "../lib/initiative-report.js";
+import { deriveInitiativeScope } from "../lib/initiative-scope.js";
 import { assessInitiative } from "../lib/initiative-readiness.js";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "../lib/initiative-workflow-invariants.js";
 import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
@@ -35,7 +36,26 @@ function reportFixture() {
 test("saved leadership report contains the governed decision and evidence chain", () => {
   const fixture = reportFixture();
   const markdown = buildInitiativeReportMarkdown({ title: "Synthetic leadership report", generatedAt: "2026-08-21T00:00:00.000Z", dataLastChangedAt: "2026-08-20T18:00:00.000Z", ...fixture });
-  for (const expected of ["SYNTHETIC DEMONSTRATION DATA", "## Leadership decision", "Authorize the bounded change", "## Decision readiness", "100% (Decision Ready)", "MCP-001", "OBJ-001", "REQ-001", "T4-001", "synthetic-verification.pdf", "document-1", "Dependency and affected-object analysis", "Linked calls, decisions, and risks", "Synthetic authority decision", "## Baseline scope snapshot"]) assert.match(markdown, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  for (const expected of ["SYNTHETIC DEMONSTRATION DATA", "## Leadership decision", "Authorize the bounded change", "## Decision readiness", "100% (Decision Ready)", "MCP-001", "OBJ-001", "REQ-001", "T4-001", "synthetic-verification.pdf", "document-1", "Dependency and affected-object analysis", "Linked calls, decisions, and risks", "Synthetic authority decision", "## Derived technical scope snapshot"]) assert.match(markdown, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("Initiative scope derives only the explicit affected objects on linked Change Requests", () => {
+  const scope = deriveInitiativeScope({
+    changeRequests: [{ id: "cr-pma", requestedReleaseName: "Future PMA release" }],
+    objectives: [{ id: "objective-pma" }],
+    objectiveEffectAttributions: [{ objectiveId: "objective-pma", changeEffectId: "effect-pma" }],
+    changes: { effects: [
+      { id: "effect-pma", changeRequestId: "cr-pma", subjectKind: "platform", subjectId: "platform-pma", subjectLabel: "PMA", action: "modify", aspect: "modernization", fromReleaseName: null, toReleaseName: "Future PMA release" },
+      { id: "effect-product", changeRequestId: "cr-pma", subjectKind: "product", subjectId: "product-pma-client", subjectLabel: "PMA Client", action: "modify", aspect: "version", fromReleaseName: null, toReleaseName: "Future PMA release" },
+      { id: "effect-record", changeRequestId: "cr-pma", subjectKind: "occurrence", subjectId: "baseline-row-7", subjectLabel: "PMA Client on Node 7", action: "modify", aspect: "deployment", fromReleaseName: null, toReleaseName: "Future PMA release" },
+    ] },
+  } as unknown as InitiativeDecisionBundle);
+  assert.equal(scope.affectedObjects.length, 3);
+  assert.equal(scope.objectCountByKind.get("platform"), 1);
+  assert.equal(scope.objectCountByKind.get("product"), 1);
+  assert.equal(scope.explicitBaselineRecordCount, 1);
+  assert.equal(scope.attributedEffectCount, 1);
+  assert.equal(scope.unattributedEffectCount, 2);
 });
 
 test("saved leadership report escapes imported markdown and remote-content injection", () => {
@@ -68,7 +88,8 @@ test("current and scoped outputs derive a fail-closed marking from record lineag
   const workspaceTransfer = read("lib/workspace-transfer.ts");
   const onePager = read("app/initiatives/[initiative]/one-pager/page.tsx");
   const reports = read("app/reports/page.tsx");
-  assert.match(server, /LEFT JOIN source_row_24 sr ON sr\.id=bo\.source_row_id LEFT JOIN source_package sp ON sp\.id=sr\.source_package_id/);
+  assert.match(server, /JOIN change_effect ce ON ce\.change_request_id=icr\.change_request_id/);
+  assert.match(server, /Explicitly linked baseline records/);
   assert.match(server, /handlingMarking: PROGRAM_HANDLING_MARKING/);
   assert.doesNotMatch(server, /handlingMarkingFromSourceLineage/);
   assert.match(workspaceTransfer, /const classification = "PROGRAM WORKING DATA" as const/);
@@ -210,17 +231,19 @@ test("Change Request dependencies explain finish-to-finish, blockers, and enable
   assert.match(changePage, /FF: \[this MCP\] cannot complete until \[related MCP\] completes/);
 });
 
-test("Initiative scope distinguishes Government outcome, affected objects, and baseline evidence", () => {
+test("Initiative scope distinguishes Government outcome, affected objects, and derived technical scope", () => {
   const helper = read("components/initiative-scope-helper.tsx");
   const createPage = read("app/initiatives/page.tsx");
   const detailPage = read("app/initiatives/[initiative]/page.tsx");
   assert.match(helper, /Initiative title = Government outcome/);
   assert.match(helper, /Affected object = linked MCP/);
   assert.match(helper, /Platform → PMA/);
-  assert.match(helper, /Baseline evidence scope = this form/);
-  assert.match(createPage, /Baseline evidence release/);
-  assert.match(createPage, /Baseline evidence scope — not affected objects/);
+  assert.match(helper, /Technical scope = derived, not selected here/);
+  assert.match(createPage, /Release lens \(optional\)/);
+  assert.match(createPage, /technical scope is derived from affected objects/);
   assert.match(detailPage, /InitiativeScopeHelper/);
+  assert.match(detailPage, /DERIVED, NOT MANUALLY SELECTED/);
+  assert.match(detailPage, /A Platform effect does not expand to every record/);
 });
 
 test("legacy report snapshots without an explicit handling marking cannot be draft-exported", () => {
@@ -336,12 +359,11 @@ test("page-one truncation is disclosed and full detail remains available in the 
   assert.match(onePager, /Data through/);
 });
 
-test("scope and workspace transfer controls fail closed", () => {
+test("derived scope and workspace transfer controls fail closed", () => {
   const initiatives = read("lib/governance-server.ts");
-  assert.match(initiatives, /explicitly use the entire release scope/);
-  assert.match(initiatives, /active in the selected baseline release/);
-  assert.match(initiatives, /const releaseChanged = releaseId !== current\.primary_release_id/);
-  assert.match(initiatives, /else if \(releaseChanged\)[\s\S]*SELECT scope_id AS id FROM initiative_scope WHERE initiative_id=\? AND scope_kind='product'[\s\S]*assertProductScopes\(db, retainedProducts\.results, releaseId\)/);
+  assert.match(initiatives, /technical scope is derived from linked Change Request effects/);
+  assert.match(initiatives, /update affected objects on the Change Request instead/);
+  assert.match(initiatives, /JOIN change_effect ce ON ce\.change_request_id=icr\.change_request_id/);
   const transfer = read("lib/workspace-transfer.ts");
   assert.match(transfer, /workspaceClassificationFromSourceLineage/);
   assert.match(transfer, /classification overstates its source-package lineage/);

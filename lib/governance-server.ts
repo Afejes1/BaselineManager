@@ -294,23 +294,6 @@ async function releaseIdFor(db: Database, releaseName: unknown) {
   return row.id;
 }
 
-function scopeProducts(value: unknown): Array<{ id: string; label: string | null }> {
-  const unique = new Map<string, string | null>();
-  for (const entry of asArray<Record<string, unknown>>(value)) {
-    const productId = clean(entry.id);
-    if (productId) unique.set(productId, nullable(entry.label));
-  }
-  return [...unique.entries()].map(([id, label]) => ({ id, label }));
-}
-
-async function assertProductScopes(db: Database, products: Array<{ id: string }>, releaseId: string | null) {
-  for (const product of products) {
-    const row = await db.prepare("SELECT p.id FROM product p WHERE p.id=? AND p.program_id=? AND EXISTS (SELECT 1 FROM baseline_occurrence bo WHERE bo.product_id=p.id AND bo.workspace_id=? AND bo.lifecycle_status='active' AND (? IS NULL OR bo.release_id=?))")
-      .bind(product.id, PROGRAM_ID, WORKSPACE_ID, releaseId, releaseId).first<{ id: string }>();
-    if (!row) throw new Error("Every scoped product must be active in the selected baseline release.");
-  }
-}
-
 export async function createInitiative(db: Database, actor: Actor, body: Record<string, unknown>) {
   requireWriter(actor);
   const title = clean(body.title);
@@ -320,17 +303,12 @@ export async function createInitiative(db: Database, actor: Actor, body: Record<
   const releaseId = await releaseIdFor(db, body.releaseName);
   const initiativeId = id("initiative");
   const at = now();
-  const products = scopeProducts(body.productScopes);
-  const entireReleaseScope = body.entireReleaseScope === true;
-  if (entireReleaseScope && products.length) throw new Error("Use either the entire release scope or specific products, not both.");
-  if (!entireReleaseScope && !products.length) throw new Error("Choose at least one product or explicitly use the entire release scope.");
-  await assertProductScopes(db, products, releaseId);
+  if (body.productScopes !== undefined || body.entireReleaseScope !== undefined) throw new Error("Initiative technical scope is derived from linked Change Request effects; do not submit a manual Product or Release scope.");
   const statements: D1PreparedStatement[] = [
     db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .bind(initiativeId, PROGRAM_ID, releaseId, title, normalized(title), status, priority, nullable(body.owner), nullable(body.targetDate), nullable(body.consequence), nullable(body.desiredOutcome), nullable(body.decisionAsk), actor.id, at, at),
   ];
-  for (const product of products) statements.push(db.prepare("INSERT INTO initiative_scope (id,initiative_id,scope_kind,scope_id,display_label,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("scope"), initiativeId, "product", product.id, product.label, at, at));
-  statements.push(audit(db, actor, "initiative_created", "initiative", initiativeId, { title, status, priority, releaseId, products }));
+  statements.push(audit(db, actor, "initiative_created", "initiative", initiativeId, { title, status, priority, releaseId, technicalScope: "derived_from_linked_change_request_effects" }));
   await db.batch(statements);
   return initiativeId;
 }
@@ -344,29 +322,14 @@ export async function updateInitiative(db: Database, actor: Actor, body: Record<
   const status = initiativeStatusSet.has(body.status as InitiativeStatus) ? body.status as InitiativeStatus : current.status;
   const priority = initiativePrioritySet.has(body.priority as InitiativePriority) ? body.priority as InitiativePriority : current.priority;
   const releaseId = body.releaseName === undefined ? current.primary_release_id : await releaseIdFor(db, body.releaseName);
-  const releaseChanged = releaseId !== current.primary_release_id;
-  const scopeWasSupplied = body.productScopes !== undefined || body.entireReleaseScope !== undefined;
-  const products = scopeWasSupplied ? scopeProducts(body.productScopes) : [];
-  const entireReleaseScope = body.entireReleaseScope === true;
-  if (scopeWasSupplied) {
-    if (entireReleaseScope && products.length) throw new Error("Use either the entire release scope or specific products, not both.");
-    if (!entireReleaseScope && !products.length) throw new Error("Choose at least one product or explicitly use the entire release scope.");
-    await assertProductScopes(db, products, releaseId);
-  } else if (releaseChanged) {
-    const retainedProducts = await db.prepare("SELECT scope_id AS id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ id: string }>();
-    await assertProductScopes(db, retainedProducts.results, releaseId);
-  }
+  if (body.productScopes !== undefined || body.entireReleaseScope !== undefined) throw new Error("Initiative technical scope is derived from linked Change Request effects; update affected objects on the Change Request instead.");
   const at = now();
   const next = { title, status, priority, owner: body.owner === undefined ? current.owner : nullable(body.owner), targetDate: body.targetDate === undefined ? current.target_date : nullable(body.targetDate), consequence: body.consequence === undefined ? current.consequence : nullable(body.consequence), desiredOutcome: body.desiredOutcome === undefined ? current.desired_outcome : nullable(body.desiredOutcome), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), releaseId };
   const statements: D1PreparedStatement[] = [
     db.prepare("UPDATE initiative SET primary_release_id=?,title=?,normalized_title=?,status=?,priority=?,owner=?,target_date=?,consequence=?,desired_outcome=?,decision_ask=?,updated_at=? WHERE id=?")
       .bind(releaseId, title, normalized(title), status, priority, next.owner, next.targetDate, next.consequence, next.desiredOutcome, next.decisionAsk, at, initiativeId),
   ];
-  if (scopeWasSupplied) {
-    statements.push(db.prepare("DELETE FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId));
-    for (const product of products) statements.push(db.prepare("INSERT INTO initiative_scope (id,initiative_id,scope_kind,scope_id,display_label,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(id("scope"), initiativeId, "product", product.id, product.label, at, at));
-  }
-  statements.push(audit(db, actor, "initiative_updated", "initiative", initiativeId, { ...next, ...(scopeWasSupplied ? { entireReleaseScope, products } : {}) }, current));
+  statements.push(audit(db, actor, "initiative_updated", "initiative", initiativeId, { ...next, technicalScope: "derived_from_linked_change_request_effects" }, current));
   await db.batch(statements);
 }
 
@@ -537,7 +500,7 @@ export async function updateGovernanceRecord(db: Database, actor: Actor, body: R
   await db.batch(statements);
 }
 
-type SourceScopeRow = { id: string; product_id: string | null; release_id: string | null; materialization_status: string; product_name: string | null; release_name: string | null; source_file_name: string | null; source_key: string | null; source_payload: string | null; projection_payload: string };
+type DerivedEffectScopeRow = { id: string; subject_kind: string; subject_id: string; materialization_status: string | null; product_id: string | null; product_name: string | null; from_release_name: string | null; to_release_name: string | null; requested_release_name: string | null };
 
 export type ExecutiveBriefCreationGuard = { auditRowCount: number; auditMaxRowId: number };
 
@@ -546,14 +509,25 @@ export async function createExecutiveBrief(db: Database, actor: Actor, body: Rec
   const initiativeId = clean(body.initiativeId);
   const initiative = await db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.id=? AND i.program_id=?").bind(initiativeId, PROGRAM_ID).first<InitiativeRow>();
   if (!initiative) throw new Error("Choose a durable initiative before creating a brief.");
-  const productScopes = await db.prepare("SELECT scope_id FROM initiative_scope WHERE initiative_id=? AND scope_kind='product'").bind(initiativeId).all<{ scope_id: string }>();
-  const scopedProductIds = new Set(productScopes.results.map((entry) => entry.scope_id));
-  const sourceRows = await db.prepare("SELECT bo.id,bo.product_id,bo.release_id,bo.materialization_status,bo.projection_payload,p.canonical_name AS product_name,r.name AS release_name,sp.file_name AS source_file_name,sr.source_key,sr.raw_payload AS source_payload FROM baseline_occurrence bo LEFT JOIN product p ON p.id=bo.product_id LEFT JOIN release r ON r.id=bo.release_id LEFT JOIN source_row_24 sr ON sr.id=bo.source_row_id LEFT JOIN source_package sp ON sp.id=sr.source_package_id WHERE bo.workspace_id=? AND bo.lifecycle_status='active'").bind(WORKSPACE_ID).all<SourceScopeRow>();
-  const selectedRows = sourceRows.results.filter((row) => (!initiative.primary_release_id || row.release_id === initiative.primary_release_id) && (!scopedProductIds.size || (row.product_id && scopedProductIds.has(row.product_id))));
+  const effectScope = await db.prepare(`SELECT ce.id,ce.subject_kind,ce.subject_id,bo.materialization_status,
+      COALESCE(ep.id,op.id) AS product_id,COALESCE(ep.canonical_name,op.canonical_name) AS product_name,
+      fr.name AS from_release_name,tr.name AS to_release_name,rr.name AS requested_release_name
+      FROM initiative_change_request icr
+      JOIN change_effect ce ON ce.change_request_id=icr.change_request_id
+      JOIN change_request cr ON cr.id=ce.change_request_id
+      LEFT JOIN product ep ON ce.subject_kind='product' AND ep.id=ce.subject_id
+      LEFT JOIN baseline_occurrence bo ON ce.subject_kind='occurrence' AND bo.id=ce.subject_id AND bo.lifecycle_status='active'
+      LEFT JOIN product op ON op.id=bo.product_id
+      LEFT JOIN release fr ON fr.id=ce.from_release_id
+      LEFT JOIN release tr ON tr.id=ce.to_release_id
+      LEFT JOIN release rr ON rr.id=cr.requested_release_id
+      WHERE icr.initiative_id=? AND cr.program_id=?`).bind(initiativeId, PROGRAM_ID).all<DerivedEffectScopeRow>();
   const linkedRecords = await db.prepare("SELECT g.record_type,g.title,g.status FROM governance_record g JOIN governance_record_link l ON l.governance_record_id=g.id WHERE l.entity_kind='initiative' AND l.entity_id=? ORDER BY g.updated_at DESC").bind(initiativeId).all<{ record_type: string; title: string; status: string }>();
-  const productNames = [...new Set(selectedRows.map((row) => row.product_name).filter(Boolean))].slice(0, 20) as string[];
-  const releaseNames = new Set(selectedRows.map((row) => row.release_name).filter(Boolean));
-  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: PROGRAM_HANDLING_MARKING, releaseName: initiative.primary_release_name || "All releases", sourceRows: selectedRows.length, products: new Set(selectedRows.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: selectedRows.filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
+  const explicitRecords = new Map<string, DerivedEffectScopeRow>();
+  for (const effect of effectScope.results) if (effect.subject_kind === "occurrence" && effect.materialization_status) explicitRecords.set(effect.subject_id, effect);
+  const productNames = [...new Set(effectScope.results.map((row) => row.product_name).filter((name): name is string => Boolean(name)))].slice(0, 20);
+  const releaseNames = new Set(effectScope.results.flatMap((row) => [row.from_release_name, row.to_release_name, row.requested_release_name]).filter((name): name is string => Boolean(name)));
+  const snapshot: BriefSnapshot = { asOf: now(), handlingMarking: PROGRAM_HANDLING_MARKING, releaseName: releaseNames.size ? [...releaseNames].sort((left, right) => left.localeCompare(right)).join(" · ") : "No release effect recorded", sourceRows: explicitRecords.size, products: new Set(effectScope.results.map((row) => row.product_id).filter(Boolean)).size, releases: releaseNames.size, reviewRows: [...explicitRecords.values()].filter((row) => row.materialization_status !== "materialized").length, productNames, linkedRecords: linkedRecords.results.map((record) => ({ type: record.record_type, title: record.title, status: record.status })) };
   const title = clean(body.title) || `${initiative.title} - Executive one-pager`;
   const briefId = id("brief");
   const at = now();
@@ -615,8 +589,8 @@ export async function updateExecutiveBrief(db: Database, actor: Actor, body: Rec
 
 function briefMarkdown(title: string, initiative: InitiativeRow, snapshot: BriefSnapshot) {
   const linked = snapshot.linkedRecords.length ? snapshot.linkedRecords.map((record) => `- ${record.type}: ${record.title} (${record.status})`).join("\n") : "- No linked MCPs, calls, decisions, or risks yet.";
-  const products = snapshot.productNames.length ? snapshot.productNames.map((name) => `- ${name}`).join("\n") : "- No current baseline records match this scope.";
-  return `# ${title}\n\n## Decision / outcome\n${initiative.decision_ask || "Decision ask not yet recorded."}\n\n${initiative.desired_outcome || "Desired outcome not yet recorded."}\n\n## Scope snapshot\n- As of: ${snapshot.asOf}\n- Release scope: ${snapshot.releaseName}\n- Baseline records: ${snapshot.sourceRows}\n- Products: ${snapshot.products}\n- Releases: ${snapshot.releases}\n- Records needing review: ${snapshot.reviewRows}\n\n## Consequence\n${initiative.consequence || "Not yet recorded."}\n\n## Representative products\n${products}\n\n## Linked Government record(s)\n${linked}\n`;
+  const products = snapshot.productNames.length ? snapshot.productNames.map((name) => `- ${name}`).join("\n") : "- No Product is explicitly affected by the linked Change Requests.";
+  return `# ${title}\n\n## Decision / outcome\n${initiative.decision_ask || "Decision ask not yet recorded."}\n\n${initiative.desired_outcome || "Desired outcome not yet recorded."}\n\n## Derived technical scope snapshot\n- As of: ${snapshot.asOf}\n- Release effects: ${snapshot.releaseName}\n- Explicitly linked baseline records: ${snapshot.sourceRows}\n- Explicitly affected Products: ${snapshot.products}\n- Releases represented: ${snapshot.releases}\n- Explicit records needing review: ${snapshot.reviewRows}\n\n## Consequence\n${initiative.consequence || "Not yet recorded."}\n\n## Explicitly affected products\n${products}\n\n## Linked Government record(s)\n${linked}\n`;
 }
 
 export type StoredDocumentObject = {

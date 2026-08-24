@@ -4,13 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
 import { InitiativeScopeHelper } from "../../components/initiative-scope-helper";
-import { useWorkspaceContext } from "../../components/workspace-context";
 import { useGovernancePortfolio } from "../../lib/governance-client";
 import { displayStatus, initiativePriorities, initiativeStatuses, type InitiativePriority, type InitiativeStatus } from "../../lib/governance-model";
 import { useInitiativeDecisions } from "../../lib/initiative-decision-client";
 import { readable } from "../../lib/initiative-decision-model";
-
-type ProductOption = { id: string; label: string; releaseNames: string[] };
 
 function dateLabel(value: string | null) {
   if (!value) return "No target date";
@@ -19,7 +16,6 @@ function dateLabel(value: string | null) {
 }
 
 export default function InitiativesPage() {
-  const { rows } = useWorkspaceContext();
   const { portfolio, loading, error, mutate } = useGovernancePortfolio();
   const decisionWorkspace = useInitiativeDecisions();
   const [query, setQuery] = useState("");
@@ -36,24 +32,8 @@ export default function InitiativesPage() {
   const [consequence, setConsequence] = useState("");
   const [desiredOutcome, setDesiredOutcome] = useState("");
   const [decisionAsk, setDecisionAsk] = useState("");
-  const [productIds, setProductIds] = useState<Set<string>>(new Set());
-  const [entireReleaseScope, setEntireReleaseScope] = useState(true);
 
-  const releases = useMemo(() => ["All releases", ...Array.from(new Set(rows.map((row) => String(row.ReleaseName || "").trim()).filter(Boolean))).sort()], [rows]);
-  const products = useMemo<ProductOption[]>(() => {
-    const grouped = new Map<string, ProductOption>();
-    for (const row of rows) {
-      const productId = row.__meta.productId;
-      if (!productId) continue;
-      const label = String(row.LongName || row.ShortName || "Unassigned product");
-      const current = grouped.get(productId) ?? { id: productId, label, releaseNames: [] };
-      const rowRelease = String(row.ReleaseName || "").trim();
-      if (rowRelease && !current.releaseNames.includes(rowRelease)) current.releaseNames.push(rowRelease);
-      grouped.set(productId, current);
-    }
-    return [...grouped.values()].sort((left, right) => left.label.localeCompare(right.label));
-  }, [rows]);
-  const selectableProducts = useMemo(() => products.filter((product) => releaseName === "All releases" || product.releaseNames.includes(releaseName)), [products, releaseName]);
+  const releases = useMemo(() => ["All releases", ...(decisionWorkspace.workspace?.changes.releases.map((release) => release.name) || [])], [decisionWorkspace.workspace?.changes.releases]);
   const initiatives = useMemo(() => portfolio?.initiatives ?? [], [portfolio?.initiatives]);
   const filtered = useMemo(() => initiatives.filter((initiative) => {
     if (statusFilter !== "all" && initiative.status !== statusFilter) return false;
@@ -62,20 +42,18 @@ export default function InitiativesPage() {
   }), [initiatives, query, statusFilter]);
 
   function openCreate() {
-    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setEntireReleaseScope(true); setProductIds(new Set()); setShowCreate(true);
+    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setShowCreate(true);
   }
 
   function changeRelease(nextRelease: string) {
     setReleaseName(nextRelease);
-    setProductIds(new Set());
   }
 
   async function create() {
     if (!title.trim()) { setNotice("Enter an initiative title before saving."); return; }
-    if (!entireReleaseScope && !productIds.size) { setNotice("Choose at least one product or use the entire release scope."); return; }
     setSaving(true);
     try {
-      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk, entireReleaseScope, productScopes: entireReleaseScope ? [] : selectableProducts.filter((product) => productIds.has(product.id)).map((product) => ({ id: product.id, label: product.label })) });
+      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk });
       await decisionWorkspace.reload();
       setShowCreate(false);
       setNotice(`Created initiative ${title.trim()}.`);
@@ -106,13 +84,11 @@ export default function InitiativesPage() {
 
     {showCreate && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowCreate(false); }}>
       <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="initiative-create-title">
-        <span className="eyebrow">GOVERNMENT DECISION</span><h2 id="initiative-create-title">Create initiative</h2><p>Set the evidence boundary for this decision record. Affected Platforms and Products are recorded on linked Change Requests, not here.</p>
+        <span className="eyebrow">GOVERNMENT DECISION</span><h2 id="initiative-create-title">Create initiative</h2><p>Create the decision record first. Its technical scope is derived from affected objects on linked Change Requests and their LM Objectives; it is never selected here.</p>
         <InitiativeScopeHelper />
-        <div className="form-grid"><label className="modal-field">Initiative title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Stabilize mission telemetry stack" /></label><label className="modal-field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Lead office / team" /></label><label className="modal-field">Baseline evidence release<select value={releaseName} onChange={(event) => changeRelease(event.target.value)}>{releases.map((item) => <option key={item}>{item}</option>)}</select></label><label className="modal-field">Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><label className="modal-field">Status<select value={status} onChange={(event) => setStatus(event.target.value as InitiativeStatus)}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as InitiativePriority)}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label></div>
+        <div className="form-grid"><label className="modal-field">Initiative title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Stabilize mission telemetry stack" /></label><label className="modal-field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Lead office / team" /></label><label className="modal-field">Release lens (optional)<select value={releaseName} onChange={(event) => changeRelease(event.target.value)}>{releases.map((item) => <option key={item}>{item}</option>)}</select><small>Organizes the decision view; it does not define technical scope.</small></label><label className="modal-field">Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><label className="modal-field">Status<select value={status} onChange={(event) => setStatus(event.target.value as InitiativeStatus)}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as InitiativePriority)}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label></div>
         <label className="modal-field">Consequence<input value={consequence} onChange={(event) => setConsequence(event.target.value)} placeholder="What remains at risk if this is not funded?" /></label><label className="modal-field">Desired outcome<input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="End state" /></label><label className="modal-field">Decision required<input value={decisionAsk} onChange={(event) => setDecisionAsk(event.target.value)} placeholder="Specific Government decision or direction requested" /></label>
-        <fieldset className="modal-field"><legend>Baseline evidence scope — not affected objects</legend><label className="scope-choice"><input type="checkbox" checked={entireReleaseScope} onChange={(event) => { setEntireReleaseScope(event.target.checked); if (event.target.checked) setProductIds(new Set()); }} /><span><strong>Use all baseline evidence in the selected release</strong><small>Use this for a platform-only proposal when no specific Product is the decision scope. Turn it off only to select genuinely relevant Products.</small></span></label></fieldset>
-        {!entireReleaseScope ? <div className="modal-field"><span>Products in scope</span><div className="domain-table-wrap" style={{ marginTop: 8, maxHeight: 190 }}><table><tbody>{selectableProducts.map((product) => <tr key={product.id}><td style={{ width: 34 }}><input type="checkbox" aria-label={product.label} checked={productIds.has(product.id)} onChange={() => setProductIds((current) => { const next = new Set(current); if (next.has(product.id)) next.delete(product.id); else next.add(product.id); return next; })} /></td><td>{product.label}</td><td className="entity-meta">{product.releaseNames.join(", ")}</td></tr>)}{!selectableProducts.length ? <tr><td className="empty">No products in this release.</td></tr> : null}</tbody></table></div>{!productIds.size ? <p className="warning-copy">Choose at least one product before creating this Initiative.</p> : null}</div> : null}
-        <footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving || (!entireReleaseScope && !productIds.size)} onClick={create}>{saving ? "Saving…" : "Create initiative"}</button></footer>
+        <footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={create}>{saving ? "Saving…" : "Create initiative"}</button></footer>
       </section>
     </div>}
     {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
