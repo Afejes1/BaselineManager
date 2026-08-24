@@ -7,8 +7,10 @@ $projectRoot = Get-A2OProjectRoot
 
 # This is a deliberate source-boundary check. It is not a packet capture: it
 # prevents the common ways a future application change could introduce an
-# outbound browser or server request. The only allowed URL literal is the
-# inert app.local parsing origin used to validate internal return paths.
+# outbound browser or server request. The only general URL literal exception is
+# the inert app.local parsing origin used to validate internal return paths.
+# A few exact OpenXML namespace comparisons are also accepted below; those are
+# document-format identifiers, not addresses used by a network client.
 $targets = @(
   'app',
   'components',
@@ -27,6 +29,23 @@ $rules = @(
   @{ Name = 'server network client'; Pattern = '\b(?:node:(?:https|http|net|tls|dns|dgram)|https?\.(?:request|get)|net\.connect|tls\.connect|dns\.(?:lookup|resolve))\b' },
   @{ Name = 'absolute fetch target'; Pattern = '\bfetch\s*\(\s*(?:["''`])\s*https?://' }
 )
+
+function Test-A2OInertStandardsIdentifierLine {
+  param(
+    [Parameter(Mandatory = $true)][string]$RelativePath,
+    [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line
+  )
+
+  if (($RelativePath -replace '\\', '/') -ne 'lib/evidence-validation.ts') { return $false }
+
+  $approvedOpenXmlComparisons = @(
+    '^\s*if \(!contentTypesRoot \|\| officeXmlAttribute\(contentTypesRoot\[1\], "xmlns"\) !== "http://schemas\.openxmlformats\.org/package/2006/content-types"\) throw new EvidenceValidationError\("The Office package content-type manifest is invalid\."\);\s*$',
+    '^\s*if \(!packageRelationshipsRoot \|\| officeXmlAttribute\(packageRelationshipsRoot\[1\], "xmlns"\) !== "http://schemas\.openxmlformats\.org/package/2006/relationships"\) throw new EvidenceValidationError\("The Office package relationship manifest is invalid\."\);\s*$',
+    '^\s*if \(!rootMatch \|\| !\[`http://schemas\.openxmlformats\.org/\$\{transitionalNamespacePath\}`, `http://purl\.oclc\.org/ooxml/\$\{strictNamespacePath\}`\]\.includes\(namespace \|\| ""\)\) throw new EvidenceValidationError\("The Office package main part does not contain the expected document root and namespace\."\);\s*$'
+  )
+
+  return [bool]($approvedOpenXmlComparisons | Where-Object { $Line -match $_ } | Select-Object -First 1)
+}
 
 $files = foreach ($target in $targets) {
   $candidate = Join-Path $projectRoot $target
@@ -56,6 +75,9 @@ foreach ($file in ($files | Sort-Object FullName -Unique)) {
         $lines[$index]
       }
       if ($rule.Name -eq 'external URL literal' -and $candidateLine -match '^\s*const\s+frameAncestors\s*=') {
+        $candidateLine = ''
+      }
+      if ($rule.Name -eq 'external URL literal' -and (Test-A2OInertStandardsIdentifierLine -RelativePath $relativePath -Line $candidateLine)) {
         $candidateLine = ''
       }
       if ($candidateLine -match $rule.Pattern) {

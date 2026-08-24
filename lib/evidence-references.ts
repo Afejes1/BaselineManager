@@ -14,7 +14,7 @@ export function evidenceDocumentReferences(markdown: string, maximumReferences =
   for (const match of markdown.matchAll(/\/api\/documents\?[^\s<>"'`\\)\]}]*/g)) {
     if (/%(?![0-9A-Fa-f]{2})/.test(match[0])) throw new Error("The report contains a malformed evidence-document reference.");
     let id: string;
-    try { id = new URL(match[0], "https://a2o.invalid").searchParams.get("id") || ""; }
+    try { id = new URL(match[0], "https://app.local").searchParams.get("id") || ""; }
     catch { throw new Error("The report contains a malformed evidence-document reference."); }
     if (!id) throw new Error("The report contains a malformed evidence-document reference.");
     ids.add(id);
