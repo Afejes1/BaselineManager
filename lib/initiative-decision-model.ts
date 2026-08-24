@@ -32,6 +32,9 @@ export type InitiativeDecisionProfile = {
   successMeasures: string | null;
   briefingAudience: string | null;
   decisionNeededBy: string | null;
+  /** Government planning assumption; it does not alter the Lockheed source ROM. */
+  romHoursPerPoint: number;
+  romConversionRationale: string | null;
   primaryReleaseId: string | null;
   primaryReleaseName: string | null;
   updatedAt: string;
@@ -56,6 +59,10 @@ export type ObjectiveEstimate = {
   costLow: number | null;
   costLikely: number | null;
   costHigh: number | null;
+  /** Retained source ROM points. Converted only in an Initiative decision frame. */
+  romPointsLow?: number | null;
+  romPointsLikely?: number | null;
+  romPointsHigh?: number | null;
   basis: string;
   assumptions: string | null;
   sourceReference: string | null;

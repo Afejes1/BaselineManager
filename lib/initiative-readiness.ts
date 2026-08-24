@@ -104,12 +104,20 @@ export function assessInitiative(bundle: InitiativeDecisionBundle, asOf = new Da
   };
 }
 
-export function estimateVariance(bundle: InitiativeDecisionBundle) {
+export const DEFAULT_ROM_HOURS_PER_POINT = 500;
+
+export function romHoursPerPoint(value: number | null | undefined) {
+  return Number.isFinite(value) && Number(value) > 0 ? Number(value) : DEFAULT_ROM_HOURS_PER_POINT;
+}
+
+export function estimateVariance(bundle: InitiativeDecisionBundle, conversionHoursPerPoint = bundle.initiative?.romHoursPerPoint) {
+  const hoursPerPoint = romHoursPerPoint(conversionHoursPerPoint);
   const latest = (objectiveId: string, sources: string[]) => bundle.objectives.find((item) => item.id === objectiveId)?.estimates
     .filter((item) => sources.includes(item.estimateSource)).sort((a, b) => `${b.asOf}|${b.createdAt}|${b.id}`.localeCompare(`${a.asOf}|${a.createdAt}|${a.id}`))[0];
   let incumbentHours: number | null = null;
   let assessedHours: number | null = null;
   let incumbentCost: number | null = null;
+  let incumbentRomPoints: number | null = null;
   let assessedCost: number | null = null;
   let incumbentHoursCoverage = 0;
   let assessedHoursCoverage = 0;
@@ -119,9 +127,14 @@ export function estimateVariance(bundle: InitiativeDecisionBundle) {
     const incumbent = latest(objective.id, ["incumbent"]);
     const assessed = latest(objective.id, ["government", "independent"]);
     if (incumbent?.hoursLikely !== null && incumbent?.hoursLikely !== undefined) { incumbentHours = (incumbentHours ?? 0) + incumbent.hoursLikely; incumbentHoursCoverage += 1; }
+    else if (incumbent?.romPointsLikely !== null && incumbent?.romPointsLikely !== undefined) {
+      incumbentRomPoints = (incumbentRomPoints ?? 0) + incumbent.romPointsLikely;
+      incumbentHours = (incumbentHours ?? 0) + incumbent.romPointsLikely * hoursPerPoint;
+      incumbentHoursCoverage += 1;
+    }
     if (assessed?.hoursLikely !== null && assessed?.hoursLikely !== undefined) { assessedHours = (assessedHours ?? 0) + assessed.hoursLikely; assessedHoursCoverage += 1; }
     if (incumbent?.costLikely !== null && incumbent?.costLikely !== undefined) { incumbentCost = (incumbentCost ?? 0) + incumbent.costLikely; incumbentCostCoverage += 1; }
     if (assessed?.costLikely !== null && assessed?.costLikely !== undefined) { assessedCost = (assessedCost ?? 0) + assessed.costLikely; assessedCostCoverage += 1; }
   }
-  return { incumbentHours, assessedHours, incumbentCost, assessedCost, incumbentHoursCoverage, assessedHoursCoverage, incumbentCostCoverage, assessedCostCoverage, objectiveCount: bundle.objectives.length };
+  return { incumbentHours, assessedHours, incumbentCost, assessedCost, incumbentRomPoints, romHoursPerPoint: hoursPerPoint, incumbentHoursCoverage, assessedHoursCoverage, incumbentCostCoverage, assessedCostCoverage, objectiveCount: bundle.objectives.length };
 }

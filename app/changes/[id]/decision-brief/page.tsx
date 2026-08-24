@@ -30,6 +30,7 @@ export default function ChangeDecisionBriefPage() {
   const dependencies = portfolio.dependencies.filter((item) => item.predecessorRequestId === id || item.successorRequestId === id);
   const requestById = useMemo(() => new Map(portfolio.requests.map((item) => [item.id, item])), [portfolio.requests]);
   const linkedObjectives = useMemo(() => workspace?.objectives.filter((objective) => objectiveIsRelatedToChangeRequest(objective, id, workspace.objectiveChangeRequestLinks)) || [], [id, workspace]);
+  const linkedInitiatives = (workspace?.initiatives || []).filter((initiative) => (workspace?.links || []).some((link) => link.initiativeId === initiative.id && link.changeRequestId === id));
   const objectiveLinks = workspace?.objectiveChangeRequestLinks || [];
   const attributions = workspace?.objectiveEffectAttributions || [];
   const requirements = workspace?.requirements || [];
@@ -80,10 +81,14 @@ export default function ChangeDecisionBriefPage() {
           const objectiveCriteria = criteria.filter((criterion) => criterion.objectiveId === objective.id);
           const acceptedCriteria = objectiveCriteria.filter(criterionIsAccepted).length;
           const likelyEstimate = objective.estimates.slice().sort((left, right) => `${right.asOf}|${right.createdAt}`.localeCompare(`${left.asOf}|${left.createdAt}`))[0];
+          const reportedRom = objective.estimates.filter((estimate) => estimate.romPointsLikely !== null && estimate.romPointsLikely !== undefined).sort((left, right) => `${right.asOf}|${right.createdAt}|${right.id}`.localeCompare(`${left.asOf}|${left.createdAt}|${left.id}`))[0];
+          const reportedRomText = reportedRom?.romPointsLikely !== null && reportedRom?.romPointsLikely !== undefined
+            ? `Lockheed ROM ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(reportedRom.romPointsLikely)} points${linkedInitiatives.length ? `; ${linkedInitiatives.map((initiative) => `${initiative.title}: ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(reportedRom.romPointsLikely! * initiative.romHoursPerPoint)} planning h at ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(initiative.romHoursPerPoint)} h/point`).join("; ")}` : "; no linked Initiative conversion"}`
+            : null;
           return <article className="decision-brief-objective" key={objective.id}>
             <header><div><span>{relation}</span><h3>{objective.externalIdentifier} · {objective.title}</h3></div><b>{readable(objective.status)}</b></header>
             <p>{display(objective.summary, "No delivery summary recorded.")}</p>
-            <dl><div><dt>Planned window</dt><dd>{dateLabel(objective.plannedStart)} → {dateLabel(objective.plannedFinish)}</dd></div><div><dt>Technical owner</dt><dd>{display(objective.technicalOwner, "Not assigned")}</dd></div><div><dt>Latest sourced estimate</dt><dd>{likelyEstimate ? `${readable(likelyEstimate.estimateSource)} · ${hoursLabel(likelyEstimate.hoursLikely)} · ${moneyLabel(likelyEstimate.costLikely)} · ${dateLabel(likelyEstimate.asOf)} · ${readable(likelyEstimate.confidence)}` : "Not reported"}</dd></div><div><dt>Requirements / acceptance</dt><dd>{objectiveRequirements.length} / {acceptedCriteria} of {objectiveCriteria.length} accepted</dd></div></dl>
+            <dl><div><dt>Planned window</dt><dd>{dateLabel(objective.plannedStart)} → {dateLabel(objective.plannedFinish)}</dd></div><div><dt>Technical owner</dt><dd>{display(objective.technicalOwner, "Not assigned")}</dd></div><div><dt>Latest sourced estimate</dt><dd>{reportedRomText || (likelyEstimate ? `${readable(likelyEstimate.estimateSource)} · ${hoursLabel(likelyEstimate.hoursLikely)} · ${moneyLabel(likelyEstimate.costLikely)} · ${dateLabel(likelyEstimate.asOf)} · ${readable(likelyEstimate.confidence)}` : "Not reported")}</dd></div><div><dt>Requirements / acceptance</dt><dd>{objectiveRequirements.length} / {acceptedCriteria} of {objectiveCriteria.length} accepted</dd></div></dl>
             <div className="decision-brief-objective-effects"><strong>Attributed technical scope</strong>{objectiveEffects.length ? objectiveEffects.map(({ attribution, effect }) => <span key={attribution.id}>{effect.subjectLabel} · {readable(effect.action)} {effect.aspect} · {readable(attribution.attribution)} / {readable(attribution.confidence)}</span>) : <span className="unattributed">No Change Request effect has been attributed to this Objective.</span>}</div>
           </article>;
         })}</div> : <p className="decision-brief-gap">No LM Objectives are linked to this Change Request. Import the LM Objective source or establish a reviewed reference before using this brief as a delivery plan.</p>}

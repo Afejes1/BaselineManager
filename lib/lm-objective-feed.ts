@@ -39,7 +39,7 @@ export type LmObjectiveFeedPreview = { items: LmObjectiveFeedPreviewItem[]; adde
 export type ExistingLmFeedItem = { sourceKey: string; objectiveId: string | null; normalizedPayload: string };
 export type ParsedReportedRom = {
   raw: string;
-  unit: "hours" | "cost";
+  unit: "hours" | "cost" | "points";
   low: number | null;
   likely: number;
   high: number | null;
@@ -63,8 +63,9 @@ const sourceFields = new Set(["url", "jpo", "jira", "rel-to", "cel-to", "title",
 
 /**
  * Converts only an unambiguous Lockheed ROM into the application estimate
- * shape. The source field remains authoritative and is retained verbatim;
- * this helper merely gives initiative math a typed, clearly-labelled view.
+ * shape. The source field remains authoritative and is retained verbatim.
+ * Unqualified numeric ROM values are points, not hours: an Initiative can
+ * apply its own explicit Government planning conversion when useful.
  */
 export function parseReportedRom(value: LmObjectiveFeedRecord["rom"]): ParsedReportedRom | null {
   const raw = clean(value);
@@ -81,13 +82,15 @@ export function parseReportedRom(value: LmObjectiveFeedRecord["rom"]): ParsedRep
     .filter((item) => Number.isFinite(item) && item >= 0);
   if (!values.length || values.length > 3) return null;
   const [first, second, third] = values;
-  if (values.length === 1) return { raw, unit: cost ? "cost" : "hours", low: null, likely: first, high: null, assumptions: hours || cost ? null : "The source did not state a unit; the numeric ROM is interpreted as labor hours." };
+  const unit = cost ? "cost" : hours ? "hours" : "points";
+  const sourceAssumption = unit === "points" ? "The source did not state labor hours; the numeric ROM is retained as Lockheed effort points." : null;
+  if (values.length === 1) return { raw, unit, low: null, likely: first, high: null, assumptions: sourceAssumption };
   if (values.length === 2) {
     if (first! > second!) return null;
-    return { raw, unit: cost ? "cost" : "hours", low: first!, likely: (first! + second!) / 2, high: second!, assumptions: `${hours || cost ? "" : "The source did not state a unit; values are interpreted as labor hours. "}Likely is the derived midpoint of the reported range.`.trim() };
+    return { raw, unit, low: first!, likely: (first! + second!) / 2, high: second!, assumptions: [sourceAssumption, "Likely is the derived midpoint of the reported range."].filter(Boolean).join(" ") || null };
   }
   if (first! > second! || second! > third!) return null;
-  return { raw, unit: cost ? "cost" : "hours", low: first!, likely: second!, high: third!, assumptions: hours || cost ? null : "The source did not state a unit; values are interpreted as labor hours." };
+  return { raw, unit, low: first!, likely: second!, high: third!, assumptions: sourceAssumption };
 }
 
 export function splitJpo(value: unknown) {

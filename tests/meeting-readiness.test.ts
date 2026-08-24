@@ -249,18 +249,29 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(infrastructure, /Virtual machine/);
 });
 
-test("Lockheed ROM is derived as an unassessed incumbent estimate when its unit is clear", () => {
+test("Lockheed ROM preserves points and applies an Initiative planning conversion only in derived hours", () => {
   assert.deepEqual(parseReportedRom("$125K"), { raw: "$125K", unit: "cost", low: null, likely: 125000, high: null, assumptions: null });
   assert.deepEqual(parseReportedRom("80-120 hours"), { raw: "80-120 hours", unit: "hours", low: 80, likely: 100, high: 120, assumptions: "Likely is the derived midpoint of the reported range." });
+  assert.deepEqual(parseReportedRom("3"), { raw: "3", unit: "points", low: null, likely: 3, high: null, assumptions: "The source did not state labor hours; the numeric ROM is retained as Lockheed effort points." });
   assert.equal(parseReportedRom("3 days"), null);
   const variance = estimateVariance({ objectives: [{ id: "objective-rom", estimates: [{ id: "feed-rom", objectiveId: "objective-rom", estimateSource: "incumbent", hoursLow: null, hoursLikely: 240, hoursHigh: null, costLow: null, costLikely: null, costHigh: null, basis: "Lockheed-reported ROM", assumptions: null, sourceReference: "FOR_JPO.json", asOf: "2026-08-24", confidence: "unassessed", createdAt: "2026-08-24T10:00:00.000Z" }] }] } as unknown as InitiativeDecisionBundle);
   assert.equal(variance.incumbentHours, 240);
   assert.equal(variance.incumbentHoursCoverage, 1);
+  const converted = estimateVariance({ initiative: { romHoursPerPoint: 250 }, objectives: [{ id: "objective-points", estimates: [{ id: "feed-points", objectiveId: "objective-points", estimateSource: "incumbent", hoursLow: null, hoursLikely: null, hoursHigh: null, costLow: null, costLikely: null, costHigh: null, romPointsLikely: 3, basis: "Lockheed-reported ROM", assumptions: null, sourceReference: "FOR_JPO.json", asOf: "2026-08-24", confidence: "unassessed", createdAt: "2026-08-24T10:00:00.000Z" }] }] } as unknown as InitiativeDecisionBundle);
+  assert.equal(converted.incumbentRomPoints, 3);
+  assert.equal(converted.romHoursPerPoint, 250);
+  assert.equal(converted.incumbentHours, 750);
   const initiativePage = read("app/initiatives/[initiative]/page.tsx");
+  const changePage = read("app/changes/[id]/page.tsx");
+  const report = read("lib/initiative-report.ts");
   const workspace = read("lib/initiative-decision-server.ts");
   assert.match(initiativePage, /Open Change Request/);
   assert.match(initiativePage, /Open Objective/);
+  assert.match(initiativePage, /Lockheed ROM conversion/);
+  assert.match(changePage, /ROM points and Initiative planning conversions/);
+  assert.match(report, /Initiative planning conversion/);
   assert.match(workspace, /parseReportedRom/);
+  assert.match(workspace, /romPointsLikely/);
   assert.match(workspace, /lm_objective_feed_state/);
 });
 
