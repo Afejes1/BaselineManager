@@ -418,6 +418,9 @@ test("one-page and four-page Initiative print modes are bounded and disclose ret
   assert.match(onePager, /printMode === "four"/);
   assert.doesNotMatch(onePager, /Include the annex before printing/);
   assert.match(onePager, /detail items continue in the four-page packet/);
+  assert.match(onePager, /DELIVERY OBJECTIVES/);
+  assert.match(onePager, /bundle\.objectives\.slice\(0, 4\)/);
+  assert.match(onePager, /LM ROM/);
   assert.match(onePager, /Supporting documents/);
   assert.match(onePager, /Milestones and readiness findings/);
   assert.match(onePager, /governanceError/);
@@ -425,6 +428,7 @@ test("one-page and four-page Initiative print modes are bounded and disclose ret
   assert.match(styles, /\.packet-page-two\{grid-template-rows:16px 58px 126px 276px 294px 24px\}/);
   assert.match(styles, /\.packet-page-three\{grid-template-rows:16px 58px 212px 224px 260px 24px\}/);
   assert.match(styles, /\.packet-page-four\{grid-template-rows:16px 58px 252px 390px 54px 24px\}/);
+  assert.match(styles, /\.wall-objective\{display:grid/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {
