@@ -99,6 +99,34 @@ if ($startWorkspaceScript -match '(?i)--(?:remote|tunnel)(?:\s|$)') {
   $findings.Add('scripts\\local\\Start-A2OWorkspace.ps1 [local runtime policy] Remote execution and tunnels are not permitted in the local operator runtime.')
 }
 
+# The optional GenAI.mil adapter is the single deliberate exception to the
+# air-gapped default. It must have no default endpoint, accept only an approved
+# HTTPS GenAI.mil host, and be invoked only through its explicit assistant
+# route. This is intentionally a source-control check rather than a network
+# probe: a disabled or expired key must never result in a background call.
+$genaiAdapterPath = Join-Path $projectRoot 'lib\genai-mil.ts'
+if (-not (Test-Path -LiteralPath $genaiAdapterPath)) {
+  $findings.Add('lib\genai-mil.ts [GenAI.mil policy] The approved outbound adapter is missing.')
+} else {
+  $genaiAdapter = Get-Content -Raw -LiteralPath $genaiAdapterPath
+  foreach ($required in @(
+    'GENAI_MIL_API_URL',
+    'GENAI_MIL_API_KEY',
+    'GENAI_MIL_MODEL',
+    'endpoint\.protocol !== "https:"',
+    'host === "genai\.mil"',
+    'host\.endsWith\("\.genai\.mil"\)',
+    'not_configured',
+    'Re-enable or refresh the key',
+    'NODE_EXTRA_CA_CERTS'
+  )) {
+    if ($genaiAdapter -notmatch $required) { $findings.Add("lib\\genai-mil.ts [GenAI.mil policy] Required opt-in control is missing: $required") }
+  }
+  if ($genaiAdapter -match 'GENAI_MIL_API_URL\s*[:=]\s*["'']https?://') {
+    $findings.Add('lib\genai-mil.ts [GenAI.mil policy] A default GenAI.mil endpoint is not permitted; configuration must be operator-supplied.')
+  }
+}
+
 if ($findings.Count -gt 0) {
   Write-Output 'Outbound network boundary check failed. Review the following source locations:'
   $findings | ForEach-Object { Write-Output " - $_" }
@@ -106,4 +134,4 @@ if ($findings.Count -gt 0) {
 }
 
 Write-Output 'A2O outbound network boundary check passed.'
-Write-Output 'Checked application source and runtime configuration for external URL literals and network clients.'
+Write-Output 'Checked application source and runtime configuration for external URL literals, network clients, and the explicit GenAI.mil opt-in adapter.'

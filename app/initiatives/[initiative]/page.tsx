@@ -10,6 +10,7 @@ import { AnalyticsLink } from "../../../components/analytics-link";
 import { ViewportModal } from "../../../components/viewport-modal";
 import { AuditHistoryPanel } from "../../../components/governed-object";
 import { ObjectRecordsPanel } from "../../../components/object-workspace";
+import { ContextAssistant } from "../../../components/context-assistant";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
 import { displayStatus, initiativePriorities, initiativeStatuses, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
@@ -214,6 +215,7 @@ export default function InitiativeDetailPage() {
       <div className="kpi-card"><span>Derived technical scope</span><strong>{derivedScope?.affectedObjects.length || 0}</strong><small>{derivedScope?.explicitBaselineRecordCount || 0} explicitly linked baseline records</small></div>
       <div className="kpi-card"><span>Trace & acceptance</span><strong>{assessment?.requirementsTraced || 0}/{bundle.requirements.length}</strong><small>{assessment?.criteriaPassed || 0}/{bundle.criteria.length} criteria accepted</small></div>
     </section>
+    <ContextAssistant context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} />
     <nav className="detail-tabs" aria-label="Initiative views">{(["decision", "delivery", "requirements", "timeline", "baseline", "evidence", "history"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "decision" ? "Decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Derived scope & WBS" : item === "evidence" ? "Calls & evidence" : displayStatus(item)}</button>)}</nav>
 
     {tab === "decision" && <div className="decision-workspace">

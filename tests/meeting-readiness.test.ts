@@ -13,6 +13,8 @@ import { assessInitiative, estimateVariance } from "../lib/initiative-readiness.
 import { parseReportedRom } from "../lib/lm-objective-feed.js";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "../lib/initiative-workflow-invariants.js";
 import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
+import { parseAssistantAnswer } from "../lib/assistant-model.js";
+import { GenaiMilError, approvedGenaiMilUrl, askGenaiMil, genaiMilReadiness } from "../lib/genai-mil.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -429,6 +431,40 @@ test("one-page and four-page Initiative print modes are bounded and disclose ret
   assert.match(styles, /\.packet-page-three\{grid-template-rows:16px 58px 212px 224px 260px 24px\}/);
   assert.match(styles, /\.packet-page-four\{grid-template-rows:16px 58px 252px 390px 54px 24px\}/);
   assert.match(styles, /\.wall-objective\{display:grid/);
+});
+
+test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns reviewable proposals only", async () => {
+  let calls = 0;
+  const missing = genaiMilReadiness({});
+  assert.equal(missing.configured, false);
+  await assert.rejects(() => askGenaiMil({}, { system: "system", prompt: "question" }, async () => { calls += 1; return new Response(); }), (error: unknown) => error instanceof GenaiMilError && error.code === "not_configured");
+  assert.equal(calls, 0);
+  assert.throws(() => approvedGenaiMilUrl("https://example.test/chat"), /only an HTTPS GenAI\.mil endpoint/);
+  const endpoint = approvedGenaiMilUrl("https://api.genai.mil/v1/chat/completions");
+  assert.equal(endpoint.hostname, "api.genai.mil");
+  const result = await askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "active-key", GENAI_MIL_MODEL: "approved-model" }, { system: "system", prompt: "question" }, async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answer: "Grounded answer", proposals: [{ kind: "save_milestone", title: "Draft milestone", rationale: "Linked Objective has an explicit date.", fields: { initiativeId: "initiative-1", title: "Integration", plannedDate: "2026-10-01" } }] }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.answer.answer, "Grounded answer");
+  assert.equal(result.answer.proposals[0]?.kind, "save_milestone");
+  assert.equal(parseAssistantAnswer("plain answer").proposals.length, 0);
+  await assert.rejects(() => askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "expired-key", GENAI_MIL_MODEL: "approved-model" }, { system: "system", prompt: "question" }, async () => new Response("", { status: 401 })), /Re-enable or refresh the key/);
+  const migration = read("drizzle/0029_genai_assistant.sql");
+  const adapter = read("lib/genai-mil.ts");
+  const server = read("lib/assistant-server.ts");
+  const component = read("components/context-assistant.tsx");
+  const route = read("app/api/assistant/route.ts");
+  for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /ContextAssistant/);
+  assert.match(migration, /assistant_saved_prompt/);
+  assert.match(migration, /assistant_scratchpad_entry/);
+  assert.match(adapter, /approvedGenaiMilUrl/);
+  assert.match(adapter, /NODE_EXTRA_CA_CERTS/);
+  assert.match(server, /assistantGenerated: true/);
+  assert.match(component, /No background or automatic model calls/);
+  assert.match(component, /Apply reviewed change/);
+  assert.match(route, /apply_proposal/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {

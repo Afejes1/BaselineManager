@@ -28,6 +28,10 @@ Python and .NET are not required.
 The supported SheetJS package is vendored under `vendor` so XLSX capability is
 reproducible without relying on the outdated npm registry release.
 
+Optional, explicit GenAI.mil decision support is documented in
+[`docs/GENAI_MIL_ASSISTANT.md`](docs/GENAI_MIL_ASSISTANT.md). It is disabled by
+default and never performs a background or startup network request.
+
 ## First-time setup
 
 From this `site` directory:
