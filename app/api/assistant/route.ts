@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ensureActor } from "../../../lib/governance-server";
-import { applyAssistantProposal, askAssistant, assistantWorkspace, saveAssistantPrompt, saveAssistantScratchpad } from "../../../lib/assistant-server";
+import { applyAssistantProposal, askAssistant, assistantWorkspace, deleteAssistantPrompt, saveAssistantPrompt, saveAssistantScratchpad } from "../../../lib/assistant-server";
 
 export async function GET(request: Request) {
   try {
@@ -18,8 +18,9 @@ export async function POST(request: Request) {
     const action = typeof body.action === "string" ? body.action : "";
     if (action === "ask") return Response.json(await askAssistant(env.DB, actor, context, body));
     if (action === "save_prompt") return Response.json({ ok: true, id: await saveAssistantPrompt(env.DB, actor, context, body) });
+    if (action === "delete_prompt") { await deleteAssistantPrompt(env.DB, actor, context, body); return Response.json({ ok: true }); }
     if (action === "save_scratchpad") return Response.json({ ok: true, id: await saveAssistantScratchpad(env.DB, actor, context, body) });
-    if (action === "apply_proposal") return Response.json({ ok: true, id: await applyAssistantProposal(env.DB, actor, context, body.proposal) });
+    if (action === "apply_proposal") return Response.json({ ok: true, id: await applyAssistantProposal(env.DB, actor, context, body.proposal, body.groundingFingerprint) });
     return Response.json({ error: "Unknown assistant action." }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "The GenAI.mil assistant could not complete that action.";

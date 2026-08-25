@@ -26,7 +26,7 @@
     "local:purge-objectives": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/local/Remove-ImportedObjectives.ps1",
     "typecheck": "tsc --noEmit --incremental false --pretty false",
     "test": "npm run typecheck && npm run build && npm run test:meeting",
-    "test:meeting": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/meeting-readiness.test.ts tests/security-hardening.test.ts lib/initiative-report.ts lib/initiative-readiness.ts lib/initiative-decision-model.ts lib/governance-model.ts lib/change-model.ts lib/assistant-model.ts lib/genai-mil.ts && node --test .test-dist/tests/meeting-readiness.test.js .test-dist/tests/security-hardening.test.js"
+    "test:meeting": "tsc --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck --outDir .test-dist tests/meeting-readiness.test.ts tests/security-hardening.test.ts lib/initiative-report.ts lib/initiative-readiness.ts lib/initiative-decision-model.ts lib/governance-model.ts lib/change-model.ts lib/assistant-model.ts lib/assistant-actions.ts lib/genai-mil.ts && node --test .test-dist/tests/meeting-readiness.test.js .test-dist/tests/security-hardening.test.js"
   },
   "dependencies": {
     "docx": "^9.7.1",

@@ -10,7 +10,7 @@ import { AnalyticsLink } from "../../../components/analytics-link";
 import { ViewportModal } from "../../../components/viewport-modal";
 import { AuditHistoryPanel } from "../../../components/governed-object";
 import { ObjectRecordsPanel } from "../../../components/object-workspace";
-import { ContextAssistant } from "../../../components/context-assistant";
+import { AssistantLauncher } from "../../../components/context-assistant";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
 import { displayStatus, initiativePriorities, initiativeStatuses, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
@@ -206,7 +206,7 @@ export default function InitiativeDetailPage() {
   if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading" contextMode="portfolio"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
   if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative" contextMode="portfolio"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
 
-  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release lens"} · ${derivedScope?.affectedObjects.length || 0} affected objects`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><AnalyticsLink kind="initiative" id={bundle.initiative.id} /><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Open leadership one-pager</Link><button className="primary-button" type="button" disabled={reportSaving} onClick={() => void saveLeadershipReport()}>{reportSaving ? "Saving report…" : "Save report snapshot"}</button><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
+  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release lens"} · ${derivedScope?.affectedObjects.length || 0} affected objects`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><AssistantLauncher context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} /><AnalyticsLink kind="initiative" id={bundle.initiative.id} /><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Open leadership one-pager</Link><button className="primary-button" type="button" disabled={reportSaving} onClick={() => void saveLeadershipReport()}>{reportSaving ? "Saving report…" : "Save report snapshot"}</button><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
     <ProvenanceKey compact />
     <section className="kpi-grid" aria-label="Initiative decision summary">
       <div className="kpi-card"><span>Decision readiness</span><strong>{assessment?.score ?? 0}%</strong><small>{readable(assessment?.stage || "not_ready")}</small></div>
@@ -215,7 +215,6 @@ export default function InitiativeDetailPage() {
       <div className="kpi-card"><span>Derived technical scope</span><strong>{derivedScope?.affectedObjects.length || 0}</strong><small>{derivedScope?.explicitBaselineRecordCount || 0} explicitly linked baseline records</small></div>
       <div className="kpi-card"><span>Trace & acceptance</span><strong>{assessment?.requirementsTraced || 0}/{bundle.requirements.length}</strong><small>{assessment?.criteriaPassed || 0}/{bundle.criteria.length} criteria accepted</small></div>
     </section>
-    <ContextAssistant context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} />
     <nav className="detail-tabs" aria-label="Initiative views">{(["decision", "delivery", "requirements", "timeline", "baseline", "evidence", "history"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "decision" ? "Decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Derived scope & WBS" : item === "evidence" ? "Calls & evidence" : displayStatus(item)}</button>)}</nav>
 
     {tab === "decision" && <div className="decision-workspace">

@@ -113,6 +113,7 @@ if (-not (Test-Path -LiteralPath $genaiAdapterPath)) {
     'GENAI_MIL_API_URL',
     'GENAI_MIL_API_KEY',
     'GENAI_MIL_MODEL',
+    'GENAI_MIL_TOOL_MODE',
     'endpoint\.protocol !== "https:"',
     'host === "genai\.mil"',
     'host\.endsWith\("\.genai\.mil"\)',
@@ -124,6 +125,9 @@ if (-not (Test-Path -LiteralPath $genaiAdapterPath)) {
   }
   if ($genaiAdapter -match 'GENAI_MIL_API_URL\s*[:=]\s*["'']https?://') {
     $findings.Add('lib\genai-mil.ts [GenAI.mil policy] A default GenAI.mil endpoint is not permitted; configuration must be operator-supplied.')
+  }
+  if ($genaiAdapter -notmatch 'json-proposals' -or $genaiAdapter -notmatch 'native-tools') {
+    $findings.Add('lib\genai-mil.ts [GenAI.mil policy] The explicit proposal transport modes are missing.')
   }
 }
 

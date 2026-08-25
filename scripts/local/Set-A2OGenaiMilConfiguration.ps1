@@ -2,7 +2,9 @@
 param(
   [string]$ApiUrl,
   [string]$Model,
-  [securestring]$ApiKey
+  [securestring]$ApiKey,
+  [ValidateSet('json-proposals', 'native-tools')]
+  [string]$ToolMode = 'json-proposals'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,11 +56,12 @@ try {
     '# Optional GenAI.mil assistant configuration. Local, ACL-protected, and excluded from Git.',
     "GENAI_MIL_API_URL=$endpointText",
     "GENAI_MIL_MODEL=$modelName",
-    "GENAI_MIL_API_KEY=$key"
+    "GENAI_MIL_API_KEY=$key",
+    "GENAI_MIL_TOOL_MODE=$ToolMode"
   ) -join [Environment]::NewLine
   $null = Write-A2OProtectedSecretTextAtomic -Path $target -Text ($content + [Environment]::NewLine)
   Write-Output 'GenAI.mil configuration saved locally. It will be loaded automatically by the next npm run local:start.'
-  Write-Output 'No GenAI.mil connection was attempted. To replace an expired key, run this command again while the app is stopped.'
+  Write-Output "Saved $ToolMode mode. No GenAI.mil connection was attempted. To replace an expired key or change the mode, run this command again while the app is stopped."
 } finally {
   Pop-Location
 }

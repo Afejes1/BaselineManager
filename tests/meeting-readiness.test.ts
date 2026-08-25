@@ -450,23 +450,41 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.equal(calls, 1);
   assert.equal(result.answer.answer, "Grounded answer");
   assert.equal(result.answer.proposals[0]?.kind, "save_milestone");
+  const nativeRequests: Record<string, unknown>[] = [];
+  const native = await askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "active-key", GENAI_MIL_MODEL: "approved-model", GENAI_MIL_TOOL_MODE: "native-tools" }, { system: "system", prompt: "question" }, async (_input, init) => {
+    nativeRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return new Response(JSON.stringify({ choices: [{ message: { content: "Draft call note follows.", tool_calls: [{ type: "function", function: { name: "a2o_create_call_note", arguments: JSON.stringify({ title: "Document unresolved interface", rationale: "The grounded record identifies an unresolved item.", fields: { title: "Architecture call", summary: "Confirm interface ownership." } }) } }] } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  assert.equal(native.toolMode, "native-tools");
+  assert.equal(native.answer.proposals[0]?.kind, "create_call_note");
+  assert.ok(Array.isArray(nativeRequests[0]?.tools));
+  assert.equal(nativeRequests[0]?.response_format, undefined);
   assert.equal(parseAssistantAnswer("plain answer").proposals.length, 0);
   await assert.rejects(() => askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "expired-key", GENAI_MIL_MODEL: "approved-model" }, { system: "system", prompt: "question" }, async () => new Response("", { status: 401 })), /Re-enable or refresh the key/);
   const migration = read("drizzle/0029_genai_assistant.sql");
   const adapter = read("lib/genai-mil.ts");
   const server = read("lib/assistant-server.ts");
   const component = read("components/context-assistant.tsx");
+  const markdown = read("components/safe-markdown.tsx");
+  const actions = read("lib/assistant-actions.ts");
   const route = read("app/api/assistant/route.ts");
   const start = read("scripts/local/Start-A2OWorkspace.ps1");
   const setup = read("scripts/local/Set-A2OGenaiMilConfiguration.ps1");
-  for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /ContextAssistant/);
+  for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /AssistantLauncher/);
   assert.match(migration, /assistant_saved_prompt/);
   assert.match(migration, /assistant_scratchpad_entry/);
   assert.match(adapter, /approvedGenaiMilUrl/);
   assert.match(adapter, /NODE_EXTRA_CA_CERTS/);
+  assert.match(adapter, /native-tools/);
   assert.match(server, /assistantGenerated: true/);
+  assert.match(server, /groundingFingerprint/);
   assert.match(component, /No background or automatic model calls/);
   assert.match(component, /Apply reviewed change/);
+  assert.match(component, /ViewportModal/);
+  assert.match(actions, /create_call_note/);
+  assert.match(actions, /additionalProperties: false/);
+  assert.doesNotMatch(markdown, /dangerouslySetInnerHTML/);
+  assert.doesNotMatch(markdown, /<a\b/);
   assert.match(route, /apply_proposal/);
   assert.match(start, /genai-mil\.runtime\.env/);
   assert.match(setup, /Read-Host -AsSecureString/);
@@ -474,6 +492,7 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.match(setup, /\$endpointHost/);
   assert.doesNotMatch(setup, /\$host\s*=/i);
   assert.match(setup, /No GenAI\.mil connection was attempted/);
+  assert.match(setup, /GENAI_MIL_TOOL_MODE/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {
