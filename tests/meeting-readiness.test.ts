@@ -471,6 +471,8 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.match(start, /genai-mil\.runtime\.env/);
   assert.match(setup, /Read-Host -AsSecureString/);
   assert.match(setup, /genai\.mil/);
+  assert.match(setup, /\$endpointHost/);
+  assert.doesNotMatch(setup, /\$host\s*=/i);
   assert.match(setup, /No GenAI\.mil connection was attempted/);
 });
 

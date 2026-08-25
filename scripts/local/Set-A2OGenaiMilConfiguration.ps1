@@ -40,8 +40,8 @@ try {
 
   $endpointText = Require-A2OEnvValue -Name 'GenAI.mil endpoint' -Value $ApiUrl
   try { $endpoint = [Uri]$endpointText } catch { throw 'GenAI.mil endpoint must be a complete HTTPS URL.' }
-  $host = $endpoint.Host.ToLowerInvariant()
-  if (-not $endpoint.IsAbsoluteUri -or $endpoint.Scheme -ne 'https' -or -not ($host -eq 'genai.mil' -or $host.EndsWith('.genai.mil'))) {
+  $endpointHost = $endpoint.Host.ToLowerInvariant()
+  if (-not $endpoint.IsAbsoluteUri -or $endpoint.Scheme -ne 'https' -or -not ($endpointHost -eq 'genai.mil' -or $endpointHost.EndsWith('.genai.mil'))) {
     throw 'The endpoint must use HTTPS and the genai.mil domain (or one of its subdomains).'
   }
   $modelName = Require-A2OEnvValue -Name 'GenAI.mil model identifier' -Value $Model
