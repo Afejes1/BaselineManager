@@ -27,7 +27,7 @@ export function genaiMilReadiness(input: GenaiMilEnvironment): GenaiMilReadiness
   const url = clean(input.GENAI_MIL_API_URL);
   const key = clean(input.GENAI_MIL_API_KEY);
   const model = clean(input.GENAI_MIL_MODEL);
-  if (!url || !key || !model) return { configured: false, model: null, message: "GenAI.mil is not configured. Add the approved endpoint, model, and active API key to the local environment, then restart the local runtime." };
+  if (!url || !key || !model) return { configured: false, model: null, message: "GenAI.mil is not configured. With the app stopped, run npm run local:genai:configure once, then start the local runtime." };
   try { approvedGenaiMilUrl(url); return { configured: true, model, message: "GenAI.mil is configured. A request is sent only when you select Ask GenAI.mil." }; }
   catch (error) { return { configured: false, model: null, message: error instanceof Error ? error.message : "The GenAI.mil configuration is invalid." }; }
 }

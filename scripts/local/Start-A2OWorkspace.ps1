@@ -32,9 +32,18 @@ try {
     Set-A2ONodeTrustedCaBundle -CertificatePath $enrolledCaBundle
   }
 
+  $environmentFiles = @('.a2o-secrets/workspace-transfer.runtime.env')
+  if (Test-Path -LiteralPath '.a2o-secrets/genai-mil.runtime.env' -PathType Leaf) {
+    $environmentFiles += '.a2o-secrets/genai-mil.runtime.env'
+  }
+  $runtimeArgs = @('dev','--config','wrangler.local-runtime.jsonc')
+  foreach ($environmentFile in $environmentFiles) { $runtimeArgs += @('--env-file',$environmentFile) }
+  $runtimeArgs += @('--local','--ip','127.0.0.1','--port','3000','--persist-to','.wrangler/state','--log-level','warn','--show-interactive-dev-session','false')
+
   Write-Output 'Starting the verified A2O Worker bundle on http://127.0.0.1:3000.'
+  if ($environmentFiles.Count -gt 1) { Write-Output 'Optional GenAI.mil assistant configuration loaded from protected local storage.' }
   Invoke-A2OCommand {
-    npx --no-install wrangler dev --config wrangler.local-runtime.jsonc --env-file .a2o-secrets/workspace-transfer.runtime.env --local --ip 127.0.0.1 --port 3000 --persist-to .wrangler/state --log-level warn --show-interactive-dev-session false
+    & npx --no-install wrangler @runtimeArgs
   } 'The local application stopped with an error.'
 } finally {
   Pop-Location

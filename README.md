@@ -30,7 +30,9 @@ reproducible without relying on the outdated npm registry release.
 
 Optional, explicit GenAI.mil decision support is documented in
 [`docs/GENAI_MIL_ASSISTANT.md`](docs/GENAI_MIL_ASSISTANT.md). It is disabled by
-default and never performs a background or startup network request.
+default and never performs a background or startup network request. Configure
+it once per AWS Workspace with `npm run local:genai:configure`; its endpoint,
+model, and API key remain in ACL-protected local storage outside Git.
 
 ## First-time setup
 

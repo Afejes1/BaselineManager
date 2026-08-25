@@ -437,6 +437,7 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   let calls = 0;
   const missing = genaiMilReadiness({});
   assert.equal(missing.configured, false);
+  assert.match(missing.message, /local:genai:configure/);
   await assert.rejects(() => askGenaiMil({}, { system: "system", prompt: "question" }, async () => { calls += 1; return new Response(); }), (error: unknown) => error instanceof GenaiMilError && error.code === "not_configured");
   assert.equal(calls, 0);
   assert.throws(() => approvedGenaiMilUrl("https://example.test/chat"), /only an HTTPS GenAI\.mil endpoint/);
@@ -456,6 +457,8 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   const server = read("lib/assistant-server.ts");
   const component = read("components/context-assistant.tsx");
   const route = read("app/api/assistant/route.ts");
+  const start = read("scripts/local/Start-A2OWorkspace.ps1");
+  const setup = read("scripts/local/Set-A2OGenaiMilConfiguration.ps1");
   for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /ContextAssistant/);
   assert.match(migration, /assistant_saved_prompt/);
   assert.match(migration, /assistant_scratchpad_entry/);
@@ -465,6 +468,10 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.match(component, /No background or automatic model calls/);
   assert.match(component, /Apply reviewed change/);
   assert.match(route, /apply_proposal/);
+  assert.match(start, /genai-mil\.runtime\.env/);
+  assert.match(setup, /Read-Host -AsSecureString/);
+  assert.match(setup, /genai\.mil/);
+  assert.match(setup, /No GenAI\.mil connection was attempted/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {

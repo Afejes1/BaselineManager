@@ -20,24 +20,27 @@ missing data instead of filling gaps with assumed facts.
 
 ## Enable it deliberately
 
-The assistant is disabled unless all three local environment values are set in
-`.env`:
+With the app stopped, configure the assistant once for this local workspace:
 
-```dotenv
-GENAI_MIL_API_URL="https://<approved-genai-mil-endpoint>/chat/completions"
-GENAI_MIL_MODEL="<approved-model-id>"
-GENAI_MIL_API_KEY="<active-key>"
+```powershell
+npm run local:genai:configure
 ```
 
-`GENAI_MIL_API_URL` must be the complete, approved OpenAI-compatible
-chat-completions endpoint on `genai.mil` or a `*.genai.mil` host. The endpoint,
-model, and key are never sent to the browser. Nothing is sent to GenAI.mil in
-the background: an outbound call is made only after the operator presses
-**Ask GenAI.mil**.
+The command asks once for the complete approved OpenAI-compatible
+chat-completions endpoint, model identifier, and active API key. It writes them
+to `.a2o-secrets\genai-mil.runtime.env`, which is ACL-protected, excluded from
+Git, and loaded automatically by later `npm run local:start` commands. It never
+tests the endpoint or sends a request during setup or startup. To replace an
+expired/deactivated key, stop the app and run the command again.
 
-After changing `.env`, stop and restart the local runtime. If the key is
-deactivated or expires, the app reports that the key must be refreshed; the
-workspace is not changed. The endpoint is intentionally not probed at startup.
+The endpoint must be on `https://genai.mil` or a `*.genai.mil` host. The
+endpoint, model, and key are never sent to the browser. Nothing is sent to
+GenAI.mil in the background: an outbound call is made only after the operator
+presses **Ask GenAI.mil**.
+
+If the key is deactivated or expires, the app reports that it must be refreshed;
+the workspace is not changed. The endpoint is intentionally not probed at
+startup.
 
 For an AWS Workspace proxy that uses an approved private CA, set
 `NODE_EXTRA_CA_CERTS` to the trusted CA PEM path before starting Node. Do not

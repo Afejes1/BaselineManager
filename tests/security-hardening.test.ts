@@ -426,7 +426,10 @@ test("local recovery scripts authenticate before extraction and keep trust mater
   assert.match(common, /Write-A2OProtectedSecretTextAtomic -Path \$runtimeSecretPath/);
   assert.match(common, /Operational workspace state exists while its signing trust root is missing/);
   assert.match(common, /active-release-provenance\.json/);
-  assert.match(read("scripts/local/Start-A2OWorkspace.ps1"), /--env-file \.a2o-secrets\/workspace-transfer\.runtime\.env/);
+  const start = read("scripts/local/Start-A2OWorkspace.ps1");
+  assert.match(start, /\.a2o-secrets\/workspace-transfer\.runtime\.env/);
+  assert.match(start, /\.a2o-secrets\/genai-mil\.runtime\.env/);
+  assert.match(start, /--env-file/);
   assert.match(common, /unexpected or duplicate assignment/);
   assert.match(backup, /schemaVersion = 4/);
   assert.match(backup, /Get-A2OHmacSha256/);

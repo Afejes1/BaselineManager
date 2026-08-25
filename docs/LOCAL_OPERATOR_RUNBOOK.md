@@ -67,6 +67,22 @@ keeping certificate verification enabled. A temporary bundle can instead be
 used for one launch with `npm run local:start -- -TrustedCaBundlePath
 'C:\approved\aws-workspace-proxy-ca.pem'`.
 
+### Optional GenAI.mil assistant setup
+
+The assistant is disabled by default. It has no startup probe or background
+model call. If the workspace is authorized to use GenAI.mil, stop the app and
+run:
+
+```powershell
+npm run local:genai:configure
+```
+
+Enter the approved `https://…genai.mil` chat-completions endpoint, model, and
+active key once. They are stored in a protected, Git-excluded local file and
+loaded by later starts. A request is sent only when the user presses **Ask
+GenAI.mil** on a grounded record page. Repeat the command only when the key is
+replaced or expires.
+
 ## Workspace transfer between application versions
 
 Use **Workspace Transfer** for a clean deployment move or version change. This
