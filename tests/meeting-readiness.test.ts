@@ -251,6 +251,26 @@ test("platform and configuration workspaces make stable and release-specific edi
   assert.match(infrastructure, /Virtual machine/);
 });
 
+test("visual topology manager reuses governed local records and separates containment from cluster relationships", () => {
+  const route = read("app/platforms/[id]/topology-manager/page.tsx");
+  const platform = read("app/platforms/[id]/page.tsx");
+  const infrastructure = read("components/infrastructure-workspace.tsx");
+  const client = read("lib/topology-client.ts");
+  assert.match(route, /initialView="visual"/);
+  assert.match(route, /same governed local records and audit controls/i);
+  assert.match(platform, /Visual topology manager/);
+  assert.match(infrastructure, /Physical server and VM nodes show where compute runs/);
+  assert.match(infrastructure, /Kubernetes, RKE2, or Rancher as a runtime Product/);
+  assert.match(infrastructure, /Containerized workload/);
+  assert.match(infrastructure, /Containment/);
+  assert.match(infrastructure, /Relationships/);
+  assert.match(infrastructure, /onAddNode\(selectedState, "virtual_machine"\)/);
+  assert.match(infrastructure, /onAddConnection\(selectedState, "cluster"\)/);
+  assert.match(client, /fetch\("\/api\/topology"/);
+  assert.doesNotMatch(route, /https?:\/\//);
+  assert.doesNotMatch(infrastructure, /reactflow|mermaid|d3\.js|https?:\/\//i);
+});
+
 test("Lockheed ROM preserves points and applies an Initiative planning conversion only in derived hours", () => {
   assert.deepEqual(parseReportedRom("$125K"), { raw: "$125K", unit: "cost", low: null, likely: 125000, high: null, assumptions: null });
   assert.deepEqual(parseReportedRom("80-120 hours"), { raw: "80-120 hours", unit: "hours", low: 80, likely: 100, high: 120, assumptions: "Likely is the derived midpoint of the reported range." });
