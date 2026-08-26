@@ -258,6 +258,7 @@ test("visual topology manager reuses governed local records and separates contai
   const route = read("app/platforms/[id]/topology-manager/page.tsx");
   const platform = read("app/platforms/[id]/page.tsx");
   const infrastructure = read("components/infrastructure-workspace.tsx");
+  const styles = read("app/globals.css");
   const client = read("lib/topology-client.ts");
   assert.match(route, /initialView="visual"/);
   assert.match(route, /same governed local records and audit controls/i);
@@ -267,7 +268,14 @@ test("visual topology manager reuses governed local records and separates contai
   assert.match(infrastructure, /Containerized workload/);
   assert.match(infrastructure, /Containment/);
   assert.match(infrastructure, /Building blocks/);
+  assert.match(infrastructure, /useState<VisualTopologyMode>\("containment"\)/);
   assert.match(infrastructure, /platform → hardware → VMs → runtimes → workloads/);
+  assert.match(infrastructure, /building-block-card-products/);
+  assert.match(infrastructure, /setPointerCapture/);
+  assert.match(infrastructure, /Print \/ Save canvas/);
+  assert.match(styles, /topology-canvas-print-mode/);
+  assert.match(styles, /topology-inspector-closed/);
+  assert.doesNotMatch(platform, /Print dashboard/);
   assert.match(infrastructure, /Relationships/);
   assert.match(infrastructure, /Nothing is sent to a renderer or outside service/);
   assert.match(infrastructure, /onAddNode\(selectedState, "virtual_machine"\)/);

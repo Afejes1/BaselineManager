@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import Link from "./app-link";
 import { CallNoteControl } from "./object-workspace";
 import { ViewportModal } from "./viewport-modal";
@@ -323,8 +323,10 @@ function BuildingBlockView({
   const nodeLayer = (items: ReleaseInfrastructureNode[], empty: string) => items.length ? <div className="building-block-grid">{items.map((state) => {
     const node = nodes.get(state.infrastructureNodeId);
     if (!node) return null;
+    const placedProducts = activeInstallations.filter((item) => item.nodeStateId === state.id);
     return <button type="button" key={state.id} className={selectedStateId === state.id ? "building-block-card building-block-selected" : "building-block-card"} onClick={() => onSelect(state.id)}>
       <span>{nodeTypeLabels[node.nodeType]}</span><strong>{node.code}</strong><em>{node.name}</em><small>On: {parentLabel(state)} · {capacity(state)}</small>
+      <span className="building-block-card-products">{placedProducts.length ? placedProducts.slice(0, 5).map((item) => <span key={item.id}><b>{item.productName}</b><small>{readable(item.installationRole)}{item.version ? ` · v${item.version}` : ""}</small></span>) : <i>No installed Products</i>}{placedProducts.length > 5 ? <i>+{placedProducts.length - 5} more</i> : null}</span>
     </button>;
   })}</div> : <p className="building-block-empty">{empty}</p>;
   const productLayer = (items: InfrastructureProductInstallation[], empty: string) => items.length ? <div className="building-block-grid">{items.map((item) => <button type="button" key={item.id} className="building-block-card building-block-product" onClick={() => onEditInstallation(item)}>
@@ -387,9 +389,13 @@ function InfrastructureVisualManager({
   const selectedInstallations = selectedState ? installations.filter((item) => item.nodeStateId === selectedState.id && item.deploymentStatus !== "absent") : [];
   const selectedConnections = selectedState ? connections.filter((item) => item.sourceNodeStateId === selectedState.id || item.targetNodeStateId === selectedState.id) : [];
   const [search, setSearch] = useState("");
-  const [visualMode, setVisualMode] = useState<VisualTopologyMode>("building_blocks");
+  const [visualMode, setVisualMode] = useState<VisualTopologyMode>("containment");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [canvasDragging, setCanvasDragging] = useState(false);
   const [mermaidOpen, setMermaidOpen] = useState(false);
   const [mermaidNotice, setMermaidNotice] = useState("");
+  const canvasRef = useRef<HTMLElement>(null);
+  const dragPosition = useRef<{ pointerId: number; x: number; y: number; scrollLeft: number; scrollTop: number } | null>(null);
   const visibleStateIds = useMemo(() => {
     if (!search.trim()) return new Set(activeStates.map((item) => item.id));
     const query = search.trim().toLowerCase();
@@ -420,6 +426,39 @@ function InfrastructureVisualManager({
     try { await navigator.clipboard.writeText(mermaidSource); setMermaidNotice("Mermaid source copied."); }
     catch { setMermaidNotice("Copy was blocked. Select the source text and copy it manually."); }
   };
+  const beginCanvasPan = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "mouse" || event.button !== 0 || (event.target as HTMLElement).closest("button,a,input,select,textarea,label")) return;
+    dragPosition.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, scrollLeft: event.currentTarget.scrollLeft, scrollTop: event.currentTarget.scrollTop };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCanvasDragging(true);
+    event.preventDefault();
+  };
+  const moveCanvas = (event: ReactPointerEvent<HTMLElement>) => {
+    const origin = dragPosition.current;
+    if (!origin || origin.pointerId !== event.pointerId) return;
+    event.currentTarget.scrollLeft = origin.scrollLeft - (event.clientX - origin.x);
+    event.currentTarget.scrollTop = origin.scrollTop - (event.clientY - origin.y);
+  };
+  const endCanvasPan = (event: ReactPointerEvent<HTMLElement>) => {
+    if (dragPosition.current?.pointerId !== event.pointerId) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    dragPosition.current = null;
+    setCanvasDragging(false);
+  };
+  const printCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const cleanup = () => {
+      document.body.classList.remove("topology-canvas-print-mode");
+      canvas.classList.remove("topology-canvas-print-target");
+      window.removeEventListener("afterprint", cleanup);
+    };
+    document.body.classList.add("topology-canvas-print-mode");
+    canvas.classList.add("topology-canvas-print-target");
+    window.addEventListener("afterprint", cleanup);
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => window.print()));
+  };
+  useEffect(() => () => document.body.classList.remove("topology-canvas-print-mode"), []);
 
   return <section className="topology-manager" aria-label="Visual infrastructure topology manager">
     <div className="topology-command-bar">
@@ -434,17 +473,18 @@ function InfrastructureVisualManager({
         <button type="button" className={visualMode === "containment" ? "topology-view-active" : ""} onClick={() => setVisualMode("containment")}>Containment</button>
         <button type="button" className={visualMode === "relationships" ? "topology-view-active" : ""} onClick={() => setVisualMode("relationships")}>Relationships <span>{connections.length}</span></button>
         <button type="button" onClick={() => { setMermaidNotice(""); setMermaidOpen(true); }}>Mermaid source</button>
+        <button type="button" onClick={printCanvas}>Print / Save canvas</button>
       </div>
     </div>
     <aside className="topology-model-note"><strong>Modeling rule</strong><span>Physical server and VM nodes show where compute runs. Record Kubernetes, RKE2, or Rancher as a runtime Product on the applicable node. Record a containerized application as a Product workload, and use a <b>cluster</b> relationship to connect participating nodes.</span></aside>
-    <div className="topology-manager-grid">
+    <div className={`topology-manager-grid ${inspectorOpen ? "topology-inspector-open" : "topology-inspector-closed"}`}>
       <aside className="topology-navigator" aria-label="Infrastructure hierarchy">
         <header><div><span className="eyebrow">NAVIGATOR</span><h3>Node hierarchy</h3></div><span>{activeStates.length}</span></header>
         <label className="topology-search"><span className="sr-only">Search topology</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search nodes or Products" /></label>
         {visibleRoots.length ? <ul className="topology-nav-tree">{visibleRoots.map((root) => <VisualTreeBranch key={root.id} state={root} states={activeStates} nodes={nodes} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} />)}</ul> : <p className="empty">No nodes match this search.</p>}
       </aside>
-      <main className="topology-canvas" aria-label={visualMode === "building_blocks" ? "Layered platform building blocks" : visualMode === "containment" ? "Physical containment view" : "Infrastructure relationship view"}>
-        <header><div><span className="eyebrow">{visualMode === "building_blocks" ? "PLATFORM BUILDING BLOCKS" : visualMode === "containment" ? "PHYSICAL / VIRTUAL CONTAINMENT" : "NON-CONTAINMENT RELATIONSHIPS"}</span><h3>{visualMode === "building_blocks" ? "Read bottom-up: platform → hardware → VMs → runtimes → workloads" : visualMode === "containment" ? "Platform root → host → VM → Product placements" : "Network, cluster, storage, power, and management links"}</h3></div><span>{visualMode === "relationships" ? `${connections.length} links` : `${visibleStateIds.size} visible nodes`}</span></header>
+      <main ref={canvasRef} className={canvasDragging ? "topology-canvas topology-canvas-dragging" : "topology-canvas"} aria-label={visualMode === "building_blocks" ? "Layered platform building blocks" : visualMode === "containment" ? "Physical containment view" : "Infrastructure relationship view"} onPointerDown={beginCanvasPan} onPointerMove={moveCanvas} onPointerUp={endCanvasPan} onPointerCancel={endCanvasPan}>
+        <header><div><span className="eyebrow">{visualMode === "building_blocks" ? "PLATFORM BUILDING BLOCKS" : visualMode === "containment" ? "PHYSICAL / VIRTUAL CONTAINMENT" : "NON-CONTAINMENT RELATIONSHIPS"}</span><h3>{visualMode === "building_blocks" ? "Read bottom-up: platform → hardware → VMs → runtimes → workloads" : visualMode === "containment" ? "Platform root → host → VM → Product placements" : "Network, cluster, storage, power, and management links"}</h3><small className="topology-pan-hint">Drag empty canvas space with the mouse to pan · wheel or trackpad to scroll</small></div><div className="topology-canvas-status"><span>{visualMode === "relationships" ? `${connections.length} links` : `${visibleStateIds.size} visible nodes`}</span><button type="button" className="mini-action" disabled={!selectedState} onClick={() => setInspectorOpen((current) => !current)}>{inspectorOpen ? "Hide selected node" : "Show selected node"}</button></div></header>
         {visualMode === "building_blocks" ? <BuildingBlockView platform={platform} releaseName={releaseName} states={activeStates} nodes={nodes} installations={installations} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} onEditInstallation={onEditInstallation} /> : visualMode === "containment" ? visibleRoots.length ? <div className="topology-canvas-roots">{visibleRoots.map((root) => <VisualCanvasBranch key={root.id} state={root} states={activeStates} nodes={nodes} installations={installations} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} onAddChild={(state) => onAddNode(state)} />)}</div> : <article className="empty-state"><h3>No configuration to draw</h3><p>Add a server or clear the search to begin.</p></article> : connections.length ? <div className="topology-relationship-list">{connections.map((connection) => {
           const sourceState = activeStates.find((item) => item.id === connection.sourceNodeStateId);
           const targetState = activeStates.find((item) => item.id === connection.targetNodeStateId);
@@ -453,15 +493,15 @@ function InfrastructureVisualManager({
           return <button type="button" className={`topology-relationship topology-relationship-${connection.connectionType}`} key={connection.id} onClick={() => onEditConnection(connection)}><span>{readable(connection.connectionType)}</span><strong>{source?.code || "Unknown"}</strong><b>→</b><strong>{target?.code || "Unknown"}</strong><small>{connection.label || "No label"}{connection.capacityMbps != null ? ` · ${connection.capacityMbps} Mbps` : ""}</small></button>;
         })}</div> : <article className="empty-state"><h3>No relationships recorded</h3><p>Select a node, then add a cluster, network, storage, power, or management connection.</p></article>}
       </main>
-      <aside className="topology-inspector" aria-label="Selected infrastructure node">
+      {inspectorOpen ? <aside className="topology-inspector" aria-label="Selected infrastructure node">
         {selectedState && selectedNode ? <>
-          <header><div><span className="eyebrow">SELECTED NODE</span><h3>{selectedNode.code}</h3><p>{selectedNode.name}</p></div><span className={`topology-node-glyph topology-glyph-${selectedNode.nodeType}`}>{nodeGlyph(selectedNode.nodeType)}</span></header>
+          <header><div><span className="eyebrow">SELECTED NODE</span><h3>{selectedNode.code}</h3><p>{selectedNode.name}</p></div><div className="topology-inspector-heading-actions"><span className={`topology-node-glyph topology-glyph-${selectedNode.nodeType}`}>{nodeGlyph(selectedNode.nodeType)}</span><button type="button" className="mini-action" onClick={() => setInspectorOpen(false)}>Close</button></div></header>
           <dl className="topology-inspector-facts"><div><dt>Type</dt><dd>{nodeTypeLabels[selectedNode.nodeType]}</dd></div><div><dt>Parent</dt><dd>{selectedParentNode ? `${selectedParentNode.code} · ${selectedParentNode.name}` : "Platform root"}</dd></div><div><dt>Release state</dt><dd>{readable(selectedState.lifecycleStatus)} · {readable(selectedState.operatingState)}</dd></div><div><dt>Capacity</dt><dd>{capacity(selectedState)}</dd></div><div><dt>Evidence confidence</dt><dd>{readable(selectedState.confidence)}</dd></div><div><dt>Source</dt><dd>{selectedState.sourceReference || "Not recorded"}</dd></div></dl>
           <div className="topology-inspector-actions"><button type="button" className="primary-button" onClick={() => onEditState(selectedState)}>Edit Release state</button><button type="button" className="ghost-button" onClick={() => onEditIdentity(selectedNode)}>Edit identity</button><button type="button" className="ghost-button" onClick={() => onAddNode(selectedState)}>Add child</button><button type="button" className="ghost-button" onClick={() => onAddNode(selectedState, "virtual_machine")}>Add VM</button><button type="button" className="ghost-button" onClick={() => onAddConnection(selectedState, "cluster")}>Add relationship</button></div>
           <section className="topology-inspector-section"><div className="section-toolbar"><h4>Installed Products / workloads</h4><button type="button" className="mini-action" onClick={() => onAddInstallation(selectedState, "application")}>+ Add</button></div>{selectedInstallations.length ? <div className="topology-inspector-products">{selectedInstallations.map((item) => <button type="button" key={item.id} onClick={() => onEditInstallation(item)}><span>{readable(item.installationRole)}</span><strong>{item.productName}</strong><small>{item.instanceName || item.version || "Instance/version not recorded"}</small></button>)}</div> : <p className="empty">No Products or workloads recorded on this node.</p>}</section>
           <section className="topology-inspector-section"><div className="section-toolbar"><h4>Relationships</h4><button type="button" className="mini-action" onClick={() => onAddConnection(selectedState)}>+ Add</button></div>{selectedConnections.length ? <div className="topology-inspector-links">{selectedConnections.map((item) => <button type="button" key={item.id} onClick={() => onEditConnection(item)}><strong>{readable(item.connectionType)}</strong><span>{item.label || "Recorded relationship"}</span></button>)}</div> : <p className="empty">No non-containment links recorded.</p>}</section>
         </> : <article className="empty-state"><h3>Select a node</h3><p>Choose a node in the hierarchy or canvas to inspect and change it.</p></article>}
-      </aside>
+      </aside> : null}
     </div>
     {mermaidOpen ? <ViewportModal onDismiss={() => setMermaidOpen(false)} labelledBy="infrastructure-mermaid-title" className="wide-modal mermaid-source-modal"><div className="section-toolbar"><div><span className="eyebrow">LOCAL EXPORT</span><h2 id="infrastructure-mermaid-title">Mermaid building-block source</h2></div></div><p>This text is generated entirely in the browser from the selected Release configuration. Nothing is sent to a renderer or outside service.</p><textarea readOnly rows={22} value={mermaidSource} aria-label="Mermaid source" />{mermaidNotice ? <p className="entity-meta">{mermaidNotice}</p> : null}<footer><button type="button" className="ghost-button" onClick={() => setMermaidOpen(false)}>Close</button><button type="button" className="ghost-button" onClick={() => void copyMermaid()}>Copy source</button><button type="button" className="primary-button" onClick={saveMermaid}>Download .mmd</button></footer></ViewportModal> : null}
   </section>;

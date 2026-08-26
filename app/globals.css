@@ -824,3 +824,27 @@ tbody tr { cursor:pointer; } tbody tr:hover { background:#f7faf8; }.row-selected
 @media(max-width:900px){.dependency-toolbar{align-items:stretch;flex-direction:column}.dependency-controls{display:grid;grid-template-columns:1fr 1fr}.dependency-controls .search{grid-column:1/-1;min-width:0}.dependency-cycle-warning,.dependency-inspector{grid-template-columns:1fr}.dependency-inspector dl{grid-template-columns:1fr}.analysis-library-card>header,.analysis-library-card footer{align-items:stretch;flex-direction:column}}
 .building-block-join::after{display:none;content:none}.building-block-join span{position:relative;background:#f7faf8;padding:2px 7px}
 .product-placement-modal .contract-strip{margin:10px 0 15px}.product-placement-modal .decision-principle{display:flex;align-items:center;gap:12px;margin:12px 0}.product-placement-modal .decision-principle span{flex:1}.placement-route-summary{display:grid;grid-template-columns:2fr 1fr 1fr;gap:0;margin:13px 0;border:1px solid #cbdad2;background:#f7faf8}.placement-route-summary>div{min-width:0;border-right:1px solid #d7e2dc;padding:10px 11px}.placement-route-summary>div:last-child{border-right:0}.placement-route-summary dt{color:#667970;font-size:8px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}.placement-route-summary dd{margin:4px 0 0;overflow-wrap:anywhere;color:#294c3c;font-size:10px;line-height:1.4}@media(max-width:760px){.placement-route-summary{grid-template-columns:1fr}.placement-route-summary>div{border-right:0;border-bottom:1px solid #d7e2dc}.placement-route-summary>div:last-child{border-bottom:0}.product-placement-modal .decision-principle{align-items:stretch;flex-direction:column}}
+
+/* The selected-node inspector is optional so the governed canvas remains the
+   primary workspace. Mouse panning changes only the local viewport. */
+.topology-manager-grid.topology-inspector-closed{grid-template-columns:minmax(190px,.42fr) minmax(0,1.58fr)}
+.topology-canvas{cursor:grab;overscroll-behavior:contain}.topology-canvas-dragging{cursor:grabbing;user-select:none}.topology-canvas-dragging *{cursor:grabbing!important}.topology-canvas-status{display:grid;justify-items:end;gap:6px;color:#60736a;font:10px var(--font-geist-mono)}.topology-canvas-status .mini-action{white-space:nowrap}.topology-pan-hint{display:block;margin-top:5px;color:#75857d;font-size:7px;font-weight:600}.topology-inspector-heading-actions{display:grid;justify-items:end;gap:7px}.topology-inspector-heading-actions .mini-action{padding:3px 6px;font-size:7px}
+.building-block-card>.building-block-card-products{display:grid;gap:3px;margin-top:5px;border-top:1px solid #dce6e1;padding-top:6px;color:#365444;letter-spacing:0;text-transform:none}.building-block-card-products>span{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px;border-left:3px solid #68528f;background:#f4f0f7;padding:4px 5px}.building-block-card-products b{overflow:hidden;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.building-block-card-products small,.building-block-card-products i{color:#687971;font-size:6px;font-style:normal;font-weight:650}
+@media(max-width:1180px){.topology-manager-grid.topology-inspector-closed{grid-template-columns:210px minmax(480px,1fr)}}
+@media(max-width:760px){.topology-manager-grid.topology-inspector-closed{grid-template-columns:1fr}.topology-canvas-status{justify-items:start}.topology-canvas>header{align-items:stretch;flex-direction:column}}
+
+/* Canvas-only output: the user prints or saves the active topology view,
+   without navigation, editors, or the surrounding Platform dashboard. */
+.topology-canvas-print-target{page:topologyCanvas}
+@page topologyCanvas{size:letter landscape;margin:.25in}
+@media print{
+  body.topology-canvas-print-mode{overflow:visible!important;background:#fff!important}
+  body.topology-canvas-print-mode *{visibility:hidden!important}
+  body.topology-canvas-print-mode .topology-canvas-print-target,body.topology-canvas-print-mode .topology-canvas-print-target *{visibility:visible!important}
+  body.topology-canvas-print-mode .topology-canvas-print-target{position:absolute!important;top:0!important;left:0!important;width:10.5in!important;min-width:0!important;height:auto!important;min-height:0!important;overflow:visible!important;border:0!important;background:#fff!important;background-image:none!important;cursor:default!important;print-color-adjust:exact!important;-webkit-print-color-adjust:exact!important}
+  body.topology-canvas-print-mode .topology-canvas-print-target>header{position:static!important;padding:10px 12px!important;background:#f7faf8!important}
+  body.topology-canvas-print-mode .topology-canvas-status button,body.topology-canvas-print-mode .topology-inline-add,body.topology-canvas-print-mode .topology-pan-hint{display:none!important}
+  body.topology-canvas-print-mode .building-block-board{min-width:0!important;padding:12px!important}
+  body.topology-canvas-print-mode .topology-canvas-roots{padding:14px!important}
+  body.topology-canvas-print-mode .topology-canvas-node,body.topology-canvas-print-mode .building-block-layer,body.topology-canvas-print-mode .building-block-card{break-inside:avoid;page-break-inside:avoid}
+}
