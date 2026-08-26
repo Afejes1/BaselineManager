@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "./app-link";
 import { assistantAction } from "../lib/assistant-actions";
 import type { AssistantContext, AssistantProposal, AssistantSavedPrompt, AssistantScratchpadEntry } from "../lib/assistant-model";
 import { SafeMarkdown } from "./safe-markdown";
@@ -28,6 +29,10 @@ const suggestions: Record<AssistantContext["kind"], Array<{ title: string; promp
     { title: "Scope check", prompt: "Summarize the explicit affected objects, delivery Objectives, dependencies, and missing traceability for this Change Request." },
     { title: "Objective hygiene", prompt: "Which linked Objectives lack dates, estimates, technical-effect attribution, requirements, or acceptance criteria? Recommend the smallest next records to create." },
   ],
+  objective: [
+    { title: "Delivery readiness", prompt: "Review this Objective's source dates, ROM, dependency gates, requirement traces, acceptance criteria, and technical-effect attribution. Separate incumbent claims from Government assessment." },
+    { title: "Dependency check", prompt: "Explain every inbound and outbound dependency involving this Objective, identify any reciprocal or circular delivery gates, and state the smallest clarification needed without inventing dates." },
+  ],
   product: [
     { title: "Product impact", prompt: "Explain this Product's fielding context, explicitly linked Change Request effects, related Objectives, and what is missing before making a Government impact statement." },
     { title: "Configuration gaps", prompt: "Review the grounded installations and relationships. Identify missing capacity, version, or source-confidence information without inferring facts." },
@@ -35,6 +40,10 @@ const suggestions: Record<AssistantContext["kind"], Array<{ title: string; promp
   platform: [
     { title: "Platform impact", prompt: "Explain the Platform hierarchy, release-specific infrastructure, explicit Change Request effects, and related delivery Objectives. Clearly separate reported values from Government context." },
     { title: "Infrastructure gaps", prompt: "Review the grounded nodes, capacity, installations, and connections. Identify the highest-value missing configuration data to collect next." },
+  ],
+  release: [
+    { title: "Release impact", prompt: "Summarize the governed Release lifecycle, milestones, configuration, requested Change Requests, and affected technical scope. Identify missing evidence without inferring fielding approval." },
+    { title: "Configuration gaps", prompt: "Review this Release's platform assignments, infrastructure states, installed Products, and source confidence. Identify the most consequential missing configuration data." },
   ],
 };
 
@@ -126,7 +135,7 @@ function AssistantWorkspace({ context, onDismiss }: { context: AssistantContext;
   async function saveScratchpad() {
     if (!answer) return;
     setSaving(true); setMessage("");
-    try { await post({ action: "save_scratchpad", title: scratchpadTitle, prompt, response: answer.answer, proposals: answer.proposals, model: answer.model }); await load(); setMessage("Saved to the AI analysis scratchpad. It is not source evidence or an adjudicated decision."); }
+    try { await post({ action: "save_scratchpad", title: scratchpadTitle, prompt, response: answer.answer, proposals: answer.proposals, model: answer.model }); await load(); setMessage("Saved to AI Analysis. Open the AI Analysis register from the left navigation to find it later. It is not source evidence or an adjudicated decision."); }
     catch (reason) { setMessage(reason instanceof Error ? reason.message : "The scratchpad entry could not be saved."); }
     finally { setSaving(false); }
   }
@@ -139,7 +148,7 @@ function AssistantWorkspace({ context, onDismiss }: { context: AssistantContext;
   }
 
   return <ViewportModal onDismiss={onDismiss} dismissDisabled={asking || saving} labelledBy="genai-assistant-title" className="assistant-modal">
-    <header className="assistant-modal-header"><div><span className="eyebrow">GENAI.MIL · GROUNDED ASSISTANT</span><h2 id="genai-assistant-title">Ask about {context.label}</h2><p>{loading ? "Preparing bounded local context…" : state?.groundingSummary || "Context could not be loaded."}</p></div><div><span className={`assistant-state assistant-state-${state?.configured ? "ready" : "off"}`}>{state?.configured ? "Ready on demand" : "Not configured"}</span><button className="ghost-button" type="button" disabled={asking || saving} onClick={onDismiss}>Close</button></div></header>
+    <header className="assistant-modal-header"><div><span className="eyebrow">GENAI.MIL · GROUNDED ASSISTANT</span><h2 id="genai-assistant-title">Ask about {context.label}</h2><p>{loading ? "Preparing bounded local context…" : state?.groundingSummary || "Context could not be loaded."}</p></div><div><span className={`assistant-state assistant-state-${state?.configured ? "ready" : "off"}`}>{state?.configured ? "Ready on demand" : "Not configured"}</span><Link className="ghost-button" href="/analysis">Saved analysis</Link><button className="ghost-button" type="button" disabled={asking || saving} onClick={onDismiss}>Close</button></div></header>
     <p className="assistant-boundary"><strong>Explicit, bounded transmission only.</strong> No background or automatic model calls occur. Pressing <b>Ask GenAI.mil</b> sends this record’s bounded related data only to the approved GenAI.mil endpoint. Output is analysis—not source evidence, a Government assessment, or a decision.</p>
     {state && (!state.configured || state.tlsMode === "development-insecure") ? <p className="assistant-config" role="status"><strong>{state.tlsMode === "development-insecure" ? "Development TLS bypass:" : "Configuration:"}</strong> {state.configurationMessage}</p> : null}
     <div className="assistant-workspace-grid"><section className="assistant-composer"><div className="assistant-section-heading"><div><span className="eyebrow">QUESTION</span><h3>Grounded analysis request</h3></div><small>{state?.toolMode === "native-tools" ? "Native tool proposals" : "JSON review proposals"}</small></div><div className="assistant-prompt-library"><span>Starter prompts</span>{promptChoices.map((choice) => <button key={choice.title} type="button" className="mini-action" onClick={() => choosePrompt({ ...choice })}>{choice.title}</button>)}</div><label className="assistant-question">Question or custom prompt<textarea rows={8} value={prompt} onChange={(event) => { setPrompt(event.target.value); setSavedPromptId(""); }} placeholder="Ask for a decision summary, data-gap review, narrow milestone proposal, or an accountable next action…" /></label><div className="assistant-actions"><button className="primary-button" type="button" disabled={asking || loading || !state?.configured} title={state?.configured ? "Send this explicit request to GenAI.mil" : state?.configurationMessage} onClick={() => void ask()}>{asking ? "Asking GenAI.mil…" : "Ask GenAI.mil"}</button></div><details className="assistant-prompt-manager"><summary>Manage reusable prompts</summary><div className="assistant-prompt-editor"><label>Title<input value={savedPromptTitle} onChange={(event) => setSavedPromptTitle(event.target.value)} placeholder="Reusable prompt title" /></label><label>Scope<select value={promptScope} onChange={(event) => setPromptScope(event.target.value as "context" | "global")}><option value="context">This {context.kind.replaceAll("_", " ")} type</option><option value="global">All assistant pages</option></select></label><button className="ghost-button" type="button" disabled={saving || !prompt.trim()} onClick={() => void savePrompt()}>{savedPromptId ? "Update prompt" : "Save prompt"}</button></div><div className="assistant-saved-prompt-groups"><PromptGroup heading="All assistant pages" prompts={globalPrompts} onChoose={(item) => choosePrompt({ id: item.id, title: item.title, prompt: item.promptText, scope: "global" })} onDelete={(id) => void deletePrompt(id)} disabled={saving} /><PromptGroup heading={`This ${context.kind.replaceAll("_", " ")} type`} prompts={contextualPrompts} onChoose={(item) => choosePrompt({ id: item.id, title: item.title, prompt: item.promptText, scope: "context" })} onDelete={(id) => void deletePrompt(id)} disabled={saving} /></div></details></section>

@@ -19,9 +19,9 @@ const asText = (value: unknown) => typeof value === "string" ? value.trim() : va
 const selected = (fields: AssistantProposal["fields"], names: readonly string[]) => Object.fromEntries(names.filter((name) => Object.hasOwn(fields, name)).map((name) => [name, fields[name]]));
 
 function contextFrom(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a valid Initiative, Change Request, Product, or Platform assistant context.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Choose a valid Initiative, Change Request, Objective, Product, Platform, or Release assistant context.");
   const context = assistantContext(value as Record<string, unknown>);
-  if (!context) throw new Error("Choose a valid Initiative, Change Request, Product, or Platform assistant context.");
+  if (!context) throw new Error("Choose a valid Initiative, Change Request, Objective, Product, Platform, or Release assistant context.");
   return context;
 }
 
@@ -45,6 +45,11 @@ export async function assistantWorkspace(db: Database, actor: Actor, value: unkn
   const state = await listAssistantState(db, grounded.context);
   const readiness = genaiMilReadiness(env as unknown as GenaiMilEnvironment);
   return { context: grounded.context, groundingSummary: grounded.summary, configured: readiness.configured, configurationMessage: readiness.message, model: readiness.model, toolMode: readiness.toolMode, tlsMode: readiness.tlsMode, ...state };
+}
+
+export async function assistantLibrary(db: Database, _actor: Actor) {
+  const rows = await db.prepare("SELECT id,context_kind,context_id,context_label,title,prompt_text,response_text,model_name,grounding_summary,created_at FROM assistant_scratchpad_entry WHERE program_id=? ORDER BY created_at DESC LIMIT 250").bind(PROGRAM_ID).all<ScratchpadRow>();
+  return { scratchpad: rows.results.map(mapsScratchpad) };
 }
 
 export async function saveAssistantPrompt(db: Database, actor: Actor, contextValue: unknown, body: Record<string, unknown>) {
@@ -101,6 +106,18 @@ export async function saveAssistantScratchpad(db: Database, actor: Actor, contex
     audit(db, actor, "assistant_scratchpad_saved", "assistant_scratchpad", entryId, { context: grounded.context, title, model, proposalCount: proposal.length, status: "analysis_only_not_source_evidence_or_decision" }),
   ]);
   return entryId;
+}
+
+export async function deleteAssistantScratchpad(db: Database, actor: Actor, body: Record<string, unknown>) {
+  requireWriter(actor);
+  const entryId = clean(body.entryId);
+  if (!entryId) throw new Error("Choose an AI analysis scratchpad entry to remove.");
+  const existing = await db.prepare("SELECT id,context_kind,context_id,context_label,title,prompt_text,response_text,model_name,grounding_summary,created_at FROM assistant_scratchpad_entry WHERE id=? AND program_id=?").bind(entryId, PROGRAM_ID).first<ScratchpadRow>();
+  if (!existing) throw new Error("That AI analysis scratchpad entry no longer exists.");
+  await db.batch([
+    db.prepare("DELETE FROM assistant_scratchpad_entry WHERE id=? AND program_id=?").bind(entryId, PROGRAM_ID),
+    audit(db, actor, "assistant_scratchpad_deleted", "assistant_scratchpad", entryId, { contextKind: existing.context_kind, contextId: existing.context_id, contextLabel: existing.context_label, title: existing.title, createdAt: existing.created_at }, existing),
+  ]);
 }
 
 function groundingText(grounded: GroundedAssistantContext) {

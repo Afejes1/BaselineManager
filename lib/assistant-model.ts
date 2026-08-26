@@ -1,4 +1,4 @@
-export const assistantContextKinds = ["initiative", "change_request", "product", "platform"] as const;
+export const assistantContextKinds = ["initiative", "change_request", "objective", "product", "platform", "release"] as const;
 export type AssistantContextKind = typeof assistantContextKinds[number];
 export const assistantProposalKinds = ["create_initiative", "update_initiative", "save_objective", "save_milestone", "create_call_note"] as const;
 export type AssistantProposalKind = typeof assistantProposalKinds[number];
@@ -18,6 +18,19 @@ export function assistantContext(value: Record<string, unknown>): AssistantConte
   const id = clean(value.id);
   const label = clean(value.label);
   return supportedKinds.has(kind) && id && label ? { kind: kind as AssistantContextKind, id, label } : null;
+}
+
+export function isAssistantContextKind(value: string): value is AssistantContextKind {
+  return supportedKinds.has(value);
+}
+
+export function assistantContextHref(context: Pick<AssistantContext, "kind" | "id">) {
+  if (context.kind === "initiative") return `/initiatives/${encodeURIComponent(context.id)}`;
+  if (context.kind === "change_request") return `/changes/${encodeURIComponent(context.id)}`;
+  if (context.kind === "objective") return `/objectives/${encodeURIComponent(context.id)}`;
+  if (context.kind === "product") return `/products/${encodeURIComponent(context.id)}`;
+  if (context.kind === "platform") return `/platforms/${encodeURIComponent(context.id)}`;
+  return `/releases/${encodeURIComponent(context.id)}`;
 }
 
 function simpleFields(value: unknown) {

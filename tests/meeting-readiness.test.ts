@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import JSZip from "jszip";
 import type { BriefSnapshot, EvidenceDocument, ExecutiveBrief } from "../lib/governance-model.js";
@@ -15,6 +16,8 @@ import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objective
 import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
 import { parseAssistantAnswer } from "../lib/assistant-model.js";
 import { GenaiMilError, approvedGenaiMilUrl, askGenaiMil, genaiMilReadiness } from "../lib/genai-mil.js";
+import { buildDependencyBoard } from "../lib/dependency-board-model.js";
+import { buildInfrastructureMermaid } from "../lib/infrastructure-mermaid.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -263,12 +266,76 @@ test("visual topology manager reuses governed local records and separates contai
   assert.match(infrastructure, /Kubernetes, RKE2, or Rancher as a runtime Product/);
   assert.match(infrastructure, /Containerized workload/);
   assert.match(infrastructure, /Containment/);
+  assert.match(infrastructure, /Building blocks/);
+  assert.match(infrastructure, /platform → hardware → VMs → runtimes → workloads/);
   assert.match(infrastructure, /Relationships/);
+  assert.match(infrastructure, /Nothing is sent to a renderer or outside service/);
   assert.match(infrastructure, /onAddNode\(selectedState, "virtual_machine"\)/);
   assert.match(infrastructure, /onAddConnection\(selectedState, "cluster"\)/);
   assert.match(client, /fetch\("\/api\/topology"/);
   assert.doesNotMatch(route, /https?:\/\//);
-  assert.doesNotMatch(infrastructure, /reactflow|mermaid|d3\.js|https?:\/\//i);
+  assert.doesNotMatch(infrastructure, /reactflow|d3\.js|https?:\/\//i);
+});
+
+test("local platform building-block export preserves recorded containment and placements", () => {
+  const source = buildInfrastructureMermaid({
+    platform: { code: "OBK-U", name: "Operational Build Kit" },
+    releaseName: "MX-P.01.00",
+    nodes: [
+      { id: "server", nodeType: "physical_server", code: "SRV-1", name: "Host" },
+      { id: "vm", nodeType: "virtual_machine", code: "VM-1", name: "Workload VM" },
+    ],
+    states: [
+      { id: "server-state", infrastructureNodeId: "server", parentStateId: null, lifecycleStatus: "active", operatingState: "operational" },
+      { id: "vm-state", infrastructureNodeId: "vm", parentStateId: "server-state", lifecycleStatus: "active", operatingState: "operational" },
+    ],
+    installations: [{ id: "runtime", nodeStateId: "vm-state", productName: "RKE2", version: "1.31", installationRole: "runtime", instanceName: null, deploymentStatus: "installed" }],
+    connections: [],
+  } as never);
+  assert.match(source, /^flowchart BT/);
+  assert.match(source, /OBK-U · Operational Build Kit/);
+  assert.match(source, /nodeserver_state --> nodevm_state/);
+  assert.match(source, /nodevm_state --> productruntime/);
+  assert.doesNotMatch(source, /https?:\/\//);
+});
+
+test("dependency planning board identifies reciprocal chains without inventing schedule", () => {
+  const board = buildDependencyBoard({
+    changes: {
+      requests: [
+        { id: "mcp122", externalIdentifier: "MCP-122", title: "Modernized PMA", decisionStatus: "proposed", externalOwner: "LM", requestedReleaseId: null, requestedReleaseName: null, typeLabel: "MCP" },
+        { id: "mcp21", externalIdentifier: "MCP-21", title: "Dependent delivery", decisionStatus: "proposed", externalOwner: "LM", requestedReleaseId: null, requestedReleaseName: null, typeLabel: "MCP" },
+      ],
+      dependencies: [
+        { id: "starts-before-finish", predecessorRequestId: "mcp122", successorRequestId: "mcp21", dependencyType: "enables", rationale: "MCP-122 must start before MCP-21 can finish.", sourceReference: null },
+        { id: "finishes-before-finish", predecessorRequestId: "mcp21", successorRequestId: "mcp122", dependencyType: "requires", rationale: "MCP-21 must finish before MCP-122 can finish.", sourceReference: null },
+      ],
+    },
+    objectives: [], objectiveChangeRequestLinks: [], objectiveDependencies: [], initiatives: [],
+  } as never, { workPackages: [], workPackageDependencies: [] } as never, { releases: [] } as never);
+  assert.equal(board.items.length, 2);
+  assert.equal(board.edges.length, 2);
+  assert.ok(board.edges.every((edge) => edge.cycle));
+  assert.ok(board.items.every((item) => item.scheduleDate === null));
+  const component = read("components/dependency-board.tsx");
+  assert.match(component, /BIG-ROOM PLANNING VIEW/);
+  assert.match(component, /no date or sequence is inferred/i);
+  assert.match(component, /Objective gates/);
+  assert.match(component, /Work Package/);
+});
+
+test("assistant context expansion preserves saved analysis and accepts Objective and Release contexts", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys=ON; CREATE TABLE program(id TEXT PRIMARY KEY); CREATE TABLE app_user(id TEXT PRIMARY KEY); INSERT INTO program VALUES ('program'); INSERT INTO app_user VALUES ('user');");
+  database.exec(read("drizzle/0029_genai_assistant.sql"));
+  database.exec("INSERT INTO assistant_saved_prompt VALUES ('prompt','program','initiative','Review','Question','user','2026-08-25','2026-08-25');");
+  database.exec("INSERT INTO assistant_scratchpad_entry VALUES ('saved','program','initiative','initiative-1','Modernize PMA','Analysis','Question','Answer',NULL,'model','Grounded in Initiative','user','2026-08-25','2026-08-25');");
+  database.exec(read("drizzle/0030_assistant_context_expansion.sql"));
+  assert.equal((database.prepare("SELECT count(*) AS count FROM assistant_scratchpad_entry WHERE id='saved'").get() as { count: number }).count, 1);
+  database.exec("INSERT INTO assistant_scratchpad_entry VALUES ('objective','program','objective','objective-1','OBJ-1','Analysis','Question','Answer',NULL,'model','Objective grounding','user','2026-08-25','2026-08-25');");
+  database.exec("INSERT INTO assistant_scratchpad_entry VALUES ('release','program','release','release-1','Release 1','Analysis','Question','Answer',NULL,'model','Release grounding','user','2026-08-25','2026-08-25');");
+  assert.equal((database.prepare("SELECT count(*) AS count FROM assistant_scratchpad_entry").get() as { count: number }).count, 3);
+  database.close();
 });
 
 test("Lockheed ROM preserves points and applies an Initiative planning conversion only in derived hours", () => {
@@ -498,12 +565,15 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.equal(parseAssistantAnswer("plain answer").proposals.length, 0);
   await assert.rejects(() => askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "expired-key", GENAI_MIL_MODEL: "approved-model" }, { system: "system", prompt: "question" }, async () => new Response("", { status: 401 })), /Re-enable or refresh the key/);
   const migration = read("drizzle/0029_genai_assistant.sql");
+  const contextMigration = read("drizzle/0030_assistant_context_expansion.sql");
   const adapter = read("lib/genai-mil.ts");
   const server = read("lib/assistant-server.ts");
   const component = read("components/context-assistant.tsx");
   const markdown = read("components/safe-markdown.tsx");
   const actions = read("lib/assistant-actions.ts");
   const route = read("app/api/assistant/route.ts");
+  const domainShell = read("components/domain-shell.tsx");
+  const analysisRegister = read("app/analysis/page.tsx");
   const start = read("scripts/local/Start-A2OWorkspace.ps1");
   const setup = read("scripts/local/Set-A2OGenaiMilConfiguration.ps1");
   const tlsMode = read("scripts/local/Set-A2OGenaiMilDevelopmentTls.ps1");
@@ -512,6 +582,12 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /AssistantLauncher/);
   assert.match(migration, /assistant_saved_prompt/);
   assert.match(migration, /assistant_scratchpad_entry/);
+  assert.match(contextMigration, /'objective'/);
+  assert.match(contextMigration, /'release'/);
+  assert.match(domainShell, /objectContext\.kind === "objective" \|\| objectContext\.kind === "release"/);
+  assert.match(analysisRegister, /AI Analysis register/);
+  assert.match(route, /scope.*library/);
+  assert.match(route, /delete_scratchpad/);
   assert.match(adapter, /approvedGenaiMilUrl/);
   assert.match(adapter, /NODE_EXTRA_CA_CERTS/);
   assert.match(adapter, /GENAI_MIL_TLS_MODE/);

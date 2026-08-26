@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { changePortfolio } from "./change-server";
 import { initiativeDecisionWorkspace } from "./initiative-decision-server";
-import { objectiveIsRelatedToChangeRequest, selectInitiativeBundle } from "./initiative-decision-model";
+import { objectiveIsRelatedToChangeRequest, objectiveRelatedChangeRequestIds, selectInitiativeBundle } from "./initiative-decision-model";
 import { deriveInitiativeScope } from "./initiative-scope";
 import { masterDataPortfolio } from "./master-data-server";
 import { platformPortfolio } from "./platform-server";
@@ -103,13 +103,46 @@ export async function groundAssistantContext(db: Database, actor: Actor, request
     };
   }
 
+  if (requested.kind === "objective") {
+    const [workspace, governance] = await Promise.all([initiativeDecisionWorkspace(db, actor, { objectiveId: requested.id }), portfolio(db, actor)]);
+    const objective = workspace.objectives.find((item) => item.id === requested.id);
+    if (!objective) throw new Error("The requested Objective is not available for assistant grounding.");
+    const requestIds = new Set(objectiveRelatedChangeRequestIds(objective, workspace.objectiveChangeRequestLinks));
+    const requests = workspace.changes.requests.filter((item) => requestIds.has(item.id));
+    const initiativeIds = new Set(workspace.links.filter((link) => requestIds.has(link.changeRequestId)).map((link) => link.initiativeId));
+    const requirements = workspace.requirements.filter((item) => item.objectiveId === objective.id);
+    const criteria = workspace.criteria.filter((item) => item.objectiveId === objective.id);
+    const attributions = (workspace.objectiveEffectAttributions || []).filter((item) => item.objectiveId === objective.id);
+    const effectIds = new Set(attributions.map((item) => item.changeEffectId));
+    const dependencies = (workspace.objectiveDependencies || []).filter((item) => item.prerequisiteObjectiveId === objective.id || requestIds.has(item.dependentChangeRequestId));
+    const records = governance.records.filter((record) => record.links.some((link) => (link.entityKind === "objective" && link.entityId === objective.id) || (link.entityKind === "change_request" && requestIds.has(link.entityId)) || (link.entityKind === "initiative" && initiativeIds.has(link.entityId))));
+    const context = { ...requested, label: `${objective.externalIdentifier} · ${objective.title}` };
+    return {
+      context,
+      summary: `${requests.length} related Change Requests, ${initiativeIds.size} linked Initiatives, ${requirements.length} requirement traces, ${criteria.length} acceptance criteria, and ${dependencies.length} dependency gates.`,
+      allowed: allowed(initiativeIds, requestIds, [objective.id], workspace.milestones.filter((item) => item.objectiveId === objective.id).map((item) => item.id)),
+      data: {
+        context: { kind: context.kind, label: context.label },
+        informationHandling: "The Objective is an incumbent delivery record. Its source dates, ROM, and claims are not Government commitments until separately assessed or adjudicated.",
+        objective: objectiveSummary(objective),
+        relatedChangeRequests: take(requests, 18).map(requestSummary),
+        linkedInitiatives: take(workspace.initiatives.filter((item) => initiativeIds.has(item.id)), 12).map((item) => ({ id: item.id, title: short(item.title, 220), status: item.status, priority: item.priority, targetDate: item.targetDate, decisionAsk: short(item.decisionAsk, 400) })),
+        dependencies: take(dependencies, 24).map((item) => ({ dependentChangeRequestId: item.dependentChangeRequestId, prerequisiteObjectiveId: item.prerequisiteObjectiveId, relationship: item.relationship, status: item.status, rationale: short(item.rationale, 300), sourceReference: short(item.sourceReference, 180), sourceAsOf: item.sourceAsOf })),
+        requirements: take(requirements, 24).map((item) => ({ externalIdentifier: item.externalIdentifier, title: short(item.title, 180), action: item.changeAction, traceStatus: item.traceStatus, rationale: short(item.rationale, 240) })),
+        acceptance: take(criteria, 24).map((item) => ({ code: item.code, statement: short(item.statement, 260), tier: item.tier, method: item.verificationMethod, status: item.status, plannedDate: item.plannedDate, actualDate: item.actualDate, evidenceReference: short(item.evidenceReference, 180) })),
+        attributedEffects: take(workspace.changes.effects.filter((item) => effectIds.has(item.id)), 24).map((item) => ({ changeRequestId: item.changeRequestId, subjectKind: item.subjectKind, subjectLabel: short(item.subjectLabel, 180), action: item.action, aspect: short(item.aspect, 160), targetValue: short(item.targetValue, 240), confidence: item.confidence })),
+        governanceRecords: take(records, 18).map(recordSummary),
+      },
+    };
+  }
+
   if (requested.kind === "product") {
     const [master, changes, workspace, platform, topology, governance] = await Promise.all([masterDataPortfolio(db), changePortfolio(db), initiativeDecisionWorkspace(db, actor), platformPortfolio(db), topologyExtensions(db), portfolio(db, actor)]);
     const product = master.products.find((item) => item.id === requested.id);
     if (!product) throw new Error("The requested Product is not available for assistant grounding.");
     const effects = changes.effects.filter((item) => item.subjectKind === "product" && item.subjectId === product.id);
     const requestIds = new Set(effects.map((item) => item.changeRequestId));
-    const objectives = workspace.objectives.filter((item) => item.changeRequestId && requestIds.has(item.changeRequestId) || (workspace.objectiveEffectAttributions || []).some((attribution) => attribution.objectiveId === item.id && effects.some((effect) => effect.id === attribution.changeEffectId)));
+    const objectives = workspace.objectives.filter((item) => (item.changeRequestId && requestIds.has(item.changeRequestId)) || (workspace.objectiveEffectAttributions || []).some((attribution) => attribution.objectiveId === item.id && effects.some((effect) => effect.id === attribution.changeEffectId)));
     const objectiveIds = new Set(objectives.map((item) => item.id));
     const initiativeIds = new Set(workspace.links.filter((link) => requestIds.has(link.changeRequestId)).map((link) => link.initiativeId));
     const installations = topology.infrastructure.installations.filter((item) => item.productId === product.id);
@@ -138,6 +171,7 @@ export async function groundAssistantContext(db: Database, actor: Actor, request
     };
   }
 
+  if (requested.kind === "platform") {
   const [platforms, changes, workspace, topology, governance] = await Promise.all([platformPortfolio(db), changePortfolio(db), initiativeDecisionWorkspace(db, actor), topologyExtensions(db), portfolio(db, actor)]);
   const selected = platforms.platforms.find((item) => item.id === requested.id);
   if (!selected) throw new Error("The requested Platform is not available for assistant grounding.");
@@ -165,6 +199,40 @@ export async function groundAssistantContext(db: Database, actor: Actor, request
       assignments: take(platforms.assignments.filter((item) => descendantIds.has(item.platformId)), 30).map((item) => ({ platform: platforms.platforms.find((candidate) => candidate.id === item.platformId)?.name || null, release: item.releaseName, product: short(item.productName, 160), host: short(item.hostName, 120), sourceKey: short(item.sourceKey, 120), confidence: item.confidence, reviewStatus: item.reviewStatus, sourceReference: short(item.sourceReference, 180) })),
       infrastructure: { nodes: take(nodes, 30).map((item) => ({ id: item.id, code: item.code, name: item.name, type: item.nodeType, lifecycle: item.lifecycleStatus, assetTag: item.assetTag, serialNumber: item.serialNumber, description: short(item.description, 300) })), states: take(states, 36).map((item) => ({ id: item.id, node: nodeIds.has(item.infrastructureNodeId) ? nodes.find((node) => node.id === item.infrastructureNodeId)?.code || null : null, release: item.releaseName, lifecycle: item.lifecycleStatus, operating: item.operatingState, cpuCores: item.cpuCores, memoryGb: item.memoryGb, storageGb: item.storageGb, storageType: item.storageType, confidence: item.confidence })), installations: take(topology.infrastructure.installations.filter((item) => stateIds.has(item.nodeStateId)), 36).map((item) => ({ nodeStateId: item.nodeStateId, product: item.productName, role: item.installationRole, version: item.version, instanceName: item.instanceName, status: item.deploymentStatus, confidence: item.confidence })), connections: take(topology.infrastructure.connections.filter((item) => stateIds.has(item.sourceNodeStateId) || stateIds.has(item.targetNodeStateId)), 36).map((item) => ({ type: item.connectionType, label: short(item.label, 120), status: item.status, capacityMbps: item.capacityMbps, sourceNodeStateId: item.sourceNodeStateId, targetNodeStateId: item.targetNodeStateId })) },
       affectedBy: take(changes.requests.filter((item) => requestIds.has(item.id)), 18).map(requestSummary), effects: take(effects, 24).map((item) => ({ changeRequestId: item.changeRequestId, action: item.action, aspect: short(item.aspect, 160), currentValue: short(item.currentValue, 240), targetValue: short(item.targetValue, 240), consequence: short(item.consequence, 300), confidence: item.confidence })), objectives: take(objectives, 18).map(objectiveSummary), initiatives: take(workspace.initiatives.filter((item) => initiativeIds.has(item.id)), 12).map((item) => ({ id: item.id, title: short(item.title, 220), status: item.status, priority: item.priority, targetDate: item.targetDate, decisionAsk: short(item.decisionAsk, 400) })), governanceRecords: take(records, 12).map(recordSummary),
+    },
+  };
+  }
+
+  const [master, changes, workspace, platforms, topology, governance] = await Promise.all([masterDataPortfolio(db), changePortfolio(db), initiativeDecisionWorkspace(db, actor), platformPortfolio(db), topologyExtensions(db), portfolio(db, actor)]);
+  const release = master.releases.find((item) => item.id === requested.id);
+  if (!release) throw new Error("The requested Release is not available for assistant grounding.");
+  const effects = changes.effects.filter((item) => (item.subjectKind === "release" && item.subjectId === release.id) || item.fromReleaseId === release.id || item.toReleaseId === release.id);
+  const requestIds = new Set([...changes.requests.filter((item) => item.requestedReleaseId === release.id).map((item) => item.id), ...effects.map((item) => item.changeRequestId)]);
+  const objectives = workspace.objectives.filter((item) => objectiveRelatedChangeRequestIds(item, workspace.objectiveChangeRequestLinks).some((requestId) => requestIds.has(requestId)));
+  const objectiveIds = new Set(objectives.map((item) => item.id));
+  const initiativeIds = new Set(workspace.links.filter((link) => requestIds.has(link.changeRequestId)).map((link) => link.initiativeId));
+  const states = topology.infrastructure.states.filter((item) => item.releaseId === release.id);
+  const stateIds = new Set(states.map((item) => item.id));
+  const assignments = platforms.assignments.filter((item) => item.releaseId === release.id);
+  const records = governance.records.filter((record) => record.links.some((link) => (link.entityKind === "release" && link.entityId === release.id) || (link.entityKind === "change_request" && requestIds.has(link.entityId)) || (link.entityKind === "objective" && objectiveIds.has(link.entityId))));
+  const context = { ...requested, label: release.name };
+  return {
+    context,
+    summary: `${release.baselineRecordCount} baseline records, ${release.productCount} Products, ${states.length} infrastructure node states, ${requestIds.size} related Change Requests, and ${objectives.length} related Objectives.`,
+    allowed: allowed(initiativeIds, requestIds, objectiveIds, workspace.milestones.filter((item) => item.changeRequestId && requestIds.has(item.changeRequestId)).map((item) => item.id)),
+    data: {
+      context: { kind: context.kind, label: context.label },
+      informationHandling: "Release identity, lifecycle, milestones, and configuration are governed baseline context. Requested delivery and source-reported status do not by themselves constitute a Government approval.",
+      release: { id: release.id, code: release.code, name: release.name, status: release.status, analyticalRole: release.stateRole, owner: release.owner, targetDate: release.targetDate, actualDate: release.actualDate, effectiveDate: release.effectiveDate, description: short(release.description, 700), sourceReference: short(release.sourceReference, 240), sourceAsOf: release.sourceAsOf, baselineRecordCount: release.baselineRecordCount, productCount: release.productCount },
+      releaseMilestones: take(master.milestones.filter((item) => item.releaseId === release.id), 24).map((item) => ({ title: item.title, type: item.milestoneType, status: item.status, plannedDate: item.plannedDate, forecastDate: item.forecastDate, actualDate: item.actualDate, owner: short(item.owner, 120), sourceReference: short(item.sourceReference, 180) })),
+      configurationSets: take(master.configurationSets.filter((item) => item.releaseId === release.id), 12).map((item) => ({ name: item.name, revision: item.revisionNumber, status: item.approvalStatus, asOf: item.asOf, baselineRecordCount: item.baselineRecordCount })),
+      platformAssignments: take(assignments, 36).map((item) => ({ platform: platforms.platforms.find((candidate) => candidate.id === item.platformId)?.name || null, product: short(item.productName, 160), host: short(item.hostName, 120), sourceKey: short(item.sourceKey, 120), confidence: item.confidence, reviewStatus: item.reviewStatus })),
+      infrastructure: { states: take(states, 36).map((item) => ({ id: item.id, nodeId: item.infrastructureNodeId, platformId: item.platformId, parentStateId: item.parentStateId, lifecycle: item.lifecycleStatus, operating: item.operatingState, cpuCores: item.cpuCores, memoryGb: item.memoryGb, storageGb: item.storageGb, confidence: item.confidence })), installations: take(topology.infrastructure.installations.filter((item) => stateIds.has(item.nodeStateId)), 36).map((item) => ({ nodeStateId: item.nodeStateId, product: item.productName, role: item.installationRole, version: item.version, instanceName: item.instanceName, status: item.deploymentStatus, confidence: item.confidence })) },
+      changeRequests: take(changes.requests.filter((item) => requestIds.has(item.id)), 18).map(requestSummary),
+      effects: take(effects, 24).map((item) => ({ changeRequestId: item.changeRequestId, subjectKind: item.subjectKind, subjectLabel: short(item.subjectLabel, 180), action: item.action, aspect: short(item.aspect, 160), fromRelease: item.fromReleaseName, toRelease: item.toReleaseName, consequence: short(item.consequence, 300), confidence: item.confidence })),
+      objectives: take(objectives, 18).map(objectiveSummary),
+      initiatives: take(workspace.initiatives.filter((item) => initiativeIds.has(item.id)), 12).map((item) => ({ id: item.id, title: short(item.title, 220), status: item.status, priority: item.priority, decisionAsk: short(item.decisionAsk, 400) })),
+      governanceRecords: take(records, 18).map(recordSummary),
     },
   };
 }

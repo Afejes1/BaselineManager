@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { APP_NAV_ITEMS } from "../lib/site-nav";
 import { WorkspaceContextControl, useWorkspaceContext, type ContextMode } from "./workspace-context";
 import { CallNoteControl, type ObjectContext } from "./object-workspace";
+import { AssistantLauncher } from "./context-assistant";
 
 type DomainPageShellProps = {
   title: string;
@@ -31,6 +32,9 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
   const [railCollapsed, setRailCollapsed] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("v3-rail-collapsed") === "true");
   const [online, setOnline] = useState(true);
   const navigationSections = ["Baseline", "Views", "Decisions"] as const;
+  const shellAssistantContext = objectContext && (objectContext.kind === "objective" || objectContext.kind === "release")
+    ? { kind: objectContext.kind, id: objectContext.id, label: objectContext.label }
+    : null;
 
   function toggleRail() {
     setRailCollapsed((current) => {
@@ -94,7 +98,7 @@ export function DomainPageShell({ title, subtitle, actions, children, releaseSco
             <h1>{title}</h1>
             {subtitle ? <div className="top-subtitle">{subtitle}</div> : null}
           </div>
-          <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} /><CallNoteControl context={objectContext} />{actions}</div>
+          <div className="top-actions"><WorkspaceContextControl mode={contextMode} recordRelease={recordRelease} />{shellAssistantContext ? <AssistantLauncher context={shellAssistantContext} /> : null}<CallNoteControl context={objectContext} />{actions}</div>
         </header>
         {!online ? <div className="offline-banner" role="alert"><strong>Offline mode:</strong> this page remains visible, but saves, uploads, and report generation require a connection. Use the local Workspace runtime for disconnected airport work.</div> : null}
         {breadcrumb?.length ? <nav className="breadcrumb" aria-label="Breadcrumb">

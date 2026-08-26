@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "./app-link";
 import { CallNoteControl } from "./object-workspace";
 import { ViewportModal } from "./viewport-modal";
+import { buildInfrastructureMermaid } from "../lib/infrastructure-mermaid";
 import { useTopologyExtensions } from "../lib/topology-client";
 import type {
   InfrastructureConnection,
@@ -200,7 +201,7 @@ export function InfrastructureTree({ portfolio, releaseId, platformId, focus, em
   })}</div>;
 }
 
-type VisualTopologyMode = "containment" | "relationships";
+type VisualTopologyMode = "building_blocks" | "containment" | "relationships";
 
 function nodeGlyph(type: InfrastructureNodeType) {
   return type === "virtual_machine" ? "VM"
@@ -280,7 +281,72 @@ function VisualCanvasBranch({
   </div>;
 }
 
+const runtimeRoles = new Set(["operating_system", "hypervisor", "middleware", "runtime", "firmware", "agent"]);
+
+function BuildingBlockView({
+  platform,
+  releaseName,
+  states,
+  nodes,
+  installations,
+  visibleStateIds,
+  selectedStateId,
+  onSelect,
+  onEditInstallation,
+}: {
+  platform: { code: string; name: string };
+  releaseName: string;
+  states: ReleaseInfrastructureNode[];
+  nodes: Map<string, InfrastructureNode>;
+  installations: InfrastructureProductInstallation[];
+  visibleStateIds: Set<string>;
+  selectedStateId: string;
+  onSelect: (stateId: string) => void;
+  onEditInstallation: (item: InfrastructureProductInstallation) => void;
+}) {
+  const stateById = new Map(states.map((item) => [item.id, item]));
+  const visibleStates = states.filter((item) => visibleStateIds.has(item.id));
+  const physical = visibleStates.filter((item) => nodes.get(item.infrastructureNodeId)?.nodeType !== "virtual_machine");
+  const virtual = visibleStates.filter((item) => nodes.get(item.infrastructureNodeId)?.nodeType === "virtual_machine");
+  const activeInstallations = installations.filter((item) => item.deploymentStatus !== "absent" && visibleStateIds.has(item.nodeStateId));
+  const runtimes = activeInstallations.filter((item) => runtimeRoles.has(item.installationRole));
+  const workloads = activeInstallations.filter((item) => !runtimeRoles.has(item.installationRole));
+  const hostLabel = (stateId: string) => {
+    const state = stateById.get(stateId);
+    const node = state ? nodes.get(state.infrastructureNodeId) : undefined;
+    return node?.code || "Host not identified";
+  };
+  const parentLabel = (state: ReleaseInfrastructureNode) => {
+    const parent = state.parentStateId ? stateById.get(state.parentStateId) : undefined;
+    return parent ? nodes.get(parent.infrastructureNodeId)?.code || "Parent not identified" : "Platform root";
+  };
+  const nodeLayer = (items: ReleaseInfrastructureNode[], empty: string) => items.length ? <div className="building-block-grid">{items.map((state) => {
+    const node = nodes.get(state.infrastructureNodeId);
+    if (!node) return null;
+    return <button type="button" key={state.id} className={selectedStateId === state.id ? "building-block-card building-block-selected" : "building-block-card"} onClick={() => onSelect(state.id)}>
+      <span>{nodeTypeLabels[node.nodeType]}</span><strong>{node.code}</strong><em>{node.name}</em><small>On: {parentLabel(state)} · {capacity(state)}</small>
+    </button>;
+  })}</div> : <p className="building-block-empty">{empty}</p>;
+  const productLayer = (items: InfrastructureProductInstallation[], empty: string) => items.length ? <div className="building-block-grid">{items.map((item) => <button type="button" key={item.id} className="building-block-card building-block-product" onClick={() => onEditInstallation(item)}>
+    <span>{readable(item.installationRole)}</span><strong>{item.productName}</strong><em>{item.instanceName || item.version || "Instance/version not recorded"}</em><small>Runs on: {hostLabel(item.nodeStateId)}</small>
+  </button>)}</div> : <p className="building-block-empty">{empty}</p>;
+
+  return <div className="building-block-board">
+    <section className="building-block-layer building-block-workloads"><header><span>5</span><div><strong>Applications, containers, and data services</strong><small>Governed Product placements that deliver the workload.</small></div></header>{productLayer(workloads, "No application, database, or other workload placements recorded.")}</section>
+    <div className="building-block-join" aria-hidden="true"><span>runs on</span></div>
+    <section className="building-block-layer building-block-runtimes"><header><span>4</span><div><strong>Operating systems and runtime services</strong><small>OS, hypervisor, Kubernetes, RKE2, Rancher, middleware, firmware, and agents.</small></div></header>{productLayer(runtimes, "No operating system or runtime Product placements recorded.")}</section>
+    <div className="building-block-join" aria-hidden="true"><span>runs on</span></div>
+    <section className="building-block-layer building-block-virtual"><header><span>3</span><div><strong>Virtual compute</strong><small>Virtual machines placed beneath their recorded host.</small></div></header>{nodeLayer(virtual, "No virtual machines recorded for this Release.")}</section>
+    <div className="building-block-join" aria-hidden="true"><span>hosted by</span></div>
+    <section className="building-block-layer building-block-physical"><header><span>2</span><div><strong>Physical infrastructure</strong><small>Servers, blades, chassis, storage, network, power, and appliances.</small></div></header>{nodeLayer(physical, "No physical infrastructure recorded for this Release.")}</section>
+    <div className="building-block-join" aria-hidden="true"><span>belongs to</span></div>
+    <section className="building-block-platform"><span>1 · PLATFORM FOUNDATION</span><strong>{platform.code} · {platform.name}</strong><small>{releaseName}</small></section>
+  </div>;
+}
+
 function InfrastructureVisualManager({
+  platform,
+  releaseName,
   states,
   nodes,
   installations,
@@ -295,6 +361,8 @@ function InfrastructureVisualManager({
   onAddConnection,
   onEditConnection,
 }: {
+  platform: { code: string; name: string };
+  releaseName: string;
   states: ReleaseInfrastructureNode[];
   nodes: Map<string, InfrastructureNode>;
   installations: InfrastructureProductInstallation[];
@@ -319,7 +387,9 @@ function InfrastructureVisualManager({
   const selectedInstallations = selectedState ? installations.filter((item) => item.nodeStateId === selectedState.id && item.deploymentStatus !== "absent") : [];
   const selectedConnections = selectedState ? connections.filter((item) => item.sourceNodeStateId === selectedState.id || item.targetNodeStateId === selectedState.id) : [];
   const [search, setSearch] = useState("");
-  const [visualMode, setVisualMode] = useState<VisualTopologyMode>("containment");
+  const [visualMode, setVisualMode] = useState<VisualTopologyMode>("building_blocks");
+  const [mermaidOpen, setMermaidOpen] = useState(false);
+  const [mermaidNotice, setMermaidNotice] = useState("");
   const visibleStateIds = useMemo(() => {
     if (!search.trim()) return new Set(activeStates.map((item) => item.id));
     const query = search.trim().toLowerCase();
@@ -336,6 +406,20 @@ function InfrastructureVisualManager({
     return result;
   }, [activeStates, installations, nodes, search]);
   const visibleRoots = roots.filter((root) => visibleStateIds.has(root.id));
+  const mermaidSource = useMemo(() => buildInfrastructureMermaid({ platform, releaseName, states: activeStates, nodes: [...nodes.values()], installations, connections }), [activeStates, connections, installations, nodes, platform, releaseName]);
+  const saveMermaid = () => {
+    const blob = new Blob([mermaidSource], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${platform.code || "platform"}-${releaseName || "release"}-building-blocks.mmd`.replace(/[^a-zA-Z0-9._-]/g, "-");
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+  const copyMermaid = async () => {
+    try { await navigator.clipboard.writeText(mermaidSource); setMermaidNotice("Mermaid source copied."); }
+    catch { setMermaidNotice("Copy was blocked. Select the source text and copy it manually."); }
+  };
 
   return <section className="topology-manager" aria-label="Visual infrastructure topology manager">
     <div className="topology-command-bar">
@@ -346,8 +430,10 @@ function InfrastructureVisualManager({
         <button type="button" className="ghost-button" disabled={!selectedState} onClick={() => selectedState && onAddInstallation(selectedState, "application")}>+ Containerized workload</button>
       </div>
       <div className="topology-view-switch" role="group" aria-label="Topology view">
+        <button type="button" className={visualMode === "building_blocks" ? "topology-view-active" : ""} onClick={() => setVisualMode("building_blocks")}>Building blocks</button>
         <button type="button" className={visualMode === "containment" ? "topology-view-active" : ""} onClick={() => setVisualMode("containment")}>Containment</button>
         <button type="button" className={visualMode === "relationships" ? "topology-view-active" : ""} onClick={() => setVisualMode("relationships")}>Relationships <span>{connections.length}</span></button>
+        <button type="button" onClick={() => { setMermaidNotice(""); setMermaidOpen(true); }}>Mermaid source</button>
       </div>
     </div>
     <aside className="topology-model-note"><strong>Modeling rule</strong><span>Physical server and VM nodes show where compute runs. Record Kubernetes, RKE2, or Rancher as a runtime Product on the applicable node. Record a containerized application as a Product workload, and use a <b>cluster</b> relationship to connect participating nodes.</span></aside>
@@ -357,9 +443,9 @@ function InfrastructureVisualManager({
         <label className="topology-search"><span className="sr-only">Search topology</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search nodes or Products" /></label>
         {visibleRoots.length ? <ul className="topology-nav-tree">{visibleRoots.map((root) => <VisualTreeBranch key={root.id} state={root} states={activeStates} nodes={nodes} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} />)}</ul> : <p className="empty">No nodes match this search.</p>}
       </aside>
-      <main className="topology-canvas" aria-label={visualMode === "containment" ? "Physical containment view" : "Infrastructure relationship view"}>
-        <header><div><span className="eyebrow">{visualMode === "containment" ? "PHYSICAL / VIRTUAL CONTAINMENT" : "NON-CONTAINMENT RELATIONSHIPS"}</span><h3>{visualMode === "containment" ? "Platform root → host → VM → Product placements" : "Network, cluster, storage, power, and management links"}</h3></div><span>{visualMode === "containment" ? `${visibleStateIds.size} visible nodes` : `${connections.length} links`}</span></header>
-        {visualMode === "containment" ? visibleRoots.length ? <div className="topology-canvas-roots">{visibleRoots.map((root) => <VisualCanvasBranch key={root.id} state={root} states={activeStates} nodes={nodes} installations={installations} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} onAddChild={(state) => onAddNode(state)} />)}</div> : <article className="empty-state"><h3>No configuration to draw</h3><p>Add a server or clear the search to begin.</p></article> : connections.length ? <div className="topology-relationship-list">{connections.map((connection) => {
+      <main className="topology-canvas" aria-label={visualMode === "building_blocks" ? "Layered platform building blocks" : visualMode === "containment" ? "Physical containment view" : "Infrastructure relationship view"}>
+        <header><div><span className="eyebrow">{visualMode === "building_blocks" ? "PLATFORM BUILDING BLOCKS" : visualMode === "containment" ? "PHYSICAL / VIRTUAL CONTAINMENT" : "NON-CONTAINMENT RELATIONSHIPS"}</span><h3>{visualMode === "building_blocks" ? "Read bottom-up: platform → hardware → VMs → runtimes → workloads" : visualMode === "containment" ? "Platform root → host → VM → Product placements" : "Network, cluster, storage, power, and management links"}</h3></div><span>{visualMode === "relationships" ? `${connections.length} links` : `${visibleStateIds.size} visible nodes`}</span></header>
+        {visualMode === "building_blocks" ? <BuildingBlockView platform={platform} releaseName={releaseName} states={activeStates} nodes={nodes} installations={installations} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} onEditInstallation={onEditInstallation} /> : visualMode === "containment" ? visibleRoots.length ? <div className="topology-canvas-roots">{visibleRoots.map((root) => <VisualCanvasBranch key={root.id} state={root} states={activeStates} nodes={nodes} installations={installations} visibleStateIds={visibleStateIds} selectedStateId={selectedState?.id || ""} onSelect={onSelect} onAddChild={(state) => onAddNode(state)} />)}</div> : <article className="empty-state"><h3>No configuration to draw</h3><p>Add a server or clear the search to begin.</p></article> : connections.length ? <div className="topology-relationship-list">{connections.map((connection) => {
           const sourceState = activeStates.find((item) => item.id === connection.sourceNodeStateId);
           const targetState = activeStates.find((item) => item.id === connection.targetNodeStateId);
           const source = sourceState ? nodes.get(sourceState.infrastructureNodeId) : undefined;
@@ -377,6 +463,7 @@ function InfrastructureVisualManager({
         </> : <article className="empty-state"><h3>Select a node</h3><p>Choose a node in the hierarchy or canvas to inspect and change it.</p></article>}
       </aside>
     </div>
+    {mermaidOpen ? <ViewportModal onDismiss={() => setMermaidOpen(false)} labelledBy="infrastructure-mermaid-title" className="wide-modal mermaid-source-modal"><div className="section-toolbar"><div><span className="eyebrow">LOCAL EXPORT</span><h2 id="infrastructure-mermaid-title">Mermaid building-block source</h2></div></div><p>This text is generated entirely in the browser from the selected Release configuration. Nothing is sent to a renderer or outside service.</p><textarea readOnly rows={22} value={mermaidSource} aria-label="Mermaid source" />{mermaidNotice ? <p className="entity-meta">{mermaidNotice}</p> : null}<footer><button type="button" className="ghost-button" onClick={() => setMermaidOpen(false)}>Close</button><button type="button" className="ghost-button" onClick={() => void copyMermaid()}>Copy source</button><button type="button" className="primary-button" onClick={saveMermaid}>Download .mmd</button></footer></ViewportModal> : null}
   </section>;
 }
 
@@ -407,6 +494,7 @@ export function InfrastructureWorkspace({ platformId, initialReleaseId, initialR
   const installations = portfolio.installations.filter((item) => item.platformId === platformId && item.releaseId === effectiveReleaseId);
   const connections = portfolio.connections.filter((item) => item.platformId === platformId && item.releaseId === effectiveReleaseId);
   const nodeById = new Map(portfolio.nodes.map((item) => [item.id, item]));
+  const selectedPlatform = portfolio.platforms.find((item) => item.id === platformId) || { code: "Platform", name: "Identity not recorded" };
   const filteredProducts = portfolio.products.filter((item) => !productSearch || `${item.name} ${item.shortName || ""} ${item.productType || ""}`.toLowerCase().includes(productSearch.toLowerCase())).slice(0, 120);
   const occurrenceOptions = portfolio.occurrenceOptions.filter((item) => item.releaseId === effectiveReleaseId && (!installationForm.productId || !item.productId || item.productId === installationForm.productId));
   const storageMedia = portfolio.referenceValues.filter((item) => item.category === "storage_medium");
@@ -445,7 +533,7 @@ export function InfrastructureWorkspace({ platformId, initialReleaseId, initialR
   return <>
     <div className="section-toolbar"><div><span className="eyebrow">RELEASE CONFIGURATION</span><h3>Infrastructure and installed Products</h3></div><div className="toolbar-actions"><div className="topology-view-switch" role="group" aria-label="Configuration workspace"><button type="button" className={view === "visual" ? "topology-view-active" : ""} onClick={() => setView("visual")}>Visual manager</button><button type="button" className={view === "register" ? "topology-view-active" : ""} onClick={() => setView("register")}>Governed register</button></div><label className="compare-select">Release<select value={effectiveReleaseId} onChange={(event) => changeRelease(event.target.value)}>{portfolio.releases.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{view === "register" ? <button className="primary-button" disabled={!effectiveReleaseId} onClick={() => addNode()}>Add infrastructure node / VM</button> : null}</div></div>
     <p className="entity-meta">Hardware and VM identities are stable. Parent placement, capacity, OS, hypervisor, applications, and connections are recorded for the selected Release. Blank fields remain unknown.</p>
-    {view === "visual" ? <InfrastructureVisualManager states={states} nodes={nodeById} installations={installations} connections={connections} selectedStateId={selectedStateId} onSelect={setSelectedStateId} onAddNode={addNode} onEditIdentity={editNodeIdentity} onEditState={editNodeState} onAddInstallation={addInstallation} onEditInstallation={editInstallation} onAddConnection={addConnection} onEditConnection={editConnection} /> : <>
+    {view === "visual" ? <InfrastructureVisualManager platform={selectedPlatform} releaseName={releaseName(effectiveReleaseId)} states={states} nodes={nodeById} installations={installations} connections={connections} selectedStateId={selectedStateId} onSelect={setSelectedStateId} onAddNode={addNode} onEditIdentity={editNodeIdentity} onEditState={editNodeState} onAddInstallation={addInstallation} onEditInstallation={editInstallation} onAddConnection={addConnection} onEditConnection={editConnection} /> : <>
       <aside className="contract-strip"><strong>Where to edit</strong><span>The tree is a configuration map. In the <b>Release node register</b> below, use <b>Edit identity</b> for a stable code, name, type, or serial number; use <b>Edit capacity &amp; Release state</b> for CPU cores, memory, storage, placement, lifecycle, and source evidence. To record a VM, choose <b>Add infrastructure node / VM</b>, select <b>Virtual machine</b>, and choose its host as the parent.</span></aside>
       <InfrastructureTree portfolio={portfolio} releaseId={effectiveReleaseId} platformId={platformId} focus={focus} />
       {states.length ? <section className="domain-card infra-register"><div className="section-toolbar"><h3>Release node register</h3><span>{states.length} nodes</span></div><div className="domain-table-wrap"><table><thead><tr><th>Node</th><th>Type / confidence</th><th>Parent</th><th>Capacity</th><th>Products</th><th>Actions</th></tr></thead><tbody>{states.map((state) => { const node = nodeById.get(state.infrastructureNodeId); const parent = nodeById.get(states.find((item) => item.id === state.parentStateId)?.infrastructureNodeId || ""); return <tr key={state.id}><td><strong>{node?.code}</strong><small>{node?.name}</small></td><td>{node ? nodeTypeLabels[node.nodeType] : "Unknown"}<small>{readable(state.confidence)}</small></td><td>{parent?.code || "Platform root"}</td><td>{capacity(state)}</td><td>{installations.filter((item) => item.nodeStateId === state.id).map((item) => <button className="tag-button" key={item.id} onClick={() => editInstallation(item)}>{item.productName}<small>{readable(item.confidence)}</small></button>)}</td><td><div className="entity-actions">{node ? <button className="mini-action" onClick={() => editNodeIdentity(node)}>Edit identity</button> : null}<button className="mini-action" onClick={() => editNodeState(state)}>Edit capacity &amp; Release state</button><button className="mini-action" onClick={() => addInstallation(state)}>Install Product</button><button className="mini-action" onClick={() => addNode(state)}>Add child</button><CallNoteControl compact context={{ kind: "infrastructure_state", id: state.id, label: `${node?.code || "Infrastructure node"} · ${releaseName(state.releaseId)}` }} /></div></td></tr>; })}</tbody></table></div></section> : null}
