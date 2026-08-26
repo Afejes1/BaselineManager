@@ -277,6 +277,36 @@ test("visual topology manager reuses governed local records and separates contai
   assert.doesNotMatch(infrastructure, /reactflow|d3\.js|https?:\/\//i);
 });
 
+test("Product placements can be created, edited, moved, and removed from the Product workspace", () => {
+  const productPage = read("app/products/[id]/page.tsx");
+  const editor = read("components/product-placement-editor.tsx");
+  const server = read("lib/topology-server.ts");
+  assert.match(productPage, /Place on infrastructure/);
+  assert.match(productPage, /Edit \/ move/);
+  assert.match(productPage, /ProductPlacementEditor/);
+  assert.match(editor, /Release[\s\S]*Platform[\s\S]*Infrastructure node \/ VM/);
+  assert.match(editor, /Moving an existing placement updates the same audited record/);
+  assert.match(editor, /save_infrastructure_installation/);
+  assert.match(editor, /remove_infrastructure_installation/);
+  assert.match(editor, /Open Platform visual manager/);
+  assert.match(server, /release_id=excluded\.release_id,platform_id=excluded\.platform_id,node_state_id=excluded\.node_state_id/);
+  assert.match(server, /already recorded on the selected node/);
+});
+
+test("infrastructure placement migration repairs and guards cached Release and Platform identity", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("CREATE TABLE release_infrastructure_node(id TEXT PRIMARY KEY,program_id TEXT,release_id TEXT,platform_id TEXT); CREATE TABLE infrastructure_product_installation(id TEXT PRIMARY KEY,program_id TEXT,release_id TEXT,platform_id TEXT,node_state_id TEXT); CREATE TABLE infrastructure_connection(id TEXT PRIMARY KEY,program_id TEXT,release_id TEXT,platform_id TEXT,source_node_state_id TEXT,target_node_state_id TEXT);");
+  database.exec("INSERT INTO release_infrastructure_node VALUES ('source','program','release-new','platform-new'),('target','program','release-new','platform-new'); INSERT INTO infrastructure_product_installation VALUES ('placement','program','release-old','platform-old','source'); INSERT INTO infrastructure_connection VALUES ('connection','program','release-old','platform-old','source','target');");
+  database.exec(read("drizzle/0031_infrastructure_placement_integrity.sql"));
+  const placement = database.prepare("SELECT release_id,platform_id FROM infrastructure_product_installation WHERE id='placement'").get() as { release_id: string; platform_id: string };
+  const connection = database.prepare("SELECT release_id,platform_id FROM infrastructure_connection WHERE id='connection'").get() as { release_id: string; platform_id: string };
+  assert.equal(placement.release_id, "release-new"); assert.equal(placement.platform_id, "platform-new");
+  assert.equal(connection.release_id, "release-new"); assert.equal(connection.platform_id, "platform-new");
+  assert.throws(() => database.exec("INSERT INTO infrastructure_product_installation VALUES ('invalid','program','wrong-release','platform-new','source');"), /must match its infrastructure node state/);
+  assert.throws(() => database.exec("UPDATE infrastructure_connection SET platform_id='wrong-platform' WHERE id='connection';"), /must match both node states/);
+  database.close();
+});
+
 test("local platform building-block export preserves recorded containment and placements", () => {
   const source = buildInfrastructureMermaid({
     platform: { code: "OBK-U", name: "Operational Build Kit" },

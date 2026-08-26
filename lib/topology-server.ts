@@ -233,9 +233,9 @@ export async function saveInfrastructureInstallation(db: Database, actor: Actor,
   const deploymentStatus = (clean(body.deploymentStatus) || "installed") as InstallationStatus;
   const confidence = (clean(body.confidence) || "assessed") as InfrastructureConfidence;
   if (!nodeStateId || !productId || !installationRoles.has(installationRole) || !installationStatuses.has(deploymentStatus) || !infrastructureConfidences.has(confidence)) throw new Error("Release node, Product, installation role, status, and confidence are required.");
-  const state = await db.prepare("SELECT release_id,platform_id FROM release_infrastructure_node WHERE id=? AND program_id=?").bind(nodeStateId, PROGRAM_ID).first<{ release_id: string; platform_id: string }>();
+  const state = await db.prepare("SELECT release_id,platform_id FROM release_infrastructure_node WHERE id=? AND program_id=? AND lifecycle_status<>'absent'").bind(nodeStateId, PROGRAM_ID).first<{ release_id: string; platform_id: string }>();
   const product = await db.prepare("SELECT id FROM product WHERE id=? AND program_id=? AND lifecycle_status='active'").bind(productId, PROGRAM_ID).first<{ id: string }>();
-  if (!state || !product) throw new Error("Choose an active Product and a governed release node.");
+  if (!state || !product) throw new Error("Choose an active Product and a governed Release node that is not absent.");
   const baselineOccurrenceId = nullable(body.baselineOccurrenceId);
   if (baselineOccurrenceId) {
     const occurrence = await db.prepare("SELECT release_id,product_id FROM baseline_occurrence WHERE id=? AND program_id=? AND workspace_id=? AND lifecycle_status='active'").bind(baselineOccurrenceId, PROGRAM_ID, WORKSPACE_ID).first<{ release_id: string; product_id: string | null }>();
@@ -244,11 +244,16 @@ export async function saveInfrastructureInstallation(db: Database, actor: Actor,
   }
   const instanceName = nullable(body.instanceName);
   const current = await db.prepare("SELECT * FROM infrastructure_product_installation WHERE id=? AND program_id=?").bind(installationId, PROGRAM_ID).first<Record<string, unknown>>();
+  const normalizedInstanceName = normalize(instanceName);
+  const sourceIdentity = String(current?.source_identity || "");
+  const duplicate = await db.prepare("SELECT id FROM infrastructure_product_installation WHERE program_id=? AND node_state_id=? AND product_id=? AND installation_role=? AND normalized_instance_name=? AND source_identity=? AND id<>?")
+    .bind(PROGRAM_ID, nodeStateId, productId, installationRole, normalizedInstanceName, sourceIdentity, installationId).first<{ id: string }>();
+  if (duplicate) throw new Error("That Product, role, and instance is already recorded on the selected node. Edit the existing placement instead.");
   const at = now();
   await db.batch([
-    db.prepare("INSERT INTO infrastructure_product_installation (id,program_id,release_id,platform_id,node_state_id,product_id,baseline_occurrence_id,installation_role,instance_name,normalized_instance_name,source_identity,version,deployment_status,confidence,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET node_state_id=excluded.node_state_id,product_id=excluded.product_id,baseline_occurrence_id=excluded.baseline_occurrence_id,installation_role=excluded.installation_role,instance_name=excluded.instance_name,normalized_instance_name=excluded.normalized_instance_name,version=excluded.version,deployment_status=excluded.deployment_status,confidence=excluded.confidence,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
-      .bind(installationId, PROGRAM_ID, state.release_id, state.platform_id, nodeStateId, productId, baselineOccurrenceId, installationRole, instanceName, normalize(instanceName), String(current?.source_identity || ""), nullable(body.version), deploymentStatus, confidence, nullable(body.sourceReference), nullable(body.sourceAsOf), nullable(body.notes), actor.id, current?.created_at || at, at),
-    audit(db, actor, current ? "infrastructure_installation_updated" : "infrastructure_installation_created", "infrastructure_installation", installationId, { nodeStateId, productId, installationRole, deploymentStatus, baselineOccurrenceId }, current || undefined),
+    db.prepare("INSERT INTO infrastructure_product_installation (id,program_id,release_id,platform_id,node_state_id,product_id,baseline_occurrence_id,installation_role,instance_name,normalized_instance_name,source_identity,version,deployment_status,confidence,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET release_id=excluded.release_id,platform_id=excluded.platform_id,node_state_id=excluded.node_state_id,product_id=excluded.product_id,baseline_occurrence_id=excluded.baseline_occurrence_id,installation_role=excluded.installation_role,instance_name=excluded.instance_name,normalized_instance_name=excluded.normalized_instance_name,version=excluded.version,deployment_status=excluded.deployment_status,confidence=excluded.confidence,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+      .bind(installationId, PROGRAM_ID, state.release_id, state.platform_id, nodeStateId, productId, baselineOccurrenceId, installationRole, instanceName, normalizedInstanceName, sourceIdentity, nullable(body.version), deploymentStatus, confidence, nullable(body.sourceReference), nullable(body.sourceAsOf), nullable(body.notes), actor.id, current?.created_at || at, at),
+    audit(db, actor, current ? "infrastructure_installation_updated" : "infrastructure_installation_created", "infrastructure_installation", installationId, { releaseId: state.release_id, platformId: state.platform_id, nodeStateId, productId, installationRole, deploymentStatus, baselineOccurrenceId }, current || undefined),
   ]);
   return installationId;
 }
@@ -279,10 +284,13 @@ export async function saveInfrastructureConnection(db: Database, actor: Actor, b
   const current = await db.prepare("SELECT * FROM infrastructure_connection WHERE id=? AND program_id=?").bind(connectionId, PROGRAM_ID).first<Record<string, unknown>>();
   const at = now();
   const state = states.results[0];
+  const duplicate = await db.prepare("SELECT id FROM infrastructure_connection WHERE program_id=? AND release_id=? AND source_node_state_id=? AND target_node_state_id=? AND connection_type=? AND id<>?")
+    .bind(PROGRAM_ID, state.release_id, sourceNodeStateId, targetNodeStateId, connectionType, connectionId).first<{ id: string }>();
+  if (duplicate) throw new Error("That connection type is already recorded between the selected nodes. Edit the existing connection instead.");
   await db.batch([
-    db.prepare("INSERT INTO infrastructure_connection (id,program_id,release_id,platform_id,source_node_state_id,target_node_state_id,connection_type,label,status,capacity_mbps,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_node_state_id=excluded.source_node_state_id,target_node_state_id=excluded.target_node_state_id,connection_type=excluded.connection_type,label=excluded.label,status=excluded.status,capacity_mbps=excluded.capacity_mbps,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
+    db.prepare("INSERT INTO infrastructure_connection (id,program_id,release_id,platform_id,source_node_state_id,target_node_state_id,connection_type,label,status,capacity_mbps,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET release_id=excluded.release_id,platform_id=excluded.platform_id,source_node_state_id=excluded.source_node_state_id,target_node_state_id=excluded.target_node_state_id,connection_type=excluded.connection_type,label=excluded.label,status=excluded.status,capacity_mbps=excluded.capacity_mbps,source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at")
       .bind(connectionId, PROGRAM_ID, state.release_id, state.platform_id, sourceNodeStateId, targetNodeStateId, connectionType, nullable(body.label), status, capacityMbps, nullable(body.sourceReference), nullable(body.sourceAsOf), nullable(body.notes), actor.id, current?.created_at || at, at),
-    audit(db, actor, current ? "infrastructure_connection_updated" : "infrastructure_connection_created", "infrastructure_connection", connectionId, { sourceNodeStateId, targetNodeStateId, connectionType, status }, current || undefined),
+    audit(db, actor, current ? "infrastructure_connection_updated" : "infrastructure_connection_created", "infrastructure_connection", connectionId, { releaseId: state.release_id, platformId: state.platform_id, sourceNodeStateId, targetNodeStateId, connectionType, status }, current || undefined),
   ]);
   return connectionId;
 }
