@@ -114,6 +114,8 @@ if (-not (Test-Path -LiteralPath $genaiAdapterPath)) {
     'GENAI_MIL_API_KEY',
     'GENAI_MIL_MODEL',
     'GENAI_MIL_TOOL_MODE',
+    'GENAI_MIL_TLS_MODE',
+    'GENAI_MIL_LOCAL_PROXY_TOKEN',
     'endpoint\.protocol !== "https:"',
     'host === "genai\.mil"',
     'host\.endsWith\("\.genai\.mil"\)',
@@ -128,6 +130,35 @@ if (-not (Test-Path -LiteralPath $genaiAdapterPath)) {
   }
   if ($genaiAdapter -notmatch 'json-proposals' -or $genaiAdapter -notmatch 'native-tools') {
     $findings.Add('lib\genai-mil.ts [GenAI.mil policy] The explicit proposal transport modes are missing.')
+  }
+}
+
+# The development certificate bypass is deliberately isolated in a loopback
+# sidecar. The Worker cannot customize TLS verification per fetch, so never
+# weaken the Wrangler/Worker process globally. The sidecar may forward only the
+# operator-configured HTTPS GenAI.mil endpoint and only after token-authenticated
+# POSTs from this local runtime.
+$genaiProxyPath = Join-Path $projectRoot 'scripts\local\genai-mil-development-proxy.mjs'
+if (-not (Test-Path -LiteralPath $genaiProxyPath)) {
+  $findings.Add('scripts\local\genai-mil-development-proxy.mjs [GenAI.mil policy] The development TLS proxy is missing.')
+} else {
+  $genaiProxy = Get-Content -Raw -LiteralPath $genaiProxyPath
+  foreach ($required in @(
+    'endpoint\.protocol !== "https:"',
+    'endpointHost === "genai\.mil"',
+    'endpointHost\.endsWith\("\.genai\.mil"\)',
+    'server\.listen\(PORT, "127\.0\.0\.1"\)',
+    'x-a2o-genai-proxy-token',
+    'request\.method !== "POST"',
+    'request\.url !== "/genai"',
+    'MAX_REQUEST_BYTES',
+    'MAX_RESPONSE_BYTES',
+    '"--ssl-no-revoke"',
+    '"--insecure"',
+    '"--max-redirs", "0"',
+    '"--proto", "=https"'
+  )) {
+    if ($genaiProxy -notmatch $required) { $findings.Add("scripts\local\genai-mil-development-proxy.mjs [GenAI.mil policy] Required development-boundary control is missing: $required") }
   }
 }
 

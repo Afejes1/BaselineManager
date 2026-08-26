@@ -60,8 +60,10 @@ try {
     "GENAI_MIL_TOOL_MODE=$ToolMode"
   ) -join [Environment]::NewLine
   $null = Write-A2OProtectedSecretTextAtomic -Path $target -Text ($content + [Environment]::NewLine)
+  $developmentHeaderPath = Assert-A2OProjectPath -Candidate (Join-Path $projectRoot '.a2o-secrets\genai-mil.curl.headers') -ProjectRoot $projectRoot
+  if (Test-Path -LiteralPath $developmentHeaderPath -PathType Leaf) { Remove-Item -LiteralPath $developmentHeaderPath -Force }
   Write-Output 'GenAI.mil configuration saved locally. It will be loaded automatically by the next npm run local:start.'
-  Write-Output "Saved $ToolMode mode. No GenAI.mil connection was attempted. To replace an expired key or change the mode, run this command again while the app is stopped."
+  Write-Output "Saved $ToolMode mode with normal TLS verification. No GenAI.mil connection was attempted. To replace an expired key or change the mode, run this command again while the app is stopped."
 } finally {
   Pop-Location
 }

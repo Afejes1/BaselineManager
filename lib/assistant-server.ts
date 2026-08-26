@@ -44,7 +44,7 @@ export async function assistantWorkspace(db: Database, actor: Actor, value: unkn
   const grounded = await groundAssistantContext(db, actor, contextFrom(value));
   const state = await listAssistantState(db, grounded.context);
   const readiness = genaiMilReadiness(env as unknown as GenaiMilEnvironment);
-  return { context: grounded.context, groundingSummary: grounded.summary, configured: readiness.configured, configurationMessage: readiness.message, model: readiness.model, ...state };
+  return { context: grounded.context, groundingSummary: grounded.summary, configured: readiness.configured, configurationMessage: readiness.message, model: readiness.model, toolMode: readiness.toolMode, tlsMode: readiness.tlsMode, ...state };
 }
 
 export async function saveAssistantPrompt(db: Database, actor: Actor, contextValue: unknown, body: Record<string, unknown>) {

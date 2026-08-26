@@ -457,6 +457,7 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   let calls = 0;
   const missing = genaiMilReadiness({});
   assert.equal(missing.configured, false);
+  assert.equal(missing.tlsMode, "verified");
   assert.match(missing.message, /local:genai:configure/);
   await assert.rejects(() => askGenaiMil({}, { system: "system", prompt: "question" }, async () => { calls += 1; return new Response(); }), (error: unknown) => error instanceof GenaiMilError && error.code === "not_configured");
   assert.equal(calls, 0);
@@ -479,6 +480,21 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.equal(native.answer.proposals[0]?.kind, "create_call_note");
   assert.ok(Array.isArray(nativeRequests[0]?.tools));
   assert.equal(nativeRequests[0]?.response_format, undefined);
+  const proxyToken = "a".repeat(64);
+  const insecureReadiness = genaiMilReadiness({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "active-key", GENAI_MIL_MODEL: "approved-model", GENAI_MIL_TLS_MODE: "development-insecure", GENAI_MIL_LOCAL_PROXY_TOKEN: proxyToken });
+  assert.equal(insecureReadiness.configured, true);
+  assert.equal(insecureReadiness.tlsMode, "development-insecure");
+  assert.match(insecureReadiness.message, /DEVELOPMENT TLS BYPASS IS ACTIVE/);
+  const proxyRequests: Array<{ url: string; authorization: string | null; token: string | null }> = [];
+  await askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "active-key", GENAI_MIL_MODEL: "approved-model", GENAI_MIL_TLS_MODE: "development-insecure", GENAI_MIL_LOCAL_PROXY_TOKEN: proxyToken }, { system: "system", prompt: "question" }, async (input, init) => {
+    const headers = new Headers(init?.headers);
+    proxyRequests.push({ url: String(input), authorization: headers.get("authorization"), token: headers.get("x-a2o-genai-proxy-token") });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ answer: "Development proxy answer", proposals: [] }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  assert.match(proxyRequests[0]?.url || "", /^http:\/\/127\.0\.0\.1:38471\/genai$/);
+  assert.equal(proxyRequests[0]?.authorization, null);
+  assert.equal(proxyRequests[0]?.token, proxyToken);
+  assert.equal(genaiMilReadiness({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "active-key", GENAI_MIL_MODEL: "approved-model", GENAI_MIL_TLS_MODE: "development-insecure" }).configured, false);
   assert.equal(parseAssistantAnswer("plain answer").proposals.length, 0);
   await assert.rejects(() => askGenaiMil({ GENAI_MIL_API_URL: endpoint.toString(), GENAI_MIL_API_KEY: "expired-key", GENAI_MIL_MODEL: "approved-model" }, { system: "system", prompt: "question" }, async () => new Response("", { status: 401 })), /Re-enable or refresh the key/);
   const migration = read("drizzle/0029_genai_assistant.sql");
@@ -490,15 +506,21 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   const route = read("app/api/assistant/route.ts");
   const start = read("scripts/local/Start-A2OWorkspace.ps1");
   const setup = read("scripts/local/Set-A2OGenaiMilConfiguration.ps1");
+  const tlsMode = read("scripts/local/Set-A2OGenaiMilDevelopmentTls.ps1");
+  const developmentProxy = read("scripts/local/genai-mil-development-proxy.mjs");
+  const packageJson = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
   for (const page of [read("app/initiatives/[initiative]/page.tsx"), read("app/changes/[id]/page.tsx"), read("app/products/[id]/page.tsx"), read("app/platforms/[id]/page.tsx")]) assert.match(page, /AssistantLauncher/);
   assert.match(migration, /assistant_saved_prompt/);
   assert.match(migration, /assistant_scratchpad_entry/);
   assert.match(adapter, /approvedGenaiMilUrl/);
   assert.match(adapter, /NODE_EXTRA_CA_CERTS/);
+  assert.match(adapter, /GENAI_MIL_TLS_MODE/);
+  assert.match(adapter, /GENAI_MIL_LOCAL_PROXY_TOKEN/);
   assert.match(adapter, /native-tools/);
   assert.match(server, /assistantGenerated: true/);
   assert.match(server, /groundingFingerprint/);
   assert.match(component, /No background or automatic model calls/);
+  assert.match(component, /Development TLS bypass/);
   assert.match(component, /Apply reviewed change/);
   assert.match(component, /ViewportModal/);
   assert.match(actions, /create_call_note/);
@@ -507,12 +529,24 @@ test("GenAI.mil assistant is opt-in, restricted to GenAI.mil, and returns review
   assert.doesNotMatch(markdown, /<a\b/);
   assert.match(route, /apply_proposal/);
   assert.match(start, /genai-mil\.runtime\.env/);
+  assert.match(start, /genai-mil-development-proxy\.mjs/);
+  assert.match(start, /CreateNoWindow = \$true/);
+  assert.match(start, /processInfo\.Arguments/);
+  assert.doesNotMatch(start, /processInfo\.ArgumentList/);
   assert.match(setup, /Read-Host -AsSecureString/);
   assert.match(setup, /genai\.mil/);
   assert.match(setup, /\$endpointHost/);
   assert.doesNotMatch(setup, /\$host\s*=/i);
   assert.match(setup, /No GenAI\.mil connection was attempted/);
   assert.match(setup, /GENAI_MIL_TOOL_MODE/);
+  assert.match(tlsMode, /DEVELOPMENT TLS BYPASS ENABLED FOR EXPLICIT GENAI\.MIL REQUESTS/);
+  assert.match(tlsMode, /Write-A2OProtectedSecretTextAtomic/);
+  assert.match(developmentProxy, /server\.listen\(PORT, "127\.0\.0\.1"\)/);
+  assert.match(developmentProxy, /"--ssl-no-revoke"/);
+  assert.match(developmentProxy, /"--insecure"/);
+  assert.match(developmentProxy, /x-a2o-genai-proxy-token/);
+  assert.match(packageJson.scripts["local:genai:tls-bypass"], /Set-A2OGenaiMilDevelopmentTls\.ps1/);
+  assert.match(packageJson.scripts["local:genai:tls-verify"], /-Disable/);
 });
 
 test("derived scope and workspace transfer controls fail closed", () => {

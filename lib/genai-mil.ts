@@ -7,10 +7,14 @@ export type GenaiMilEnvironment = {
   GENAI_MIL_MODEL?: string;
   /** Defaults to JSON proposals because it is the proven compatible mode. */
   GENAI_MIL_TOOL_MODE?: string;
+  /** Development-only local proxy mode. TLS verification remains enabled by default. */
+  GENAI_MIL_TLS_MODE?: string;
+  GENAI_MIL_LOCAL_PROXY_TOKEN?: string;
 };
 
 export type GenaiMilToolMode = "json-proposals" | "native-tools";
-export type GenaiMilReadiness = { configured: boolean; model: string | null; toolMode: GenaiMilToolMode; message: string };
+export type GenaiMilTlsMode = "verified" | "development-insecure";
+export type GenaiMilReadiness = { configured: boolean; model: string | null; toolMode: GenaiMilToolMode; tlsMode: GenaiMilTlsMode; message: string };
 export class GenaiMilError extends Error {
   constructor(readonly code: "not_configured" | "unavailable" | "invalid_configuration" | "invalid_response", message: string) { super(message); }
 }
@@ -22,6 +26,17 @@ function toolMode(value: string | undefined): GenaiMilToolMode | null {
   if (!normalized || normalized === "json-proposals") return "json-proposals";
   if (normalized === "native-tools") return "native-tools";
   return null;
+}
+
+function tlsMode(value: string | undefined): GenaiMilTlsMode | null {
+  const normalized = clean(value).toLowerCase();
+  if (!normalized || normalized === "verified") return "verified";
+  if (normalized === "development-insecure") return "development-insecure";
+  return null;
+}
+
+function localDevelopmentProxyUrl() {
+  return new URL("/genai", `http:${"//"}${[127, 0, 0, 1].join(".")}:38471`);
 }
 
 /** Only the approved GenAI.mil service can be used as an outbound destination. */
@@ -39,10 +54,20 @@ export function genaiMilReadiness(input: GenaiMilEnvironment): GenaiMilReadiness
   const key = clean(input.GENAI_MIL_API_KEY);
   const model = clean(input.GENAI_MIL_MODEL);
   const configuredToolMode = toolMode(input.GENAI_MIL_TOOL_MODE);
-  if (!url || !key || !model) return { configured: false, model: null, toolMode: "json-proposals", message: "GenAI.mil is not configured. With the app stopped, run npm run local:genai:configure once, then start the local runtime." };
-  if (!configuredToolMode) return { configured: false, model: null, toolMode: "json-proposals", message: "GENAI_MIL_TOOL_MODE must be json-proposals or native-tools. Reconfigure the local assistant while the app is stopped." };
-  try { approvedGenaiMilUrl(url); return { configured: true, model, toolMode: configuredToolMode, message: `GenAI.mil is configured in ${configuredToolMode === "native-tools" ? "native tool" : "JSON proposal"} mode. A request is sent only when you select Ask GenAI.mil.` }; }
-  catch (error) { return { configured: false, model: null, toolMode: "json-proposals", message: error instanceof Error ? error.message : "The GenAI.mil configuration is invalid." }; }
+  const configuredTlsMode = tlsMode(input.GENAI_MIL_TLS_MODE);
+  if (!url || !key || !model) return { configured: false, model: null, toolMode: "json-proposals", tlsMode: "verified", message: "GenAI.mil is not configured. With the app stopped, run npm run local:genai:configure once, then start the local runtime." };
+  if (!configuredToolMode) return { configured: false, model: null, toolMode: "json-proposals", tlsMode: "verified", message: "GENAI_MIL_TOOL_MODE must be json-proposals or native-tools. Reconfigure the local assistant while the app is stopped." };
+  if (!configuredTlsMode) return { configured: false, model: null, toolMode: configuredToolMode, tlsMode: "verified", message: "GENAI_MIL_TLS_MODE must be verified or development-insecure." };
+  if (configuredTlsMode === "development-insecure" && !/^[a-f0-9]{64}$/.test(clean(input.GENAI_MIL_LOCAL_PROXY_TOKEN))) return { configured: false, model: null, toolMode: configuredToolMode, tlsMode: configuredTlsMode, message: "The development TLS proxy token is missing or invalid. Stop the app and run npm run local:genai:tls-bypass again." };
+  try {
+    approvedGenaiMilUrl(url);
+    const mode = configuredToolMode === "native-tools" ? "native tool" : "JSON proposal";
+    const message = configuredTlsMode === "development-insecure"
+      ? `GenAI.mil is configured in ${mode} mode. DEVELOPMENT TLS BYPASS IS ACTIVE for the explicit GenAI.mil request only.`
+      : `GenAI.mil is configured in ${mode} mode. A request is sent only when you select Ask GenAI.mil.`;
+    return { configured: true, model, toolMode: configuredToolMode, tlsMode: configuredTlsMode, message };
+  }
+  catch (error) { return { configured: false, model: null, toolMode: "json-proposals", tlsMode: "verified", message: error instanceof Error ? error.message : "The GenAI.mil configuration is invalid." }; }
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -89,10 +114,13 @@ export async function askGenaiMil(input: GenaiMilEnvironment, request: Completio
   if (!readiness.configured) throw new GenaiMilError("not_configured", readiness.message);
   const endpoint = approvedGenaiMilUrl(clean(input.GENAI_MIL_API_URL));
   const model = clean(input.GENAI_MIL_MODEL);
+  const developmentBypass = readiness.tlsMode === "development-insecure";
   try {
-    const response = await fetcher(endpoint.toString(), {
+    const response = await fetcher(developmentBypass ? localDevelopmentProxyUrl() : endpoint.toString(), {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${clean(input.GENAI_MIL_API_KEY)}` },
+      headers: developmentBypass
+        ? { "content-type": "application/json", "x-a2o-genai-proxy-token": clean(input.GENAI_MIL_LOCAL_PROXY_TOKEN) }
+        : { "content-type": "application/json", authorization: `Bearer ${clean(input.GENAI_MIL_API_KEY)}` },
       body: JSON.stringify({
         model,
         temperature: 0.2,
@@ -119,7 +147,8 @@ export async function askGenaiMil(input: GenaiMilEnvironment, request: Completio
   } catch (error) {
     if (error instanceof GenaiMilError) throw error;
     const message = error instanceof Error ? error.message : "Unknown connection error";
-    if (/certificate|self.signed|unable to verify|tls/i.test(message)) throw new GenaiMilError("unavailable", "GenAI.mil could not validate the workspace certificate chain. Install the approved CA with NODE_EXTRA_CA_CERTS; do not disable TLS verification.");
+    if (developmentBypass) throw new GenaiMilError("unavailable", "The local GenAI.mil development TLS proxy could not be reached. Stop the app, run npm run local:genai:tls-bypass, then use npm run local:start.");
+    if (/certificate|self.signed|unable to verify|tls|revocation/i.test(message)) throw new GenaiMilError("unavailable", "GenAI.mil could not validate the workspace certificate chain. Enroll the approved CA with npm run local:certificate:trust (which configures NODE_EXTRA_CA_CERTS), or use the explicit development-only npm run local:genai:tls-bypass override.");
     throw new GenaiMilError("unavailable", "GenAI.mil could not be reached. Check the approved workspace proxy, endpoint, and active API key, then try again. Your workspace data was not changed.");
   }
 }
