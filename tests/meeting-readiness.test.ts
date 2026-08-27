@@ -18,8 +18,44 @@ import { parseAssistantAnswer } from "../lib/assistant-model.js";
 import { GenaiMilError, approvedGenaiMilUrl, askGenaiMil, genaiMilReadiness } from "../lib/genai-mil.js";
 import { buildDependencyBoard } from "../lib/dependency-board-model.js";
 import { buildInfrastructureMermaid } from "../lib/infrastructure-mermaid.js";
+import { parseCdSwMatrix } from "../lib/cd-sw-import.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
+
+test("CD SW parser finds staggered machine headers and materializes X placements", () => {
+  const matrix = [
+    ["", "", "", "", "", "", "", "", "", "", "", "", "", "Physical", "Virtual_Appliance", "Virtual_Linux"],
+    ["", "", "", "", "", "", "", "", "", "", "", "", "Machine UUID", "dd983160-26f8-44cb-9f0d-be7dbd87633e", "5fd340e2-2de7-4231-8f98-9e115e91532e", "3172d7ce-9714-40a5-b9a4-b5cd6af56eb4"],
+    ["", "", "", "", "", "", "", "", "", "", "", "", "Hostname", "DMZHOST", "Internal Firewall", "k8manager0"],
+    ["", "", "", "", "", "", "", "", "", "", "", "", "ID", "7005", "7007-VM1", "7007-VM5"],
+    ["Software Component", "Software Name", "Version", "Description", "Vendor", "CSCI", "Type", "Trusted", "NIAP", "Verified By", "UUID", "Alias", "", "", "", ""],
+    ["AIHM-AFRS", "AFRS Custom Developed Code", "226.2.20.4", "Source description", "LM", "AIHM-AFR", "Dev", "", "", "Assessor", "e2e99f47-06b8-46c8-9a98-bdf12a1c7f5e", "AFRS_PMA", "", "X", "", "X"],
+    ["Enterprise", "MongoDB Enterprise", "7.0.11.1", "NoSQL database", "MongoDB", "AIHM-AVD", "COTS", "", "", "", "43fc2cea-enterprise-mongodb", "enterprise_mongodb", "", "", "X", ""],
+  ];
+  const parsed = parseCdSwMatrix(matrix);
+  assert.equal(parsed.headerRowNumber, 5);
+  assert.equal(parsed.machineStartColumn, 13);
+  assert.equal(parsed.machines.length, 3);
+  assert.equal(parsed.softwareRows.length, 2);
+  assert.equal(parsed.placementCount, 3);
+  assert.equal(parsed.machines[0].nodeType, "physical_server");
+  assert.equal(parsed.machines[1].nodeType, "virtual_machine");
+  assert.deepEqual(parsed.softwareRows[0].machineKeys, [parsed.machines[0].key, parsed.machines[2].key]);
+  assert.equal(parsed.softwareRows[1].installationRole, "database");
+});
+
+test("CD SW parser blocks ambiguous duplicate source identities", () => {
+  const matrix = [
+    ["", "", "", "", "Physical", "Physical"],
+    ["", "", "", "Machine UUID", "same-machine", "same-machine"],
+    ["", "", "", "Hostname", "Server A", "Server B"],
+    ["", "", "", "ID", "A", "B"],
+    ["Software Component", "Software Name", "Version", "Alias", "", ""],
+    ["Component", "Product", "1.0", "instance", "X", "X"],
+  ];
+  const parsed = parseCdSwMatrix(matrix);
+  assert.ok(parsed.machines.every((machine) => machine.issues.some((issue) => issue.includes("more than one column"))));
+});
 
 function reportFixture() {
   const bundle = {
