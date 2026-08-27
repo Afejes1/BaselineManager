@@ -10,6 +10,7 @@ export type CdSwMachine = {
   sourceType: string;
   sourceUuid: string;
   name: string;
+  sourceCode: string;
   code: string;
   nodeType: InfrastructureNodeType;
   issues: string[];
@@ -238,7 +239,15 @@ export function parseCdSwMatrix(matrix: unknown[][]): CdSwDataset {
     if (!sourceUuid) warnings.push(`Warning: machine column ${columnLabel} has no source UUID; its ID/code will be used for matching.`);
     if (!sourceType) warnings.push(`Warning: machine column ${columnLabel} has no reported type and will be classified as Other.`);
     else if (!NODE_TYPE_VALUES.has(normalizeCdSwKey(sourceType))) warnings.push(`Warning: reported machine type “${sourceType}” is not recognized and will be classified as Other.`);
-    return { key, columnIndex, columnLabel, sourceType, sourceUuid, name: name || code || `Machine ${columnLabel}`, code: code || name || `CDSW-${columnLabel}`, nodeType: nodeType(sourceType, name || code), issues, warnings };
+    return { key, columnIndex, columnLabel, sourceType, sourceUuid, name: name || code || `Machine ${columnLabel}`, sourceCode: code, code: code || name || `CDSW-${columnLabel}`, nodeType: nodeType(sourceType, name || code), issues, warnings };
+  });
+  const duplicateMachineCodes = new Set(machines.filter((machine, index) => machines.findIndex((candidate) => normalizeCdSwKey(candidate.code) === normalizeCdSwKey(machine.code)) !== index).map((machine) => normalizeCdSwKey(machine.code)));
+  machines.forEach((machine) => {
+    if (!duplicateMachineCodes.has(normalizeCdSwKey(machine.code))) return;
+    const suffix = machine.sourceUuid.replace(/[^a-z0-9]/gi, "").slice(0, 12) || `COL${machine.columnLabel}`;
+    const reportedCode = machine.code;
+    machine.code = `${reportedCode}-${suffix}`;
+    machine.warnings.push(`Warning: reported machine ID “${reportedCode}” is repeated in this worksheet; canonical code “${machine.code}” uses the machine UUID${machine.sourceUuid ? "" : " fallback column"} to keep the nodes distinct.`);
   });
   const duplicateMachineKeys = new Set(machines.filter((machine, index) => machines.findIndex((candidate) => candidate.key === machine.key) !== index).map((machine) => machine.key));
   machines.forEach((machine) => { if (duplicateMachineKeys.has(machine.key)) machine.issues.push(`Machine identity “${machine.sourceUuid || machine.code || machine.name}” appears in more than one column.`); });

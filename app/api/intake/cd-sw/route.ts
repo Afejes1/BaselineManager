@@ -84,14 +84,14 @@ async function buildReview(dataset: CdSwDataset, releaseId: string, platformId: 
 
   for (const machine of dataset.machines) {
     const deterministicNodeId = await stableId("cdsw-node", `${platformId}|${machine.sourceUuid || machine.code || machine.name}`);
-    const existingNode = nodesById.get(deterministicNodeId) || nodesByCode.get(canonicalNormalized(machine.code)) || nodesByName.get(canonicalNormalized(machine.name)) || null;
+    const existingNode = nodesById.get(deterministicNodeId) || nodesByCode.get(canonicalNormalized(machine.code)) || (!machine.sourceUuid ? nodesByName.get(canonicalNormalized(machine.name)) : null) || null;
     const nodeId = existingNode?.id || deterministicNodeId;
     const existingState = statesByNode.get(nodeId) || null;
     const stateId = existingState?.id || await stableId("cdsw-state", `${releaseId}|${nodeId}`);
     machineTargets.set(machine.key, { machine, nodeId, stateId, node: existingNode, state: existingState });
     const sourceKey = `machine:${machine.key}`;
-    const normalized = { kind: "machine", sourceType: machine.sourceType, sourceUuid: machine.sourceUuid, name: machine.name, code: machine.code, nodeType: machine.nodeType, releaseId, platformId };
-    const changes = sourceChanges(context.latest.get(sourceKey) || null, normalized, ["sourceType", "sourceUuid", "name", "code", "nodeType"]);
+    const normalized = { kind: "machine", sourceType: machine.sourceType, sourceUuid: machine.sourceUuid, name: machine.name, sourceCode: machine.sourceCode, code: machine.code, nodeType: machine.nodeType, releaseId, platformId };
+    const changes = sourceChanges(context.latest.get(sourceKey) || null, normalized, ["sourceType", "sourceUuid", "name", "sourceCode", "code", "nodeType"]);
     const issues = [...machine.issues, ...machine.warnings];
     if (existingNode?.lifecycle_status === "retired") issues.unshift("The matching infrastructure node is retired and cannot receive a current reported state.");
     if (existingState?.lifecycle_status === "absent" && existingState.confidence !== "reported") issues.unshift("The matching Release node is adjudicated as absent; the source row will not reactivate it.");
@@ -111,7 +111,7 @@ async function buildReview(dataset: CdSwDataset, releaseId: string, platformId: 
       targetKind: "infrastructure_node",
       defaultDecision: blocked ? "skip" : "approve",
     };
-    records.push({ kind: "machine", item, machine, nodeId, stateId, raw: { sourceType: machine.sourceType, sourceUuid: machine.sourceUuid, name: machine.name, code: machine.code, column: machine.columnLabel }, normalized });
+    records.push({ kind: "machine", item, machine, nodeId, stateId, raw: { sourceType: machine.sourceType, sourceUuid: machine.sourceUuid, name: machine.name, sourceCode: machine.sourceCode, canonicalCode: machine.code, column: machine.columnLabel }, normalized });
   }
 
   for (const software of dataset.softwareRows) {
@@ -219,7 +219,7 @@ async function applyReview(body: IncomingBody, dataset: CdSwDataset, records: Re
     for (const record of approved) {
       if (record.kind === "machine") {
         const ref = sourceReference(body, `machine column ${record.machine.columnLabel}`);
-        const description = `CD SW reported machine. Source type: ${record.machine.sourceType || "not supplied"}. Source UUID: ${record.machine.sourceUuid || "not supplied"}.`;
+        const description = `CD SW reported machine. Source type: ${record.machine.sourceType || "not supplied"}. Source UUID: ${record.machine.sourceUuid || "not supplied"}. Reported machine ID: ${record.machine.sourceCode || "not supplied"}.`;
         entityStatements.push(env.DB.prepare("INSERT INTO infrastructure_node (id,program_id,platform_id,node_type,code,normalized_code,name,normalized_name,lifecycle_status,description,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
           .bind(record.nodeId, PROGRAM_ID, platformId, record.machine.nodeType, record.machine.code, canonicalNormalized(record.machine.code), record.machine.name, canonicalNormalized(record.machine.name), "active", description, actor.id, at, at));
         entityStatements.push(env.DB.prepare("INSERT INTO release_infrastructure_node (id,program_id,release_id,platform_id,infrastructure_node_id,parent_state_id,lifecycle_status,operating_state,confidence,source_reference,source_as_of,notes,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(release_id,infrastructure_node_id) DO UPDATE SET lifecycle_status='active',operating_state='unknown',source_reference=excluded.source_reference,source_as_of=excluded.source_as_of,notes=excluded.notes,updated_at=excluded.updated_at WHERE release_infrastructure_node.confidence='reported'")

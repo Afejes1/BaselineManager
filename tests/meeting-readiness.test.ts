@@ -57,6 +57,21 @@ test("CD SW parser blocks ambiguous duplicate source identities", () => {
   assert.ok(parsed.machines.every((machine) => machine.issues.some((issue) => issue.includes("more than one column"))));
 });
 
+test("CD SW parser disambiguates repeated machine IDs with source UUIDs", () => {
+  const matrix = [
+    ["", "", "", "", "Physical", "Virtual"],
+    ["", "", "", "Machine UUID", "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+    ["", "", "", "Hostname", "Shared ID host", "Shared ID VM"],
+    ["", "", "", "ID", "7005", "7005"],
+    ["Software Component", "Software Name", "Version", "Alias", "", ""],
+    ["Component", "Product", "1.0", "instance", "X", "X"],
+  ];
+  const parsed = parseCdSwMatrix(matrix);
+  assert.equal(new Set(parsed.machines.map((machine) => machine.code)).size, 2);
+  assert.ok(parsed.machines.every((machine) => machine.sourceCode === "7005"));
+  assert.ok(parsed.machines.every((machine) => machine.warnings.some((warning) => warning.includes("repeated in this worksheet"))));
+});
+
 function reportFixture() {
   const bundle = {
     initiative: { id: "initiative-1", title: "Synthetic modernization", status: "decision_required", priority: "critical", owner: "Program office", targetDate: "2026-11-30", consequence: "Mission risk remains", desiredOutcome: "Supported runtime fielded", decisionAsk: "Authorize the bounded change", asIsStatement: "Legacy runtime remains", toBeStatement: "Supported runtime deployed", successMeasures: "All acceptance checks pass", briefingAudience: "Leadership", decisionNeededBy: "2026-09-01", primaryReleaseId: "release-1", primaryReleaseName: "Release 1", updatedAt: "2026-08-20T12:00:00.000Z" },
