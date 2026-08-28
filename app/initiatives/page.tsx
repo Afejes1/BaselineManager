@@ -32,6 +32,8 @@ export default function InitiativesPage() {
   const [consequence, setConsequence] = useState("");
   const [desiredOutcome, setDesiredOutcome] = useState("");
   const [decisionAsk, setDecisionAsk] = useState("");
+  const [problemStatement, setProblemStatement] = useState("");
+  const [driversConstraints, setDriversConstraints] = useState("");
 
   const releases = useMemo(() => ["All releases", ...(decisionWorkspace.workspace?.changes.releases.map((release) => release.name) || [])], [decisionWorkspace.workspace?.changes.releases]);
   const initiatives = useMemo(() => portfolio?.initiatives ?? [], [portfolio?.initiatives]);
@@ -42,7 +44,7 @@ export default function InitiativesPage() {
   }), [initiatives, query, statusFilter]);
 
   function openCreate() {
-    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setShowCreate(true);
+    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setProblemStatement(""); setDriversConstraints(""); setShowCreate(true);
   }
 
   function changeRelease(nextRelease: string) {
@@ -53,7 +55,7 @@ export default function InitiativesPage() {
     if (!title.trim()) { setNotice("Enter an initiative title before saving."); return; }
     setSaving(true);
     try {
-      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk });
+      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk, problemStatement, driversConstraints });
       await decisionWorkspace.reload();
       setShowCreate(false);
       setNotice(`Created initiative ${title.trim()}.`);
@@ -62,7 +64,7 @@ export default function InitiativesPage() {
     } finally { setSaving(false); }
   }
 
-  return <DomainPageShell title="Initiatives" subtitle="Government outcomes, Change Requests, technical work, requirements, and evidence." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} contextMode="portfolio" actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
+  return <DomainPageShell title="Initiatives" subtitle="Government problem-and-outcome cases with explicit, source-backed solution alternatives." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} contextMode="portfolio" actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
     <section className="kpi-grid" aria-label="Initiative summary">
       <div className="kpi-card"><span>Initiatives</span><strong>{initiatives.length}</strong><small>Government decision records</small></div>
       <div className="kpi-card"><span>Active</span><strong>{initiatives.filter((item) => item.status === "active").length}</strong><small>Under active review</small></div>
@@ -87,7 +89,10 @@ export default function InitiativesPage() {
         <span className="eyebrow">GOVERNMENT DECISION</span><h2 id="initiative-create-title">Create initiative</h2><p>Create the decision record first. Its technical scope is derived from affected objects on linked Change Requests and their LM Objectives; it is never selected here.</p>
         <InitiativeScopeHelper />
         <div className="form-grid"><label className="modal-field">Initiative title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Stabilize mission telemetry stack" /></label><label className="modal-field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Lead office / team" /></label><label className="modal-field">Release lens (optional)<select value={releaseName} onChange={(event) => changeRelease(event.target.value)}>{releases.map((item) => <option key={item}>{item}</option>)}</select><small>Organizes the decision view; it does not define technical scope.</small></label><label className="modal-field">Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><label className="modal-field">Status<select value={status} onChange={(event) => setStatus(event.target.value as InitiativeStatus)}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as InitiativePriority)}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label></div>
-        <label className="modal-field">Consequence<input value={consequence} onChange={(event) => setConsequence(event.target.value)} placeholder="What remains at risk if this is not funded?" /></label><label className="modal-field">Desired outcome<input value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="End state" /></label><label className="modal-field">Decision required<input value={decisionAsk} onChange={(event) => setDecisionAsk(event.target.value)} placeholder="Specific Government decision or direction requested" /></label>
+        <label className="modal-field">Problem statement<textarea rows={3} value={problemStatement} onChange={(event) => setProblemStatement(event.target.value)} placeholder="Why is the current condition unacceptable?" /><small>Describe the undesirable condition without embedding a preferred solution.</small></label>
+        <label className="modal-field">Desired outcome<textarea rows={3} value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="Government end state shared by every option" /><small>Every solution option will be evaluated against this same outcome.</small></label>
+        <label className="modal-field">Known drivers / constraints<textarea rows={3} value={driversConstraints} onChange={(event) => setDriversConstraints(event.target.value)} placeholder="EOL dates, security boundaries, fielding windows, policy, or mission constraints" /></label>
+        <label className="modal-field">Consequence<input value={consequence} onChange={(event) => setConsequence(event.target.value)} placeholder="What remains at risk if no action is taken?" /></label><label className="modal-field">Decision required<input value={decisionAsk} onChange={(event) => setDecisionAsk(event.target.value)} placeholder="Specific Government decision or direction requested" /></label>
         <footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={create}>{saving ? "Saving…" : "Create initiative"}</button></footer>
       </section>
     </div>}

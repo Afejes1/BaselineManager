@@ -11,6 +11,7 @@ import { ViewportModal } from "../../../components/viewport-modal";
 import { AuditHistoryPanel } from "../../../components/governed-object";
 import { ObjectRecordsPanel } from "../../../components/object-workspace";
 import { AssistantLauncher } from "../../../components/context-assistant";
+import { InitiativeSolutionEngineering } from "../../../components/initiative-solution-engineering";
 import { useGovernancePortfolio } from "../../../lib/governance-client";
 import { displayStatus, initiativePriorities, initiativeStatuses, workPackageStatuses, type WorkPackageStatus } from "../../../lib/governance-model";
 import { useInitiativeDecisions } from "../../../lib/initiative-decision-client";
@@ -18,7 +19,7 @@ import { objectiveIsRelatedToChangeRequest, objectiveRelatedChangeRequestIds, re
 import { estimateVariance } from "../../../lib/initiative-readiness";
 import { deriveInitiativeScope, scopeObjectKindLabel } from "../../../lib/initiative-scope";
 
-type Tab = "decision" | "delivery" | "requirements" | "timeline" | "baseline" | "evidence" | "history";
+type Tab = "solutions" | "decision" | "delivery" | "requirements" | "timeline" | "baseline" | "evidence" | "history";
 type Draft = Record<string, string>;
 const empty = (values: Draft): Draft => values;
 const dateLabel = (value: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString() : "Not set";
@@ -38,10 +39,10 @@ export default function InitiativeDetailPage() {
   const initiativeId = decodeURIComponent(params.initiative || "");
   const governance = useGovernancePortfolio();
   const decision = useInitiativeDecisions(initiativeId);
-  const [tab, setTab] = useState<Tab>("decision");
+  const [tab, setTab] = useState<Tab>("solutions");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [profile, setProfile] = useState<Draft>(empty({ asIsStatement: "", toBeStatement: "", successMeasures: "", briefingAudience: "", decisionNeededBy: "", decisionAsk: "", desiredOutcome: "", consequence: "", owner: "", targetDate: "", romHoursPerPoint: "500", romConversionRationale: "" }));
+  const [profile, setProfile] = useState<Draft>(empty({ problemStatement: "", driversConstraints: "", asIsStatement: "", toBeStatement: "", successMeasures: "", briefingAudience: "", decisionNeededBy: "", decisionAsk: "", desiredOutcome: "", consequence: "", owner: "", targetDate: "", romHoursPerPoint: "500", romConversionRationale: "" }));
   const [linkDraft, setLinkDraft] = useState<Draft>(empty({ changeRequestId: "", relationship: "delivers", contributionSummary: "" }));
   const [unlinkDraft, setUnlinkDraft] = useState<Draft>(empty({ changeRequestId: "", rationale: "" }));
   const [objectiveDraft, setObjectiveDraft] = useState<Draft>(empty({ changeRequestId: "", externalSystem: "Incumbent objective register", externalIdentifier: "", title: "", summary: "", technicalOwner: "", status: "planned", plannedStart: "", plannedFinish: "", actualStart: "", actualFinish: "", sourceLocator: "", sourceAsOf: "", reparentReason: "" }));
@@ -96,7 +97,7 @@ export default function InitiativeDetailPage() {
     if (!bundle) return;
     const handle = window.setTimeout(() => {
       const item = bundle.initiative;
-      setProfile({ asIsStatement: item.asIsStatement || "", toBeStatement: item.toBeStatement || "", successMeasures: item.successMeasures || "", briefingAudience: item.briefingAudience || "", decisionNeededBy: item.decisionNeededBy || "", decisionAsk: item.decisionAsk || "", desiredOutcome: item.desiredOutcome || "", consequence: item.consequence || "", owner: item.owner || "", targetDate: item.targetDate || "", romHoursPerPoint: String(item.romHoursPerPoint), romConversionRationale: item.romConversionRationale || "" });
+      setProfile({ problemStatement: item.problemStatement || "", driversConstraints: item.driversConstraints || "", asIsStatement: item.asIsStatement || "", toBeStatement: item.toBeStatement || "", successMeasures: item.successMeasures || "", briefingAudience: item.briefingAudience || "", decisionNeededBy: item.decisionNeededBy || "", decisionAsk: item.decisionAsk || "", desiredOutcome: item.desiredOutcome || "", consequence: item.consequence || "", owner: item.owner || "", targetDate: item.targetDate || "", romHoursPerPoint: String(item.romHoursPerPoint), romConversionRationale: item.romConversionRationale || "" });
       setLinkDraft((current) => ({ ...current, changeRequestId: current.changeRequestId || decision.workspace?.changes.requests.find((request) => !linkedRequestIds.has(request.id))?.id || "" }));
       setObjectiveDraft((current) => ({ ...current, changeRequestId: current.changeRequestId || itemValue(bundle.changeRequests[0]?.id) }));
       setEstimateDraft((current) => ({ ...current, objectiveId: current.objectiveId || itemValue(bundle.objectives[0]?.id) }));
@@ -205,17 +206,21 @@ export default function InitiativeDetailPage() {
 
   if (decision.loading || governance.loading) return <DomainPageShell title="Initiative" subtitle="Loading Initiative data…" releaseScope="Loading" contextMode="portfolio"><p className="empty">Loading Initiative analysis…</p></DomainPageShell>;
   if (decision.error || governance.error || !bundle || !initiative) return <DomainPageShell title="Initiative not found" subtitle={decision.error || governance.error || "That Initiative is unavailable."} releaseScope="No Initiative" contextMode="portfolio"><Link href="/initiatives">Back to Initiatives</Link></DomainPageShell>;
+  const selectedSolution = bundle.solutionOptions.find((option) => option.id === bundle.solutionDecision?.selectedOptionId) || null;
+  const explicitlySelectedObjectives = new Set(bundle.solutionObjectiveLinks.map((link) => link.objectiveId)).size;
 
-  return <DomainPageShell title={bundle.initiative.title} subtitle="Government outcome, Change Requests, technical work, requirements, and acceptance evidence." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release lens"} · ${derivedScope?.affectedObjects.length || 0} affected objects`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><AssistantLauncher context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} /><AnalyticsLink kind="initiative" id={bundle.initiative.id} /><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Open leadership one-pager</Link><button className="primary-button" type="button" disabled={reportSaving} onClick={() => void saveLeadershipReport()}>{reportSaving ? "Saving report…" : "Save report snapshot"}</button><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
+  return <DomainPageShell title={bundle.initiative.title} subtitle="Government problem, shared outcome, solution alternatives, and source-backed execution trace." releaseScope={`${bundle.initiative.primaryReleaseName || "Cross-release lens"} · ${derivedScope?.affectedObjects.length || 0} affected objects`} contextMode="portfolio" objectContext={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} actions={<><AssistantLauncher context={{ kind: "initiative", id: bundle.initiative.id, label: bundle.initiative.title }} /><AnalyticsLink kind="initiative" id={bundle.initiative.id} /><button className="ghost-button" type="button" onClick={() => setInitiativeEditOpen(true)}>Edit Initiative</button><Link className="ghost-button" href={`/initiatives/${encodeURIComponent(initiativeId)}/one-pager`}>Open leadership one-pager</Link><button className="primary-button" type="button" disabled={reportSaving} onClick={() => void saveLeadershipReport()}>{reportSaving ? "Saving report…" : "Save report snapshot"}</button><Link className="mini-action" href="/initiatives">Initiatives</Link></>}>
     <ProvenanceKey compact />
     <section className="kpi-grid" aria-label="Initiative decision summary">
-      <div className="kpi-card"><span>Decision readiness</span><strong>{assessment?.score ?? 0}%</strong><small>{readable(assessment?.stage || "not_ready")}</small></div>
-      <div className="kpi-card"><span>Funding units</span><strong>{bundle.changeRequests.length}</strong><small>{assessment?.decisionsPending || 0} Government decisions pending</small></div>
-      <div className="kpi-card"><span>Technical delivery</span><strong>{bundle.objectives.length}</strong><small>Incumbent Objectives</small></div>
+      <div className="kpi-card"><span>Solution adjudication</span><strong>{readable(bundle.solutionDecision?.disposition || "pending")}</strong><small>{selectedSolution?.title || "No option selected"}</small></div>
+      <div className="kpi-card"><span>Alternatives</span><strong>{bundle.solutionOptions.length}</strong><small>{explicitlySelectedObjectives} explicitly selected Objectives</small></div>
+      <div className="kpi-card"><span>Initiative source universe</span><strong>{bundle.changeRequests.length} / {bundle.objectives.length}</strong><small>Change Requests / Objectives; options use explicit subsets</small></div>
       <div className="kpi-card"><span>Derived technical scope</span><strong>{derivedScope?.affectedObjects.length || 0}</strong><small>{derivedScope?.explicitBaselineRecordCount || 0} explicitly linked baseline records</small></div>
-      <div className="kpi-card"><span>Trace & acceptance</span><strong>{assessment?.requirementsTraced || 0}/{bundle.requirements.length}</strong><small>{assessment?.criteriaPassed || 0}/{bundle.criteria.length} criteria accepted</small></div>
+      <div className="kpi-card"><span>Legacy whole-case trace</span><strong>{assessment?.requirementsTraced || 0}/{bundle.requirements.length}</strong><small>{assessment?.criteriaPassed || 0}/{bundle.criteria.length} criteria accepted · not an option score</small></div>
     </section>
-    <nav className="detail-tabs" aria-label="Initiative views">{(["decision", "delivery", "requirements", "timeline", "baseline", "evidence", "history"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "decision" ? "Decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Derived scope & WBS" : item === "evidence" ? "Calls & evidence" : displayStatus(item)}</button>)}</nav>
+    <nav className="detail-tabs" aria-label="Initiative views">{(["solutions", "decision", "delivery", "requirements", "timeline", "baseline", "evidence", "history"] as Tab[]).map((item) => <button key={item} type="button" className={tab === item ? "tab-button tab-active" : "tab-button"} onClick={() => setTab(item)}>{item === "solutions" ? "Solution engineering" : item === "decision" ? "Legacy decision frame" : item === "delivery" ? "CRs & Objectives" : item === "requirements" ? "Requirements & acceptance" : item === "baseline" ? "Derived scope & WBS" : item === "evidence" ? "Calls & evidence" : displayStatus(item)}</button>)}</nav>
+
+    {tab === "solutions" && decision.workspace ? <InitiativeSolutionEngineering workspace={decision.workspace} bundle={bundle} mutate={decision.mutate} /> : null}
 
     {tab === "decision" && <div className="decision-workspace">
       <section className="as-is-to-be" aria-label="Current and target state"><article className="state-panel state-current"><span className="eyebrow">LEFT · WHERE WE ARE</span><h2>As-Is</h2><p>{bundle.initiative.asIsStatement || "Current state has not been substantiated."}</p></article><div className="state-arrow"><span>Decision path</span><strong>→</strong><small>{bundle.changeRequests.length} linked CRs</small></div><article className="state-panel state-target"><span className="eyebrow">RIGHT · WHERE WE NEED TO BE</span><h2>To-Be</h2><p>{bundle.initiative.toBeStatement || "Target state has not been defined."}</p></article></section>

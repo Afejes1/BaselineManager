@@ -104,7 +104,7 @@ export function audit(db: Database, actor: Actor, action: string, entityKind: st
 
 type InitiativeRow = {
   id: string; primary_release_id: string | null; title: string; status: InitiativeStatus; priority: InitiativePriority; owner: string | null; target_date: string | null;
-  consequence: string | null; desired_outcome: string | null; decision_ask: string | null; created_at: string; updated_at: string; primary_release_name: string | null;
+  consequence: string | null; desired_outcome: string | null; decision_ask: string | null; problem_statement: string | null; drivers_constraints: string | null; created_at: string; updated_at: string; primary_release_name: string | null;
 };
 
 type WorkPackageRow = { id: string; initiative_id: string; parent_id: string | null; wbs_code: string; title: string; owner: string | null; planned_start: string | null; due_date: string | null; actual_start: string | null; actual_finish: string | null; status: WorkPackageStatus; work_type: "analysis" | "coordination" | "verification" | "decision_support" | "other"; definition_of_done: string | null; progress_basis: string | null; notes: string | null; sort_order: number; created_at: string; updated_at: string };
@@ -167,7 +167,7 @@ export async function portfolio(db: Database, actor: Actor): Promise<Portfolio> 
     handlingMarking: PROGRAM_HANDLING_MARKING,
     initiatives: initiativeResult.results.map((entry) => ({
       id: entry.id, title: entry.title, status: entry.status, priority: entry.priority, owner: entry.owner, targetDate: entry.target_date,
-      consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, primaryReleaseId: entry.primary_release_id,
+      consequence: entry.consequence, desiredOutcome: entry.desired_outcome, decisionAsk: entry.decision_ask, problemStatement: entry.problem_statement, driversConstraints: entry.drivers_constraints, primaryReleaseId: entry.primary_release_id,
       primaryReleaseName: entry.primary_release_name, scope: (scopes.get(entry.id) ?? []).map((scope) => ({ id: scope.id, scopeKind: scope.scope_kind, scopeId: scope.scope_id, displayLabel: scope.display_label })),
       workPackages: (workPackages.get(entry.id) ?? []).map((work) => mapWorkPackage(work, objectivesByWorkPackage.get(work.id) ?? [])),
       linkedRecordCount: recordLinksByInitiative.get(entry.id) ?? 0, createdAt: entry.created_at, updatedAt: entry.updated_at,
@@ -307,8 +307,8 @@ export async function createInitiative(db: Database, actor: Actor, body: Record<
   const at = now();
   if (body.productScopes !== undefined || body.entireReleaseScope !== undefined) throw new Error("Initiative technical scope is derived from linked Change Request effects; do not submit a manual Product or Release scope.");
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(initiativeId, PROGRAM_ID, releaseId, title, normalized(title), status, priority, nullable(body.owner), nullable(body.targetDate), nullable(body.consequence), nullable(body.desiredOutcome), nullable(body.decisionAsk), actor.id, at, at),
+    db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,problem_statement,drivers_constraints,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(initiativeId, PROGRAM_ID, releaseId, title, normalized(title), status, priority, nullable(body.owner), nullable(body.targetDate), nullable(body.consequence), nullable(body.desiredOutcome), nullable(body.decisionAsk), nullable(body.problemStatement), nullable(body.driversConstraints), actor.id, at, at),
   ];
   statements.push(audit(db, actor, "initiative_created", "initiative", initiativeId, { title, status, priority, releaseId, technicalScope: "derived_from_linked_change_request_effects" }));
   await db.batch(statements);
@@ -326,10 +326,10 @@ export async function updateInitiative(db: Database, actor: Actor, body: Record<
   const releaseId = body.releaseName === undefined ? current.primary_release_id : await releaseIdFor(db, body.releaseName);
   if (body.productScopes !== undefined || body.entireReleaseScope !== undefined) throw new Error("Initiative technical scope is derived from linked Change Request effects; update affected objects on the Change Request instead.");
   const at = now();
-  const next = { title, status, priority, owner: body.owner === undefined ? current.owner : nullable(body.owner), targetDate: body.targetDate === undefined ? current.target_date : nullable(body.targetDate), consequence: body.consequence === undefined ? current.consequence : nullable(body.consequence), desiredOutcome: body.desiredOutcome === undefined ? current.desired_outcome : nullable(body.desiredOutcome), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), releaseId };
+  const next = { title, status, priority, owner: body.owner === undefined ? current.owner : nullable(body.owner), targetDate: body.targetDate === undefined ? current.target_date : nullable(body.targetDate), consequence: body.consequence === undefined ? current.consequence : nullable(body.consequence), desiredOutcome: body.desiredOutcome === undefined ? current.desired_outcome : nullable(body.desiredOutcome), decisionAsk: body.decisionAsk === undefined ? current.decision_ask : nullable(body.decisionAsk), problemStatement: body.problemStatement === undefined ? current.problem_statement : nullable(body.problemStatement), driversConstraints: body.driversConstraints === undefined ? current.drivers_constraints : nullable(body.driversConstraints), releaseId };
   const statements: D1PreparedStatement[] = [
-    db.prepare("UPDATE initiative SET primary_release_id=?,title=?,normalized_title=?,status=?,priority=?,owner=?,target_date=?,consequence=?,desired_outcome=?,decision_ask=?,updated_at=? WHERE id=?")
-      .bind(releaseId, title, normalized(title), status, priority, next.owner, next.targetDate, next.consequence, next.desiredOutcome, next.decisionAsk, at, initiativeId),
+    db.prepare("UPDATE initiative SET primary_release_id=?,title=?,normalized_title=?,status=?,priority=?,owner=?,target_date=?,consequence=?,desired_outcome=?,decision_ask=?,problem_statement=?,drivers_constraints=?,updated_at=? WHERE id=?")
+      .bind(releaseId, title, normalized(title), status, priority, next.owner, next.targetDate, next.consequence, next.desiredOutcome, next.decisionAsk, next.problemStatement, next.driversConstraints, at, initiativeId),
   ];
   statements.push(audit(db, actor, "initiative_updated", "initiative", initiativeId, { ...next, technicalScope: "derived_from_linked_change_request_effects" }, current));
   await db.batch(statements);

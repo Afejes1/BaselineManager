@@ -3,6 +3,7 @@ import { ensureActor } from "../../../lib/governance-server";
 import { addObjectiveEstimate, initiativeDecisionWorkspace, linkChangeRequest, recordAcceptanceSignoff, saveAcceptanceCriterion, saveDecisionProfile, saveInitiativeMilestone, saveObjective, saveObjectiveDependency, saveObjectiveEffectAttribution, saveRequirementTrace, unlinkChangeRequest } from "../../../lib/initiative-decision-server";
 import { enrichDemonstrationWorkspace } from "../../../lib/demo-workspace-server";
 import { demoEnabledFromValue } from "../../../lib/runtime-policy";
+import { removeSolutionChangeRequest, removeSolutionObjective, saveSolutionAssessment, saveSolutionDecision, saveSolutionOption, saveSolutionStep, setSolutionChangeRequest, setSolutionObjective } from "../../../lib/initiative-solution-server";
 
 export async function GET(request: Request) {
   try {
@@ -11,9 +12,9 @@ export async function GET(request: Request) {
     // scenario once when that exact synthetic package is still active; never
     // add it to an imported stakeholder workbook or a DEMO_ENABLED=false build.
     const demoEnabled = demoEnabledFromValue((env as unknown as { DEMO_ENABLED?: string }).DEMO_ENABLED);
-    if (demoEnabled) {
+    if (demoEnabled && actor.role !== "viewer") {
       const current = await env.DB.prepare("SELECT sp.file_name FROM baseline_workspace bw LEFT JOIN source_package sp ON sp.id=bw.active_import_package_id WHERE bw.id='workspace-jsf-current'").first<{ file_name: string | null }>();
-      const exists = await env.DB.prepare("SELECT COUNT(*) AS count FROM initiative WHERE id='demo-initiative-java8'").first<{ count: number }>();
+      const exists = await env.DB.prepare("SELECT COUNT(*) AS count FROM solution_option WHERE id='demo-solution-java8-targeted'").first<{ count: number }>();
       if (current?.file_name === "JSF_V3_Demonstration_Baseline.xlsx" && !Number(exists?.count || 0)) await enrichDemonstrationWorkspace(env.DB, actor);
     }
     const searchParams = new URL(request.url).searchParams;
@@ -44,7 +45,15 @@ export async function POST(request: Request) {
       : action === "save_requirement" ? await saveRequirementTrace(env.DB, actor, body)
       : action === "save_criterion" ? await saveAcceptanceCriterion(env.DB, actor, body)
       : action === "record_signoff" ? await recordAcceptanceSignoff(env.DB, actor, body)
-      : action === "save_milestone" ? await saveInitiativeMilestone(env.DB, actor, body) : null;
+      : action === "save_milestone" ? await saveInitiativeMilestone(env.DB, actor, body)
+      : action === "save_solution_option" ? await saveSolutionOption(env.DB, actor, body)
+      : action === "save_solution_step" ? await saveSolutionStep(env.DB, actor, body)
+      : action === "set_solution_change_request" ? await setSolutionChangeRequest(env.DB, actor, body)
+      : action === "remove_solution_change_request" ? await removeSolutionChangeRequest(env.DB, actor, body)
+      : action === "set_solution_objective" ? await setSolutionObjective(env.DB, actor, body)
+      : action === "remove_solution_objective" ? await removeSolutionObjective(env.DB, actor, body)
+      : action === "save_solution_assessment" ? await saveSolutionAssessment(env.DB, actor, body)
+      : action === "save_solution_decision" ? await saveSolutionDecision(env.DB, actor, body) : null;
     if (!id) return Response.json({ error: "Unknown Initiative decision action." }, { status: 400 });
     return Response.json({ ok: true, id });
   } catch (error) {

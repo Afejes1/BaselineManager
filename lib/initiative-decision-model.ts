@@ -16,6 +16,12 @@ export type AcceptanceStatus = "draft" | "ready" | "in_verification" | "passed" 
 export type SignoffDecision = "pending" | "accepted" | "rejected" | "waived";
 export type MilestoneType = "decision" | "delivery" | "verification" | "fielding" | "dependency";
 export type MilestoneStatus = "planned" | "at_risk" | "complete" | "missed";
+export type SolutionOptionType = "candidate" | "status_quo";
+export type SolutionOptionStatus = "draft" | "under_review" | "recommended" | "not_selected" | "retired";
+export type SolutionObjectiveRole = "required" | "enabling" | "optional";
+export type SolutionAssessmentCriterion = "outcome_alignment" | "delivery_effort" | "schedule_feasibility" | "cyber_lifecycle" | "mission_operational_impact" | "stakeholder_impact" | "requirements_acceptance";
+export type SolutionAssessmentRating = "favorable" | "mixed" | "unfavorable" | "unassessed";
+export type SolutionDecisionDisposition = "pending" | "selected" | "deferred" | "no_action";
 
 export type InitiativeDecisionProfile = {
   id: string;
@@ -32,6 +38,10 @@ export type InitiativeDecisionProfile = {
   successMeasures: string | null;
   briefingAudience: string | null;
   decisionNeededBy: string | null;
+  /** Government-authored present condition; distinct from source claims. */
+  problemStatement: string | null;
+  /** Known boundaries or drivers, not uncertain risks. */
+  driversConstraints: string | null;
   /** Government planning assumption; it does not alter the Lockheed source ROM. */
   romHoursPerPoint: number;
   romConversionRationale: string | null;
@@ -69,6 +79,32 @@ export type ObjectiveEstimate = {
   asOf: string;
   confidence: EstimateConfidence;
   createdAt: string;
+};
+
+/** Immutable supplier-source identity retained independently of a derived ROM estimate. */
+export type ObjectiveFeedSourceProvenance = {
+  subjectId: string;
+  objectiveId: string;
+  snapshotId: string;
+  feedKey: string;
+  fileName: string;
+  recordContentHash: string;
+  sourceAsOf: string | null;
+  observedAt: string;
+  sourceLocator: string | null;
+  relatedTo: string | null;
+  roadmapParent: string | null;
+  scope: string | null;
+  domains: string[];
+  itemNumber: number | null;
+  targetStart: string | null;
+  targetFinish: string | null;
+  rom: string | null;
+  percentComplete: number | null;
+  funding: string | null;
+  release: string | null;
+  overview: string | null;
+  background: string | null;
 };
 
 export type IncumbentObjective = {
@@ -165,7 +201,29 @@ export type AcceptanceSignoff = {
   rationale: string | null;
   evidenceDocumentId: string | null;
   evidenceIntegrityStatus: "not_attached" | "verified" | "unverified" | "not_checked";
+  evidenceFingerprint?: {
+    documentId: string;
+    fileName: string | null;
+    byteSize: number | null;
+    sealedContentHash: string | null;
+    quarantined: boolean;
+    integrityStatus: "verified" | "unverified" | "not_checked";
+  } | null;
   updatedAt: string;
+};
+
+/** Evidence explicitly scoped to an Initiative, including governance-record attachments. */
+export type InitiativeEvidenceFingerprint = {
+  initiativeId: string;
+  documentId: string;
+  governanceRecordId: string | null;
+  fileName: string;
+  contentType: string | null;
+  byteSize: number;
+  description: string | null;
+  sealedContentHash: string | null;
+  quarantined: boolean;
+  integrityStatus: "verified" | "unverified" | "not_checked";
 };
 
 export type AcceptanceCriterion = {
@@ -200,6 +258,96 @@ export type InitiativeMilestone = {
   updatedAt: string;
 };
 
+export type SolutionOption = {
+  id: string;
+  initiativeId: string;
+  title: string;
+  optionType: SolutionOptionType;
+  status: SolutionOptionStatus;
+  summary: string | null;
+  /** Expected result of this option, not the shared Initiative outcome. */
+  projectedOutcome: string | null;
+  expectedConsequences: string | null;
+  residualRisks: string | null;
+  assumptions: string | null;
+  sortOrder: number;
+  updatedAt: string;
+};
+
+export type SolutionOptionStep = {
+  id: string;
+  optionId: string;
+  title: string;
+  description: string | null;
+  expectedResult: string | null;
+  sortOrder: number;
+  updatedAt: string;
+};
+
+export type SolutionOptionChangeRequestLink = {
+  id: string;
+  optionId: string;
+  changeRequestId: string;
+  relationship: InitiativeChangeRelationship;
+  rationale: string | null;
+  updatedAt: string;
+};
+
+export type SolutionOptionObjectiveLink = {
+  id: string;
+  optionId: string;
+  objectiveId: string;
+  role: SolutionObjectiveRole;
+  rationale: string | null;
+  updatedAt: string;
+};
+
+export type SolutionOptionAssessment = {
+  id: string;
+  optionId: string;
+  criterion: SolutionAssessmentCriterion;
+  rating: SolutionAssessmentRating;
+  narrative: string | null;
+  sourceReference: string | null;
+  confidence: EstimateConfidence;
+  updatedAt: string;
+};
+
+export type InitiativeSolutionDecision = {
+  id: string;
+  initiativeId: string;
+  selectedOptionId: string | null;
+  disposition: SolutionDecisionDisposition;
+  decisionAuthority: string | null;
+  decisionDate: string | null;
+  rationale: string | null;
+  acceptedResidualRisk: string | null;
+  basisHash: string | null;
+  currentBasisHash: string | null;
+  basisIntegrityValid: boolean | null;
+  basisStale: boolean;
+  decisionRevision: number;
+  updatedAt: string;
+};
+
+export type InitiativeSolutionDecisionRevision = {
+  id: string;
+  decisionId: string;
+  initiativeId: string;
+  revision: number;
+  selectedOptionId: string | null;
+  disposition: Exclude<SolutionDecisionDisposition, "pending"> | "legacy_unverified";
+  decisionAuthority: string;
+  decisionDate: string;
+  rationale: string;
+  acceptedResidualRisk: string | null;
+  basisSnapshotJson: string | null;
+  basisHash: string | null;
+  basisIntegrityValid: boolean | null;
+  createdByUserId: string | null;
+  createdAt: string;
+};
+
 export type ReadinessFinding = {
   id: string;
   severity: "blocker" | "warning" | "information";
@@ -226,6 +374,10 @@ export type InitiativeDecisionWorkspace = {
   initiatives: InitiativeDecisionProfile[];
   links: InitiativeChangeLink[];
   objectives: IncumbentObjective[];
+  /** Current explicit Lockheed feed provenance, including subjects without ROM. */
+  objectiveFeedSources?: ObjectiveFeedSourceProvenance[];
+  /** Current document/seal/integrity state for evidence scoped to each Initiative. */
+  initiativeEvidenceFingerprints?: InitiativeEvidenceFingerprint[];
   /** Reported and analyst-confirmed Objective ↔ Change Request references. */
   objectiveChangeRequestLinks?: ObjectiveChangeRequestLink[];
   /** Optional for backwards-compatible consumers of the decision bundle. */
@@ -234,6 +386,13 @@ export type InitiativeDecisionWorkspace = {
   requirements: RequirementTrace[];
   criteria: AcceptanceCriterion[];
   milestones: InitiativeMilestone[];
+  solutionOptions: SolutionOption[];
+  solutionSteps: SolutionOptionStep[];
+  solutionChangeRequestLinks: SolutionOptionChangeRequestLink[];
+  solutionObjectiveLinks: SolutionOptionObjectiveLink[];
+  solutionAssessments: SolutionOptionAssessment[];
+  solutionDecisions: InitiativeSolutionDecision[];
+  solutionDecisionRevisions: InitiativeSolutionDecisionRevision[];
   changes: ChangePortfolio;
   assessments: Record<string, InitiativeAssessment>;
 };
@@ -249,6 +408,13 @@ export type InitiativeDecisionBundle = {
   requirements: RequirementTrace[];
   criteria: AcceptanceCriterion[];
   milestones: InitiativeMilestone[];
+  solutionOptions: SolutionOption[];
+  solutionSteps: SolutionOptionStep[];
+  solutionChangeRequestLinks: SolutionOptionChangeRequestLink[];
+  solutionObjectiveLinks: SolutionOptionObjectiveLink[];
+  solutionAssessments: SolutionOptionAssessment[];
+  solutionDecision: InitiativeSolutionDecision | null;
+  solutionDecisionRevisions: InitiativeSolutionDecisionRevision[];
   changes: ChangePortfolio;
 };
 
@@ -284,5 +450,7 @@ export function selectInitiativeBundle(workspace: InitiativeDecisionWorkspace, i
   const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
   const objectives = workspace.objectives.filter((item) => objectiveRelatedChangeRequestIds(item, objectiveChangeRequestLinks).some((requestId) => requestIds.has(requestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  const solutionOptions = workspace.solutionOptions.filter((item) => item.initiativeId === initiativeId);
+  const solutionOptionIds = new Set(solutionOptions.map((item) => item.id));
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), solutionOptions, solutionSteps: workspace.solutionSteps.filter((item) => solutionOptionIds.has(item.optionId)), solutionChangeRequestLinks: workspace.solutionChangeRequestLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionObjectiveLinks: workspace.solutionObjectiveLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionAssessments: workspace.solutionAssessments.filter((item) => solutionOptionIds.has(item.optionId)), solutionDecision: workspace.solutionDecisions.find((item) => item.initiativeId === initiativeId) || null, solutionDecisionRevisions: workspace.solutionDecisionRevisions.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }

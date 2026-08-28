@@ -1,17 +1,20 @@
 import { env } from "cloudflare:workers";
 import type { Portfolio } from "./governance-model";
 import { audit, documentsBucket, PROGRAM_ID, requireWriter } from "./governance-server";
-import { MAX_GOVERNED_EVIDENCE_BYTES, MAX_GOVERNED_EVIDENCE_REFERENCES, storedEvidenceIntegrityMatches } from "./evidence-validation";
+import { evidenceHashFromAuditPayload, MAX_GOVERNED_EVIDENCE_BYTES, MAX_GOVERNED_EVIDENCE_REFERENCES, storedEvidenceIntegrityMatches } from "./evidence-validation";
 import { changePortfolio } from "./change-server";
 import { assessInitiative, criterionIsAccepted } from "./initiative-readiness";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "./initiative-workflow-invariants";
 import { LM_OBJECTIVE_FEED_SYSTEM, parseReportedRom } from "./lm-objective-feed";
+import { buildSolutionDecisionBasis, hashSolutionDecisionBasis } from "./solution-decision-basis";
 import type {
   AcceptanceCriterion, AcceptanceSignoff, AcceptanceStatus, AcceptanceTier, EstimateConfidence, EstimateSource,
   ChangeRequestObjectiveDependency, IncumbentObjective, InitiativeChangeLink, InitiativeChangeRelationship, InitiativeDecisionBundle, InitiativeDecisionProfile,
-  InitiativeDecisionWorkspace, InitiativeMilestone, MilestoneStatus, MilestoneType, ObjectiveEstimate, ObjectiveStatus,
+  InitiativeDecisionWorkspace, InitiativeEvidenceFingerprint, InitiativeMilestone, MilestoneStatus, MilestoneType, ObjectiveEstimate, ObjectiveFeedSourceProvenance, ObjectiveStatus,
   ObjectiveAttribution, ObjectiveAttributionConfidence, ObjectiveChangeRequestLink, ObjectiveEffectAttributionRecord, ObjectiveDependencyRelationship, ObjectiveDependencyStatus,
   RequirementAction, RequirementTrace, RequirementTraceStatus, SignoffDecision, VerificationMethod,
+  InitiativeSolutionDecision, InitiativeSolutionDecisionRevision, SolutionAssessmentCriterion, SolutionAssessmentRating, SolutionDecisionDisposition, SolutionObjectiveRole,
+  SolutionOption, SolutionOptionAssessment, SolutionOptionChangeRequestLink, SolutionOptionObjectiveLink, SolutionOptionStatus, SolutionOptionStep, SolutionOptionType,
 } from "./initiative-decision-model";
 
 type Database = typeof env.DB;
@@ -23,18 +26,33 @@ const nullable = (value: unknown) => clean(value) || null;
 const numberOrNull = (value: unknown) => value === "" || value === null || value === undefined ? null : Number(value);
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[], fallback: T) => allowed.includes(value as T) ? value as T : fallback;
 
-type InitiativeRow = { id: string; title: string; status: string; priority: string; owner: string | null; target_date: string | null; consequence: string | null; desired_outcome: string | null; decision_ask: string | null; as_is_statement: string | null; to_be_statement: string | null; success_measures: string | null; briefing_audience: string | null; decision_needed_by: string | null; rom_hours_per_point: number | null; rom_conversion_rationale: string | null; primary_release_id: string | null; primary_release_name: string | null; updated_at: string };
+type InitiativeRow = { id: string; title: string; status: string; priority: string; owner: string | null; target_date: string | null; consequence: string | null; desired_outcome: string | null; decision_ask: string | null; as_is_statement: string | null; to_be_statement: string | null; success_measures: string | null; briefing_audience: string | null; decision_needed_by: string | null; problem_statement: string | null; drivers_constraints: string | null; rom_hours_per_point: number | null; rom_conversion_rationale: string | null; primary_release_id: string | null; primary_release_name: string | null; updated_at: string };
 type LinkRow = { id: string; initiative_id: string; change_request_id: string; relationship: InitiativeChangeRelationship; contribution_summary: string | null; sort_order: number };
 type ObjectiveRow = { id: string; change_request_id: string | null; external_system: string; external_identifier: string; external_item_type: string; title: string; summary: string | null; technical_owner: string | null; status: ObjectiveStatus; planned_start: string | null; planned_finish: string | null; actual_start: string | null; actual_finish: string | null; source_locator: string | null; source_as_of: string | null; updated_at: string };
 type ObjectiveChangeRequestLinkRow = { id: string; objective_id: string; change_request_id: string; relationship: "primary" | "reported" | "related"; source_system: string | null; source_locator: string | null; source_as_of: string | null; updated_at: string };
 type ObjectiveDependencyRow = { id: string; dependent_change_request_id: string; prerequisite_objective_id: string; relationship: ObjectiveDependencyRelationship; status: ObjectiveDependencyStatus; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; updated_at: string };
 type ObjectiveAttributionRow = { id: string; objective_id: string; change_effect_id: string; attribution: ObjectiveAttribution; rationale: string; source_reference: string | null; source_as_of: string | null; evidence_reference: string | null; confidence: ObjectiveAttributionConfidence; updated_at: string };
 type EstimateRow = { id: string; objective_id: string; estimate_source: EstimateSource; hours_low: number | null; hours_likely: number | null; hours_high: number | null; cost_low: number | null; cost_likely: number | null; cost_high: number | null; basis: string; assumptions: string | null; source_reference: string | null; as_of: string; confidence: EstimateConfidence; created_at: string };
-type FeedRomRow = { subject_id: string; canonical_objective_id: string; feed_key: string; rom: string; file_name: string; source_as_of: string | null; observed_at: string; updated_at: string };
+type FeedSourceRow = {
+  subject_id: string; canonical_objective_id: string; latest_snapshot_id: string; feed_key: string; file_name: string;
+  record_content_hash: string; source_as_of: string | null; observed_at: string; url: string | null; rel_to: string | null;
+  roadmap_parent: string | null; scope: string | null; domains_json: string; item_number: number | null; target_start: string | null;
+  target_finish: string | null; rom: string | null; percent_complete: number | null; funding: string | null; release: string | null;
+  overview: string | null; background: string | null;
+};
 type RequirementRow = { id: string; objective_id: string; requirement_id: string; version_label: string; external_identifier: string; title: string; source_system: string; source_locator: string | null; source_as_of: string | null; change_action: RequirementAction; before_text: string | null; after_text: string | null; rationale: string | null; trace_status: RequirementTraceStatus; updated_at: string };
 type CriterionRow = { id: string; objective_id: string; requirement_trace_id: string | null; objective_requirement_id: string | null; tier: AcceptanceTier; code: string; statement: string; verification_method: VerificationMethod; status: AcceptanceStatus; planned_date: string | null; actual_date: string | null; evidence_reference: string | null; updated_at: string };
 type SignoffRow = { id: string; criterion_id: string; signoff_role: string; signer: string | null; decision: SignoffDecision; decided_at: string | null; rationale: string | null; evidence_document_id: string | null; evidence_record_id: string | null; evidence_file_name: string | null; evidence_content_type: string | null; evidence_byte_size: number | null; evidence_description: string | null; evidence_r2_key: string | null; evidence_integrity_payload: string | null; updated_at: string };
+type InitiativeEvidenceRow = { initiative_id: string; governance_record_id: string | null; evidence_document_id: string; evidence_record_id: string; evidence_file_name: string; evidence_content_type: string | null; evidence_byte_size: number; evidence_description: string | null; evidence_r2_key: string; evidence_integrity_payload: string | null };
+type EvidenceCandidateRow = Pick<SignoffRow, "evidence_file_name" | "evidence_r2_key" | "evidence_byte_size" | "evidence_integrity_payload">;
 type MilestoneRow = { id: string; initiative_id: string; change_request_id: string | null; objective_id: string | null; title: string; milestone_type: MilestoneType; planned_date: string; actual_date: string | null; status: MilestoneStatus; consequence_if_missed: string | null; owner: string | null; sort_order: number; updated_at: string };
+type SolutionOptionRow = { id: string; initiative_id: string; title: string; option_type: SolutionOptionType; status: SolutionOptionStatus; summary: string | null; projected_outcome: string | null; expected_consequences: string | null; residual_risks: string | null; assumptions: string | null; sort_order: number; updated_at: string };
+type SolutionStepRow = { id: string; option_id: string; title: string; description: string | null; expected_result: string | null; sort_order: number; updated_at: string };
+type SolutionChangeLinkRow = { id: string; option_id: string; change_request_id: string; relationship: InitiativeChangeRelationship; rationale: string | null; updated_at: string };
+type SolutionObjectiveLinkRow = { id: string; option_id: string; objective_id: string; role: SolutionObjectiveRole; rationale: string | null; updated_at: string };
+type SolutionAssessmentRow = { id: string; option_id: string; criterion: SolutionAssessmentCriterion; rating: SolutionAssessmentRating; narrative: string | null; source_reference: string | null; confidence: EstimateConfidence; updated_at: string };
+type SolutionDecisionRow = { id: string; initiative_id: string; selected_option_id: string | null; disposition: SolutionDecisionDisposition; decision_authority: string | null; decision_date: string | null; rationale: string | null; accepted_residual_risk: string | null; basis_snapshot_json: string | null; basis_hash: string | null; decision_revision: number; updated_at: string };
+type SolutionDecisionRevisionRow = { id: string; decision_id: string; initiative_id: string; revision: number; selected_option_id: string | null; disposition: Exclude<SolutionDecisionDisposition, "pending"> | "legacy_unverified"; decision_authority: string; decision_date: string; rationale: string; accepted_residual_risk: string | null; basis_snapshot_json: string | null; basis_hash: string | null; created_by_user_id: string | null; created_at: string };
 type EvidenceSupportRow = { file_name: string; r2_key: string; byte_size: number; integrity_payload: string | null };
 export type EvidenceVerificationScope = { initiativeId?: string; objectiveId?: string; changeRequestId?: string };
 
@@ -53,7 +71,7 @@ async function findVerifiedEvidenceSupport(rows: readonly EvidenceSupportRow[]) 
 
 export async function initiativeDecisionWorkspace(db: Database, actor: Actor, evidenceScope: EvidenceVerificationScope = {}): Promise<InitiativeDecisionWorkspace> {
   const changes = await changePortfolio(db);
-  const [initiativeResult, linkResult, objectiveResult, objectiveChangeRequestLinkResult, dependencyResult, attributionResult, estimateResult, feedRomResult, requirementResult, criterionResult, signoffResult, milestoneResult] = await Promise.all([
+  const [initiativeResult, linkResult, objectiveResult, objectiveChangeRequestLinkResult, dependencyResult, attributionResult, estimateResult, feedSourceResult, requirementResult, criterionResult, signoffResult, initiativeEvidenceResult, milestoneResult, solutionOptionResult, solutionStepResult, solutionChangeLinkResult, solutionObjectiveLinkResult, solutionAssessmentResult, solutionDecisionResult, solutionDecisionRevisionResult] = await Promise.all([
     db.prepare("SELECT i.*,r.name AS primary_release_name FROM initiative i LEFT JOIN release r ON r.id=i.primary_release_id WHERE i.program_id=? ORDER BY i.updated_at DESC").bind(PROGRAM_ID).all<InitiativeRow>(),
     db.prepare("SELECT l.id,l.initiative_id,l.change_request_id,l.relationship,l.contribution_summary,l.sort_order FROM initiative_change_request l JOIN initiative i ON i.id=l.initiative_id WHERE i.program_id=? ORDER BY l.initiative_id,l.sort_order,l.created_at").bind(PROGRAM_ID).all<LinkRow>(),
     db.prepare("SELECT o.* FROM incumbent_objective o WHERE o.program_id=? ORDER BY o.planned_start,o.external_identifier").bind(PROGRAM_ID).all<ObjectiveRow>(),
@@ -61,7 +79,13 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
     db.prepare("SELECT d.* FROM change_request_objective_dependency d JOIN change_request cr ON cr.id=d.dependent_change_request_id JOIN incumbent_objective o ON o.id=d.prerequisite_objective_id WHERE cr.program_id=? AND o.program_id=? ORDER BY d.status,d.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveDependencyRow>(),
     db.prepare("SELECT a.* FROM objective_effect_attribution a JOIN incumbent_objective o ON o.id=a.objective_id JOIN change_effect e ON e.id=a.change_effect_id WHERE o.program_id=? AND e.change_request_id IN (SELECT id FROM change_request WHERE program_id=?) ORDER BY a.objective_id,a.updated_at DESC").bind(PROGRAM_ID, PROGRAM_ID).all<ObjectiveAttributionRow>(),
     db.prepare("SELECT e.* FROM objective_estimate e JOIN incumbent_objective o ON o.id=e.objective_id WHERE o.program_id=? ORDER BY e.objective_id,e.as_of DESC,e.created_at DESC").bind(PROGRAM_ID).all<EstimateRow>(),
-    db.prepare("SELECT s.subject_id,f.canonical_objective_id,s.feed_key,s.rom,snapshot.file_name,snapshot.source_as_of,snapshot.observed_at,s.updated_at FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id JOIN lm_objective_feed_snapshot snapshot ON snapshot.id=s.latest_snapshot_id WHERE f.program_id=? AND f.external_system=? AND f.canonical_objective_id IS NOT NULL AND TRIM(COALESCE(s.rom,''))<>'' ORDER BY f.canonical_objective_id,COALESCE(snapshot.source_as_of,snapshot.observed_at) DESC,s.updated_at DESC").bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<FeedRomRow>(),
+    db.prepare(`SELECT s.subject_id,f.canonical_objective_id,s.latest_snapshot_id,s.feed_key,s.url,s.rel_to,s.roadmap_parent,s.scope,s.domains_json,s.item_number,s.target_start,s.target_finish,s.rom,s.percent_complete,s.funding,s.release,s.overview,s.background,
+      snapshot.file_name,snapshot.source_as_of,snapshot.observed_at,COALESCE(item.content_hash,snapshot.content_hash) AS record_content_hash
+      FROM lm_objective_feed_state s JOIN lm_objective_feed_subject f ON f.id=s.subject_id
+      JOIN lm_objective_feed_snapshot snapshot ON snapshot.id=s.latest_snapshot_id
+      LEFT JOIN lm_objective_feed_item item ON item.snapshot_id=s.latest_snapshot_id AND item.subject_id=s.subject_id
+      WHERE f.program_id=? AND f.external_system=? AND f.canonical_objective_id IS NOT NULL
+      ORDER BY f.canonical_objective_id,s.feed_key,s.subject_id`).bind(PROGRAM_ID, LM_OBJECTIVE_FEED_SYSTEM).all<FeedSourceRow>(),
     db.prepare("SELECT oq.id,oq.objective_id,oq.requirement_id,oq.version_label,r.external_identifier,r.title,r.source_system,COALESCE(oq.source_reference,r.source_locator) AS source_locator,COALESCE(oq.source_as_of,r.source_as_of) AS source_as_of,oq.change_action,oq.before_text,oq.after_text,oq.rationale,oq.disposition AS trace_status,oq.updated_at FROM objective_requirement oq JOIN requirement r ON r.id=oq.requirement_id JOIN incumbent_objective o ON o.id=oq.objective_id WHERE o.program_id=? ORDER BY oq.objective_id,r.external_identifier,oq.version_label").bind(PROGRAM_ID).all<RequirementRow>(),
     db.prepare("SELECT c.* FROM acceptance_criterion c JOIN incumbent_objective o ON o.id=c.objective_id WHERE o.program_id=? ORDER BY c.objective_id,c.tier,c.code").bind(PROGRAM_ID).all<CriterionRow>(),
     db.prepare(`SELECT s.*,d.id AS evidence_record_id,d.file_name AS evidence_file_name,d.content_type AS evidence_content_type,d.byte_size AS evidence_byte_size,d.description AS evidence_description,d.r2_key AS evidence_r2_key,
@@ -70,10 +94,27 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
       FROM acceptance_signoff s JOIN acceptance_criterion c ON c.id=s.criterion_id JOIN incumbent_objective o ON o.id=c.objective_id
       LEFT JOIN evidence_document d ON d.id=s.evidence_document_id AND d.program_id=o.program_id
       WHERE o.program_id=? ORDER BY s.criterion_id,s.signoff_role`).bind(PROGRAM_ID).all<SignoffRow>(),
+    db.prepare(`SELECT scope.initiative_id,d.governance_record_id,d.id AS evidence_document_id,d.id AS evidence_record_id,d.file_name AS evidence_file_name,d.content_type AS evidence_content_type,d.byte_size AS evidence_byte_size,d.description AS evidence_description,d.r2_key AS evidence_r2_key,
+      (SELECT a.after_payload FROM audit_event a WHERE a.program_id=d.program_id AND a.entity_kind='evidence_document' AND a.entity_id=d.id
+       AND a.action IN ('evidence_document_attached','evidence_document_restored','evidence_integrity_sealed') ORDER BY a.created_at DESC,a.id DESC LIMIT 1) AS evidence_integrity_payload
+      FROM (
+        SELECT id AS document_id,initiative_id FROM evidence_document WHERE program_id=? AND initiative_id IS NOT NULL
+        UNION
+        SELECT d.id AS document_id,l.entity_id AS initiative_id FROM evidence_document d JOIN governance_record_link l ON l.governance_record_id=d.governance_record_id
+        WHERE d.program_id=? AND l.entity_kind='initiative'
+      ) scope JOIN evidence_document d ON d.id=scope.document_id
+      ORDER BY scope.initiative_id,d.id`).bind(PROGRAM_ID, PROGRAM_ID).all<InitiativeEvidenceRow>(),
     db.prepare("SELECT m.* FROM initiative_milestone m JOIN initiative i ON i.id=m.initiative_id WHERE i.program_id=? ORDER BY m.initiative_id,m.planned_date,m.sort_order").bind(PROGRAM_ID).all<MilestoneRow>(),
+    db.prepare("SELECT o.* FROM solution_option o JOIN initiative i ON i.id=o.initiative_id WHERE i.program_id=? ORDER BY o.initiative_id,o.sort_order,o.updated_at").bind(PROGRAM_ID).all<SolutionOptionRow>(),
+    db.prepare("SELECT s.* FROM solution_option_step s JOIN solution_option o ON o.id=s.option_id JOIN initiative i ON i.id=o.initiative_id WHERE i.program_id=? ORDER BY s.option_id,s.sort_order,s.updated_at").bind(PROGRAM_ID).all<SolutionStepRow>(),
+    db.prepare("SELECT l.* FROM solution_option_change_request l JOIN solution_option o ON o.id=l.option_id JOIN initiative i ON i.id=o.initiative_id JOIN change_request cr ON cr.id=l.change_request_id WHERE i.program_id=? AND cr.program_id=? ORDER BY l.option_id,l.updated_at").bind(PROGRAM_ID, PROGRAM_ID).all<SolutionChangeLinkRow>(),
+    db.prepare("SELECT l.* FROM solution_option_objective l JOIN solution_option so ON so.id=l.option_id JOIN initiative i ON i.id=so.initiative_id JOIN incumbent_objective o ON o.id=l.objective_id WHERE i.program_id=? AND o.program_id=? ORDER BY l.option_id,l.updated_at").bind(PROGRAM_ID, PROGRAM_ID).all<SolutionObjectiveLinkRow>(),
+    db.prepare("SELECT a.* FROM solution_option_assessment a JOIN solution_option o ON o.id=a.option_id JOIN initiative i ON i.id=o.initiative_id WHERE i.program_id=? ORDER BY a.option_id,a.criterion").bind(PROGRAM_ID).all<SolutionAssessmentRow>(),
+    db.prepare("SELECT d.* FROM initiative_solution_decision d JOIN initiative i ON i.id=d.initiative_id WHERE i.program_id=? ORDER BY d.updated_at DESC").bind(PROGRAM_ID).all<SolutionDecisionRow>(),
+    db.prepare("SELECT r.* FROM initiative_solution_decision_revision r JOIN initiative i ON i.id=r.initiative_id WHERE i.program_id=? ORDER BY r.initiative_id,r.revision").bind(PROGRAM_ID).all<SolutionDecisionRevisionRow>(),
   ]);
   const evidenceBucket = documentsBucket();
-  const signoffEvidenceStatus = new Map<string, "verified" | "unverified" | "not_checked">();
+  const evidenceIntegrityByDocument = new Map<string, "verified" | "unverified" | "not_checked">();
   const requestIdsByObjective = new Map<string, Set<string>>();
   for (const objective of objectiveResult.results) {
     const requestIds = new Set<string>();
@@ -92,7 +133,7 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
     initiativeIdsByRequest.set(link.change_request_id, initiativeIds);
   }
   const objectiveIdByCriterion = new Map(criterionResult.results.map((criterion) => [criterion.id, criterion.objective_id]));
-  const evidenceCandidates = new Map<string, { row: SignoffRow; scopes: Set<string> }>();
+  const evidenceCandidates = new Map<string, { row: EvidenceCandidateRow; scopes: Set<string> }>();
   for (const row of signoffResult.results) {
     const documentId = row.evidence_document_id;
     if (!documentId || !["accepted", "waived"].includes(row.decision)) continue;
@@ -108,6 +149,11 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
     for (const scope of scopes) candidate.scopes.add(scope);
     evidenceCandidates.set(documentId, candidate);
   }
+  for (const row of initiativeEvidenceResult.results) {
+    const candidate = evidenceCandidates.get(row.evidence_document_id) ?? { row, scopes: new Set<string>() };
+    candidate.scopes.add(`initiative:${row.initiative_id}`);
+    evidenceCandidates.set(row.evidence_document_id, candidate);
+  }
   let inspectedEvidenceDocuments = 0;
   let inspectedEvidenceBytes = 0;
   // Readiness is based on current object bytes, not mutable object metadata.
@@ -115,22 +161,30 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
   // 100-MB envelope without interference from unrelated portfolio data. The
   // unscoped portfolio endpoint uses the same envelope globally, preventing a
   // single GET from multiplying R2 reads by the number of Initiatives.
-  for (const [documentId, candidate] of [...evidenceCandidates.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+  for (const [documentId, candidate] of [...evidenceCandidates.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)) {
     const row = candidate.row;
     const inRequestedScope = (!evidenceScope.initiativeId || candidate.scopes.has(`initiative:${evidenceScope.initiativeId}`))
       && (!evidenceScope.objectiveId || candidate.scopes.has(`objective:${evidenceScope.objectiveId}`))
       && (!evidenceScope.changeRequestId || candidate.scopes.has(`change-request:${evidenceScope.changeRequestId}`));
-    if (!inRequestedScope) { signoffEvidenceStatus.set(documentId, "not_checked"); continue; }
-    if (!row.evidence_file_name || !row.evidence_r2_key || !Number.isSafeInteger(row.evidence_byte_size) || Number(row.evidence_byte_size) < 0) { signoffEvidenceStatus.set(documentId, "unverified"); continue; }
+    if (!inRequestedScope) { evidenceIntegrityByDocument.set(documentId, "not_checked"); continue; }
+    if (!row.evidence_file_name || !row.evidence_r2_key || !Number.isSafeInteger(row.evidence_byte_size) || Number(row.evidence_byte_size) < 0) { evidenceIntegrityByDocument.set(documentId, "unverified"); continue; }
     const byteSize = Number(row.evidence_byte_size);
-    if (inspectedEvidenceDocuments >= MAX_GOVERNED_EVIDENCE_REFERENCES || inspectedEvidenceBytes + byteSize > MAX_GOVERNED_EVIDENCE_BYTES) { signoffEvidenceStatus.set(documentId, "not_checked"); continue; }
+    if (inspectedEvidenceDocuments >= MAX_GOVERNED_EVIDENCE_REFERENCES || inspectedEvidenceBytes + byteSize > MAX_GOVERNED_EVIDENCE_BYTES) { evidenceIntegrityByDocument.set(documentId, "not_checked"); continue; }
     inspectedEvidenceDocuments += 1;
     inspectedEvidenceBytes += byteSize;
-    signoffEvidenceStatus.set(documentId, await storedEvidenceIntegrityMatches(evidenceBucket, { fileName: row.evidence_file_name, r2Key: row.evidence_r2_key, byteSize, auditPayload: row.evidence_integrity_payload }) ? "verified" : "unverified");
+    evidenceIntegrityByDocument.set(documentId, await storedEvidenceIntegrityMatches(evidenceBucket, { fileName: row.evidence_file_name, r2Key: row.evidence_r2_key, byteSize, auditPayload: row.evidence_integrity_payload }) ? "verified" : "unverified");
   }
   const estimatesByObjective = new Map<string, ObjectiveEstimate[]>();
   for (const row of estimateResult.results) estimatesByObjective.set(row.objective_id, [...(estimatesByObjective.get(row.objective_id) || []), { id: row.id, objectiveId: row.objective_id, estimateSource: row.estimate_source, hoursLow: row.hours_low, hoursLikely: row.hours_likely, hoursHigh: row.hours_high, costLow: row.cost_low, costLikely: row.cost_likely, costHigh: row.cost_high, basis: row.basis, assumptions: row.assumptions, sourceReference: row.source_reference, asOf: row.as_of, confidence: row.confidence, createdAt: row.created_at }]);
-  for (const row of feedRomResult.results) {
+  const objectiveFeedSources: ObjectiveFeedSourceProvenance[] = feedSourceResult.results.map((row) => {
+    let domains: string[] = [];
+    try {
+      const parsed = JSON.parse(row.domains_json) as unknown;
+      if (Array.isArray(parsed)) domains = [...new Set(parsed.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    } catch { /* Preserve an empty normalized set; the record hash still identifies malformed source state. */ }
+    return { subjectId: row.subject_id, objectiveId: row.canonical_objective_id, snapshotId: row.latest_snapshot_id, feedKey: row.feed_key, fileName: row.file_name, recordContentHash: row.record_content_hash, sourceAsOf: row.source_as_of, observedAt: row.observed_at, sourceLocator: row.url, relatedTo: row.rel_to, roadmapParent: row.roadmap_parent, scope: row.scope, domains, itemNumber: row.item_number, targetStart: row.target_start, targetFinish: row.target_finish, rom: row.rom, percentComplete: row.percent_complete, funding: row.funding, release: row.release, overview: row.overview, background: row.background };
+  });
+  for (const row of feedSourceResult.results) {
     const rom = parseReportedRom(row.rom);
     if (!rom) continue;
     const asOf = /^\d{4}-\d{2}-\d{2}/.test(row.source_as_of || "") ? row.source_as_of!.slice(0, 10) : row.observed_at.slice(0, 10);
@@ -152,7 +206,7 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
       sourceReference: `${LM_OBJECTIVE_FEED_SYSTEM} · ${row.file_name} · feed key ${row.feed_key}`,
       asOf,
       confidence: "unassessed",
-      createdAt: row.updated_at,
+      createdAt: row.observed_at,
     };
     estimatesByObjective.set(row.canonical_objective_id, [...(estimatesByObjective.get(row.canonical_objective_id) || []), estimate]);
   }
@@ -160,10 +214,26 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
   for (const row of signoffResult.results) {
     const evidenceDocumentId = row.evidence_document_id;
     const quarantined = row.evidence_content_type === "application/octet-stream" && row.evidence_description?.startsWith("[QUARANTINED LEGACY EVIDENCE");
-    const evidenceIntegrityStatus = !evidenceDocumentId ? "not_attached" : !row.evidence_record_id || quarantined ? "unverified" : signoffEvidenceStatus.get(evidenceDocumentId) ?? "not_checked";
-    signoffsByCriterion.set(row.criterion_id, [...(signoffsByCriterion.get(row.criterion_id) || []), { id: row.id, criterionId: row.criterion_id, signoffRole: row.signoff_role, signer: row.signer, decision: row.decision, decidedAt: row.decided_at, rationale: row.rationale, evidenceDocumentId, evidenceIntegrityStatus, updatedAt: row.updated_at }]);
+    const evidenceIntegrityStatus = !evidenceDocumentId ? "not_attached" : !row.evidence_record_id || quarantined ? "unverified" : evidenceIntegrityByDocument.get(evidenceDocumentId) ?? "not_checked";
+    const evidenceFingerprint = evidenceDocumentId ? { documentId: evidenceDocumentId, fileName: row.evidence_file_name, byteSize: Number.isSafeInteger(row.evidence_byte_size) ? Number(row.evidence_byte_size) : null, sealedContentHash: evidenceHashFromAuditPayload(row.evidence_integrity_payload), quarantined: Boolean(quarantined), integrityStatus: evidenceIntegrityStatus === "not_attached" ? "unverified" as const : evidenceIntegrityStatus } : null;
+    signoffsByCriterion.set(row.criterion_id, [...(signoffsByCriterion.get(row.criterion_id) || []), { id: row.id, criterionId: row.criterion_id, signoffRole: row.signoff_role, signer: row.signer, decision: row.decision, decidedAt: row.decided_at, rationale: row.rationale, evidenceDocumentId, evidenceIntegrityStatus, evidenceFingerprint, updatedAt: row.updated_at }]);
   }
-  const initiatives: InitiativeDecisionProfile[] = initiativeResult.results.map((row) => ({ id: row.id, title: row.title, status: row.status, priority: row.priority, owner: row.owner, targetDate: row.target_date, consequence: row.consequence, desiredOutcome: row.desired_outcome, decisionAsk: row.decision_ask, asIsStatement: row.as_is_statement, toBeStatement: row.to_be_statement, successMeasures: row.success_measures, briefingAudience: row.briefing_audience, decisionNeededBy: row.decision_needed_by, romHoursPerPoint: Number.isFinite(row.rom_hours_per_point) && Number(row.rom_hours_per_point) > 0 ? Number(row.rom_hours_per_point) : 500, romConversionRationale: row.rom_conversion_rationale, primaryReleaseId: row.primary_release_id, primaryReleaseName: row.primary_release_name, updatedAt: row.updated_at }));
+  const initiativeEvidenceFingerprints: InitiativeEvidenceFingerprint[] = initiativeEvidenceResult.results.map((row) => {
+    const quarantined = row.evidence_content_type === "application/octet-stream" && row.evidence_description?.startsWith("[QUARANTINED LEGACY EVIDENCE");
+    return {
+      initiativeId: row.initiative_id,
+      documentId: row.evidence_document_id,
+      governanceRecordId: row.governance_record_id,
+      fileName: row.evidence_file_name,
+      contentType: row.evidence_content_type,
+      byteSize: row.evidence_byte_size,
+      description: row.evidence_description,
+      sealedContentHash: evidenceHashFromAuditPayload(row.evidence_integrity_payload),
+      quarantined: Boolean(quarantined),
+      integrityStatus: quarantined ? "unverified" : evidenceIntegrityByDocument.get(row.evidence_document_id) ?? "not_checked",
+    };
+  });
+  const initiatives: InitiativeDecisionProfile[] = initiativeResult.results.map((row) => ({ id: row.id, title: row.title, status: row.status, priority: row.priority, owner: row.owner, targetDate: row.target_date, consequence: row.consequence, desiredOutcome: row.desired_outcome, decisionAsk: row.decision_ask, asIsStatement: row.as_is_statement, toBeStatement: row.to_be_statement, successMeasures: row.success_measures, briefingAudience: row.briefing_audience, decisionNeededBy: row.decision_needed_by, problemStatement: row.problem_statement, driversConstraints: row.drivers_constraints, romHoursPerPoint: Number.isFinite(row.rom_hours_per_point) && Number(row.rom_hours_per_point) > 0 ? Number(row.rom_hours_per_point) : 500, romConversionRationale: row.rom_conversion_rationale, primaryReleaseId: row.primary_release_id, primaryReleaseName: row.primary_release_name, updatedAt: row.updated_at }));
   const links: InitiativeChangeLink[] = linkResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, changeRequestId: row.change_request_id, relationship: row.relationship, contributionSummary: row.contribution_summary, sortOrder: row.sort_order }));
   const objectives: IncumbentObjective[] = objectiveResult.results.map((row) => ({ id: row.id, changeRequestId: row.change_request_id, externalSystem: row.external_system, externalIdentifier: row.external_identifier, externalItemType: row.external_item_type || "Objective", title: row.title, summary: row.summary, technicalOwner: row.technical_owner, status: row.status, plannedStart: row.planned_start, plannedFinish: row.planned_finish, actualStart: row.actual_start, actualFinish: row.actual_finish, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, estimates: estimatesByObjective.get(row.id) || [], updatedAt: row.updated_at }));
   const objectiveChangeRequestLinks: ObjectiveChangeRequestLink[] = objectiveChangeRequestLinkResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, changeRequestId: row.change_request_id, relationship: row.relationship, sourceSystem: row.source_system, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, updatedAt: row.updated_at }));
@@ -172,9 +242,41 @@ export async function initiativeDecisionWorkspace(db: Database, actor: Actor, ev
   const requirements: RequirementTrace[] = requirementResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, requirementId: row.requirement_id, versionLabel: row.version_label, externalIdentifier: row.external_identifier, title: row.title, sourceSystem: row.source_system, sourceLocator: row.source_locator, sourceAsOf: row.source_as_of, changeAction: row.change_action, beforeText: row.before_text, afterText: row.after_text, rationale: row.rationale, traceStatus: row.trace_status, updatedAt: row.updated_at }));
   const criteria: AcceptanceCriterion[] = criterionResult.results.map((row) => ({ id: row.id, objectiveId: row.objective_id, requirementTraceId: row.objective_requirement_id || row.requirement_trace_id, tier: row.tier, code: row.code, statement: row.statement, verificationMethod: row.verification_method, status: row.status, plannedDate: row.planned_date, actualDate: row.actual_date, evidenceReference: row.evidence_reference, signoffs: signoffsByCriterion.get(row.id) || [], updatedAt: row.updated_at }));
   const milestones: InitiativeMilestone[] = milestoneResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, changeRequestId: row.change_request_id, objectiveId: row.objective_id, title: row.title, milestoneType: row.milestone_type, plannedDate: row.planned_date, actualDate: row.actual_date, status: row.status, consequenceIfMissed: row.consequence_if_missed, owner: row.owner, sortOrder: row.sort_order, updatedAt: row.updated_at }));
+  const solutionOptions: SolutionOption[] = solutionOptionResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, title: row.title, optionType: row.option_type, status: row.status, summary: row.summary, projectedOutcome: row.projected_outcome, expectedConsequences: row.expected_consequences, residualRisks: row.residual_risks, assumptions: row.assumptions, sortOrder: row.sort_order, updatedAt: row.updated_at }));
+  const solutionSteps: SolutionOptionStep[] = solutionStepResult.results.map((row) => ({ id: row.id, optionId: row.option_id, title: row.title, description: row.description, expectedResult: row.expected_result, sortOrder: row.sort_order, updatedAt: row.updated_at }));
+  const solutionChangeRequestLinks: SolutionOptionChangeRequestLink[] = solutionChangeLinkResult.results.map((row) => ({ id: row.id, optionId: row.option_id, changeRequestId: row.change_request_id, relationship: row.relationship, rationale: row.rationale, updatedAt: row.updated_at }));
+  const solutionObjectiveLinks: SolutionOptionObjectiveLink[] = solutionObjectiveLinkResult.results.map((row) => ({ id: row.id, optionId: row.option_id, objectiveId: row.objective_id, role: row.role, rationale: row.rationale, updatedAt: row.updated_at }));
+  const solutionAssessments: SolutionOptionAssessment[] = solutionAssessmentResult.results.map((row) => ({ id: row.id, optionId: row.option_id, criterion: row.criterion, rating: row.rating, narrative: row.narrative, sourceReference: row.source_reference, confidence: row.confidence, updatedAt: row.updated_at }));
+  const solutionDecisions: InitiativeSolutionDecision[] = solutionDecisionResult.results.map((row) => ({ id: row.id, initiativeId: row.initiative_id, selectedOptionId: row.selected_option_id, disposition: row.disposition, decisionAuthority: row.decision_authority, decisionDate: row.decision_date, rationale: row.rationale, acceptedResidualRisk: row.accepted_residual_risk, basisHash: row.basis_hash, currentBasisHash: null, basisIntegrityValid: null, basisStale: false, decisionRevision: Number(row.decision_revision || 0), updatedAt: row.updated_at }));
+  const solutionDecisionRevisions: InitiativeSolutionDecisionRevision[] = solutionDecisionRevisionResult.results.map((row) => ({ id: row.id, decisionId: row.decision_id, initiativeId: row.initiative_id, revision: Number(row.revision), selectedOptionId: row.selected_option_id, disposition: row.disposition, decisionAuthority: row.decision_authority, decisionDate: row.decision_date, rationale: row.rationale, acceptedResidualRisk: row.accepted_residual_risk, basisSnapshotJson: row.basis_snapshot_json, basisHash: row.basis_hash, basisIntegrityValid: null, createdByUserId: row.created_by_user_id, createdAt: row.created_at }));
   const assessments: InitiativeDecisionWorkspace["assessments"] = {};
-  for (const initiative of initiatives) assessments[initiative.id] = assessInitiative(bundleFor({ actor, initiatives, links, objectives, objectiveChangeRequestLinks, requirements, criteria, milestones, changes, assessments: {} }, initiative.id));
-  return { actor, initiatives, links, objectives, objectiveChangeRequestLinks, objectiveDependencies, objectiveEffectAttributions, requirements, criteria, milestones, changes, assessments };
+  const workspace: InitiativeDecisionWorkspace = { actor, initiatives, links, objectives, objectiveFeedSources, initiativeEvidenceFingerprints, objectiveChangeRequestLinks, objectiveDependencies, objectiveEffectAttributions, requirements, criteria, milestones, solutionOptions, solutionSteps, solutionChangeRequestLinks, solutionObjectiveLinks, solutionAssessments, solutionDecisions, solutionDecisionRevisions, changes, assessments };
+  for (const revision of solutionDecisionRevisions) {
+    if (revision.disposition !== "selected") continue;
+    try {
+      const parsed = JSON.parse(revision.basisSnapshotJson || "") as unknown;
+      revision.basisIntegrityValid = Boolean(revision.basisHash) && await hashSolutionDecisionBasis(parsed) === revision.basisHash;
+    } catch {
+      revision.basisIntegrityValid = false;
+    }
+  }
+  for (const decision of solutionDecisions) {
+    if (decision.disposition !== "selected" || !decision.selectedOptionId) continue;
+    try {
+      const currentRow = solutionDecisionResult.results.find((row) => row.id === decision.id);
+      const frozenRevision = solutionDecisionRevisions.find((item) => item.decisionId === decision.id && item.revision === decision.decisionRevision);
+      const parsed = JSON.parse(currentRow?.basis_snapshot_json || "") as unknown;
+      const frozenHash = await hashSolutionDecisionBasis(parsed);
+      decision.basisIntegrityValid = Boolean(decision.basisHash) && frozenHash === decision.basisHash && frozenRevision?.basisIntegrityValid === true && frozenRevision.basisHash === decision.basisHash && frozenRevision.basisSnapshotJson === currentRow?.basis_snapshot_json;
+      decision.currentBasisHash = await hashSolutionDecisionBasis(buildSolutionDecisionBasis(workspace, decision.initiativeId, decision.selectedOptionId));
+      decision.basisStale = decision.basisIntegrityValid !== true || decision.currentBasisHash !== decision.basisHash;
+    } catch {
+      decision.basisIntegrityValid = false;
+      decision.basisStale = true;
+    }
+  }
+  for (const initiative of initiatives) assessments[initiative.id] = assessInitiative(bundleFor(workspace, initiative.id));
+  return workspace;
 }
 
 export function bundleFor(workspace: Omit<InitiativeDecisionWorkspace, "assessments"> & { assessments?: InitiativeDecisionWorkspace["assessments"] }, initiativeId: string): InitiativeDecisionBundle {
@@ -185,7 +287,9 @@ export function bundleFor(workspace: Omit<InitiativeDecisionWorkspace, "assessme
   const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
   const objectives = workspace.objectives.filter((item) => requestIds.has(item.changeRequestId || "") || objectiveChangeRequestLinks.some((link) => link.objectiveId === item.id && requestIds.has(link.changeRequestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  const solutionOptions = workspace.solutionOptions.filter((item) => item.initiativeId === initiativeId);
+  const solutionOptionIds = new Set(solutionOptions.map((item) => item.id));
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), solutionOptions, solutionSteps: workspace.solutionSteps.filter((item) => solutionOptionIds.has(item.optionId)), solutionChangeRequestLinks: workspace.solutionChangeRequestLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionObjectiveLinks: workspace.solutionObjectiveLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionAssessments: workspace.solutionAssessments.filter((item) => solutionOptionIds.has(item.optionId)), solutionDecision: workspace.solutionDecisions.find((item) => item.initiativeId === initiativeId) || null, solutionDecisionRevisions: workspace.solutionDecisionRevisions.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }
 
 async function assertInitiative(db: Database, initiativeId: string) {
@@ -200,10 +304,10 @@ export async function saveDecisionProfile(db: Database, actor: Actor, body: Reco
   const before = await db.prepare("SELECT * FROM initiative WHERE id=?").bind(initiativeId).first<Record<string, unknown>>();
   const romHoursPerPoint = numberOrNull(body.romHoursPerPoint) ?? 500;
   if (!Number.isFinite(romHoursPerPoint) || romHoursPerPoint <= 0) throw new Error("Lockheed ROM conversion must be a positive number of labor hours per point.");
-  const next = { asIsStatement: nullable(body.asIsStatement), toBeStatement: nullable(body.toBeStatement), successMeasures: nullable(body.successMeasures), briefingAudience: nullable(body.briefingAudience), decisionNeededBy: nullable(body.decisionNeededBy), decisionAsk: nullable(body.decisionAsk), desiredOutcome: nullable(body.desiredOutcome), consequence: nullable(body.consequence), owner: nullable(body.owner), targetDate: nullable(body.targetDate), romHoursPerPoint, romConversionRationale: nullable(body.romConversionRationale) };
+  const next = { problemStatement: nullable(body.problemStatement), driversConstraints: nullable(body.driversConstraints), asIsStatement: nullable(body.asIsStatement), toBeStatement: nullable(body.toBeStatement), successMeasures: nullable(body.successMeasures), briefingAudience: nullable(body.briefingAudience), decisionNeededBy: nullable(body.decisionNeededBy), decisionAsk: nullable(body.decisionAsk), desiredOutcome: nullable(body.desiredOutcome), consequence: nullable(body.consequence), owner: nullable(body.owner), targetDate: nullable(body.targetDate), romHoursPerPoint, romConversionRationale: nullable(body.romConversionRationale) };
   const at = now();
   await db.batch([
-    db.prepare("UPDATE initiative SET as_is_statement=?,to_be_statement=?,success_measures=?,briefing_audience=?,decision_needed_by=?,decision_ask=?,desired_outcome=?,consequence=?,owner=?,target_date=?,rom_hours_per_point=?,rom_conversion_rationale=?,updated_at=? WHERE id=? AND program_id=?").bind(next.asIsStatement, next.toBeStatement, next.successMeasures, next.briefingAudience, next.decisionNeededBy, next.decisionAsk, next.desiredOutcome, next.consequence, next.owner, next.targetDate, next.romHoursPerPoint, next.romConversionRationale, at, initiativeId, PROGRAM_ID),
+    db.prepare("UPDATE initiative SET problem_statement=?,drivers_constraints=?,as_is_statement=?,to_be_statement=?,success_measures=?,briefing_audience=?,decision_needed_by=?,decision_ask=?,desired_outcome=?,consequence=?,owner=?,target_date=?,rom_hours_per_point=?,rom_conversion_rationale=?,updated_at=? WHERE id=? AND program_id=?").bind(next.problemStatement, next.driversConstraints, next.asIsStatement, next.toBeStatement, next.successMeasures, next.briefingAudience, next.decisionNeededBy, next.decisionAsk, next.desiredOutcome, next.consequence, next.owner, next.targetDate, next.romHoursPerPoint, next.romConversionRationale, at, initiativeId, PROGRAM_ID),
     audit(db, actor, "initiative_decision_profile_updated", "initiative", initiativeId, next, before),
   ]);
   return initiativeId;
@@ -236,6 +340,8 @@ export async function unlinkChangeRequest(db: Database, actor: Actor, body: Reco
   await assertInitiative(db, initiativeId);
   const before = await db.prepare("SELECT l.* FROM initiative_change_request l JOIN change_request cr ON cr.id=l.change_request_id WHERE l.initiative_id=? AND l.change_request_id=? AND cr.program_id=?").bind(initiativeId, changeRequestId, PROGRAM_ID).first<Record<string, unknown>>();
   if (!before) throw new Error("The Initiative contribution link no longer exists.");
+  const solutionUse = await db.prepare("SELECT COUNT(*) AS count FROM solution_option_change_request l JOIN solution_option o ON o.id=l.option_id WHERE o.initiative_id=? AND l.change_request_id=? AND o.status<>'retired'").bind(initiativeId, changeRequestId).first<{ count: number }>();
+  if (Number(solutionUse?.count || 0)) throw new Error("Remove this Change Request from every active solution option before unlinking it from the Initiative.");
   const [remainingLinkResult, candidateObjectiveResult] = await Promise.all([
     db.prepare("SELECT change_request_id FROM initiative_change_request WHERE initiative_id=? AND change_request_id<>?").bind(initiativeId, changeRequestId).all<{ change_request_id: string }>(),
     db.prepare(`SELECT DISTINCT o.id FROM incumbent_objective o
@@ -324,6 +430,17 @@ export async function saveObjective(db: Database, actor: Actor, body: Record<str
         )
       LIMIT 1`).bind(objectiveId, changeRequestId, changeRequestId, objectiveId).first<{ id: string }>();
     if (orphanedAttribution) throw new Error("Reparenting would strand a technical-effect attribution outside the Objective's surviving Change Request links. Reconcile that attribution or retain an explicit reported/related link before changing accountability.");
+    const strandedSolution = await db.prepare(`SELECT selected_objective.id FROM solution_option_objective selected_objective
+      WHERE selected_objective.objective_id=? AND NOT EXISTS (
+        SELECT 1 FROM solution_option_change_request selected_request
+        WHERE selected_request.option_id=selected_objective.option_id AND (
+          (? IS NOT NULL AND selected_request.change_request_id=?) OR EXISTS (
+            SELECT 1 FROM objective_change_request_link retained
+            WHERE retained.objective_id=? AND retained.relationship<>'primary' AND retained.change_request_id=selected_request.change_request_id
+          )
+        )
+      ) LIMIT 1`).bind(objectiveId, changeRequestId, changeRequestId, objectiveId).first<{ id: string }>();
+    if (strandedSolution) throw new Error("Reparenting would strand this Objective outside a selected solution Change Request. Update the affected solution option first.");
   }
   if (status === "complete") {
     const closureWorkspace = await initiativeDecisionWorkspace(db, actor, { objectiveId });

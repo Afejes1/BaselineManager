@@ -687,6 +687,8 @@ export const initiatives = sqliteTable("initiative", {
   successMeasures: text("success_measures"),
   briefingAudience: text("briefing_audience"),
   decisionNeededBy: text("decision_needed_by"),
+  problemStatement: text("problem_statement"),
+  driversConstraints: text("drivers_constraints"),
   romHoursPerPoint: real("rom_hours_per_point").notNull().default(500),
   romConversionRationale: text("rom_conversion_rationale"),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
@@ -825,6 +827,130 @@ export const objectiveEffectAttributions = sqliteTable("objective_effect_attribu
   uniqueIndex("objective_effect_attribution_uq").on(t.objectiveId, t.changeEffectId),
   index("objective_effect_attribution_effect_ix").on(t.changeEffectId, t.attribution),
   index("objective_effect_attribution_objective_ix").on(t.objectiveId, t.attribution),
+]);
+
+// Solution Engineering is Government-authored adjudication.  The option rows
+// describe alternatives; their CR/Objective links reference retained source
+// facts so effort, schedule, dependencies, and affected objects are derived
+// rather than copied into an Initiative narrative.
+export const solutionOptions = sqliteTable("solution_option", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  title: text("title").notNull(),
+  normalizedTitle: text("normalized_title").notNull(),
+  optionType: text("option_type").notNull().default("candidate"),
+  status: text("status").notNull().default("draft"),
+  summary: text("summary"),
+  projectedOutcome: text("projected_outcome"),
+  expectedConsequences: text("expected_consequences"),
+  residualRisks: text("residual_risks"),
+  assumptions: text("assumptions"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_option_type", sql`${t.optionType} IN ('candidate','status_quo')`),
+  check("solution_option_status", sql`${t.status} IN ('draft','under_review','recommended','not_selected','retired')`),
+  uniqueIndex("solution_option_title_uq").on(t.initiativeId, t.normalizedTitle),
+  index("solution_option_initiative_ix").on(t.initiativeId, t.status, t.sortOrder),
+]);
+
+export const solutionOptionSteps = sqliteTable("solution_option_step", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  title: text("title").notNull(),
+  description: text("description"),
+  expectedResult: text("expected_result"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [uniqueIndex("solution_option_step_order_uq").on(t.optionId, t.sortOrder)]);
+
+export const solutionOptionChangeRequests = sqliteTable("solution_option_change_request", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  changeRequestId: text("change_request_id").notNull().references(() => changeRequests.id),
+  relationship: text("relationship").notNull().default("delivers"),
+  rationale: text("rationale"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_option_change_relationship", sql`${t.relationship} IN ('delivers','enables','constrains','supports')`),
+  uniqueIndex("solution_option_change_uq").on(t.optionId, t.changeRequestId),
+  index("solution_option_change_request_ix").on(t.changeRequestId, t.optionId),
+]);
+
+export const solutionOptionObjectives = sqliteTable("solution_option_objective", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  objectiveId: text("objective_id").notNull().references(() => incumbentObjectives.id),
+  role: text("role").notNull().default("required"),
+  rationale: text("rationale"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_option_objective_role", sql`${t.role} IN ('required','enabling','optional')`),
+  uniqueIndex("solution_option_objective_uq").on(t.optionId, t.objectiveId),
+  index("solution_option_objective_objective_ix").on(t.objectiveId, t.optionId),
+]);
+
+export const solutionOptionAssessments = sqliteTable("solution_option_assessment", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  criterion: text("criterion").notNull(),
+  rating: text("rating").notNull().default("unassessed"),
+  narrative: text("narrative"),
+  sourceReference: text("source_reference"),
+  confidence: text("confidence").notNull().default("unassessed"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_option_assessment_criterion", sql`${t.criterion} IN ('outcome_alignment','delivery_effort','schedule_feasibility','cyber_lifecycle','mission_operational_impact','stakeholder_impact','requirements_acceptance')`),
+  check("solution_option_assessment_rating", sql`${t.rating} IN ('favorable','mixed','unfavorable','unassessed')`),
+  check("solution_option_assessment_confidence", sql`${t.confidence} IN ('low','medium','high','unassessed')`),
+  uniqueIndex("solution_option_assessment_uq").on(t.optionId, t.criterion),
+]);
+
+export const initiativeSolutionDecisions = sqliteTable("initiative_solution_decision", {
+  id: text("id").primaryKey(),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  selectedOptionId: text("selected_option_id").references(() => solutionOptions.id),
+  disposition: text("disposition").notNull().default("pending"),
+  decisionAuthority: text("decision_authority"),
+  decisionDate: text("decision_date"),
+  rationale: text("rationale"),
+  acceptedResidualRisk: text("accepted_residual_risk"),
+  basisSnapshotJson: text("basis_snapshot_json"),
+  basisHash: text("basis_hash"),
+  decisionRevision: integer("decision_revision").notNull().default(0),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("initiative_solution_disposition", sql`${t.disposition} IN ('pending','selected','deferred','no_action')`),
+  check("initiative_solution_decision_complete", sql`(${t.disposition}='pending' AND ${t.selectedOptionId} IS NULL AND ${t.decisionAuthority} IS NULL AND ${t.decisionDate} IS NULL AND ${t.rationale} IS NULL AND ${t.acceptedResidualRisk} IS NULL AND ${t.basisSnapshotJson} IS NULL AND ${t.basisHash} IS NULL) OR (${t.disposition}='selected' AND ${t.selectedOptionId} IS NOT NULL AND LENGTH(TRIM(COALESCE(${t.decisionAuthority},'')))>0 AND LENGTH(TRIM(COALESCE(${t.decisionDate},'')))>0 AND LENGTH(TRIM(COALESCE(${t.rationale},'')))>0 AND LENGTH(TRIM(COALESCE(${t.basisSnapshotJson},'')))>0 AND ${t.basisHash} IS NOT NULL AND ${t.basisHash} GLOB 'sha256:*' AND SUBSTR(${t.basisHash},8) NOT GLOB '*[^0-9a-f]*' AND LENGTH(${t.basisHash})=71 AND ${t.decisionRevision}>0) OR (${t.disposition} IN ('deferred','no_action') AND ${t.selectedOptionId} IS NULL AND LENGTH(TRIM(COALESCE(${t.decisionAuthority},'')))>0 AND LENGTH(TRIM(COALESCE(${t.decisionDate},'')))>0 AND LENGTH(TRIM(COALESCE(${t.rationale},'')))>0 AND ${t.basisSnapshotJson} IS NULL AND ${t.basisHash} IS NULL AND ${t.decisionRevision}>0)`),
+  uniqueIndex("initiative_solution_decision_uq").on(t.initiativeId),
+]);
+
+export const initiativeSolutionDecisionRevisions = sqliteTable("initiative_solution_decision_revision", {
+  id: text("id").primaryKey(),
+  decisionId: text("decision_id").notNull().references(() => initiativeSolutionDecisions.id),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  revision: integer("revision").notNull(),
+  selectedOptionId: text("selected_option_id").references(() => solutionOptions.id),
+  disposition: text("disposition").notNull(),
+  decisionAuthority: text("decision_authority").notNull(),
+  decisionDate: text("decision_date").notNull(),
+  rationale: text("rationale").notNull(),
+  acceptedResidualRisk: text("accepted_residual_risk"),
+  basisSnapshotJson: text("basis_snapshot_json"),
+  basisHash: text("basis_hash"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  createdAt: text("created_at").notNull(),
+}, (t) => [
+  check("initiative_solution_decision_revision_disposition", sql`${t.disposition} IN ('selected','deferred','no_action','legacy_unverified')`),
+  check("initiative_solution_decision_revision_complete", sql`${t.revision}>0 AND LENGTH(TRIM(${t.decisionAuthority}))>0 AND LENGTH(TRIM(${t.decisionDate}))>0 AND LENGTH(TRIM(${t.rationale}))>0 AND ((${t.disposition}='selected' AND ${t.selectedOptionId} IS NOT NULL AND LENGTH(TRIM(COALESCE(${t.basisSnapshotJson},'')))>0 AND ${t.basisHash} IS NOT NULL AND ${t.basisHash} GLOB 'sha256:*' AND SUBSTR(${t.basisHash},8) NOT GLOB '*[^0-9a-f]*' AND LENGTH(${t.basisHash})=71) OR (${t.disposition} IN ('deferred','no_action') AND ${t.selectedOptionId} IS NULL AND ${t.basisSnapshotJson} IS NULL AND ${t.basisHash} IS NULL) OR (${t.disposition}='legacy_unverified' AND ${t.selectedOptionId} IS NOT NULL AND ${t.basisSnapshotJson} IS NULL AND ${t.basisHash} IS NULL))`),
+  uniqueIndex("initiative_solution_decision_revision_uq").on(t.decisionId, t.revision),
+  index("initiative_solution_decision_revision_initiative_ix").on(t.initiativeId, t.revision),
 ]);
 
 // Objective imports are a separate governed intake stream from the A2O Tech
@@ -1475,6 +1601,13 @@ export const schema = {
   objectiveChangeRequestLinks,
   changeRequestObjectiveDependencies,
   objectiveEffectAttributions,
+  solutionOptions,
+  solutionOptionSteps,
+  solutionOptionChangeRequests,
+  solutionOptionObjectives,
+  solutionOptionAssessments,
+  initiativeSolutionDecisions,
+  initiativeSolutionDecisionRevisions,
   objectiveSourcePackages,
   objectiveSourceRows,
   lmObjectiveFeedSnapshots,

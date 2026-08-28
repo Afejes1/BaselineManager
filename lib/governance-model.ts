@@ -69,6 +69,8 @@ export type Initiative = {
   consequence: string | null;
   desiredOutcome: string | null;
   decisionAsk: string | null;
+  problemStatement: string | null;
+  driversConstraints: string | null;
   primaryReleaseId: string | null;
   primaryReleaseName: string | null;
   scope: ScopeLink[];

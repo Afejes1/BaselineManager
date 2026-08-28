@@ -12,9 +12,11 @@ import type { BriefSnapshot } from "./governance-model";
 import { evidenceDocumentReferences } from "./evidence-references";
 import { acceptanceCompatibilityAdjustmentCount, enforceAcceptanceTransferInvariants, type AcceptanceCompatibilitySummary } from "./acceptance-transfer";
 import { cleanupEvidenceObjectsForWorkspaceOperation, completeEvidenceObjectCleanupOperationStatement, enqueueEvidenceObjectCleanup, enqueueReplacedEvidenceCleanupStatement, evidenceObjectCleanupNotBefore, pendingEvidenceObjectCleanupCount, resolveEvidenceObjectCleanupObligations, type EvidenceObjectCleanupQueueItem, type QueuedCleanupItem } from "./evidence-cleanup";
+import { validateSolutionDecisionHistory } from "./solution-decision-history";
 
 export const WORKSPACE_PACKAGE_TYPE = "a2o.workspace-transfer";
-export const WORKSPACE_PACKAGE_VERSION = "4.0.0";
+export const WORKSPACE_PACKAGE_VERSION = "5.0.0";
+const PRIOR_WORKSPACE_PACKAGE_VERSION = "4.0.0";
 const FULL_SCHEMA_UNSIGNED_VERSION = "3.0.0";
 const PREVIOUS_WORKSPACE_PACKAGE_VERSION = "2.0.0";
 const LEGACY_WORKSPACE_PACKAGE_VERSION = "1.0.0";
@@ -113,6 +115,13 @@ const tableOrder: TransferTableName[] = [
   "initiativeScopes",
   "initiativeChangeRequests",
   "incumbentObjectives",
+  "solutionOptions",
+  "solutionOptionSteps",
+  "solutionOptionChangeRequests",
+  "solutionOptionObjectives",
+  "solutionOptionAssessments",
+  "initiativeSolutionDecisions",
+  "initiativeSolutionDecisionRevisions",
   "objectiveChangeRequestLinks",
   "changeRequestObjectiveDependencies",
   "objectiveEffectAttributions",
@@ -478,7 +487,7 @@ function isManifest(value: unknown): value is WorkspacePackageManifest {
   const candidate = value as Partial<WorkspacePackageManifest>;
   const totals = candidate.totals as Partial<WorkspacePackageManifest["totals"]> | undefined;
   return candidate.packageType === WORKSPACE_PACKAGE_TYPE
-    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
+    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
     && (candidate.classification === "SYNTHETIC DEMONSTRATION DATA" || candidate.classification === "PROGRAM WORKING DATA")
     && Array.isArray(candidate.tables)
     && Array.isArray(candidate.documents)
@@ -532,7 +541,10 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
   if (manifest.documents.length > MAX_WORKSPACE_DOCUMENTS || manifest.totals.rows > MAX_WORKSPACE_TOTAL_ROWS || manifest.totals.documentBytes > MAX_WORKSPACE_EXPANDED_BYTES) throw new Error("The package exceeds workspace import limits.");
   const legacyLogicalNames = new Set<TransferTableName>(["infrastructureNodes", "infrastructureReferenceValues", "releaseInfrastructureNodes", "infrastructureProductInstallations", "infrastructureConnections"]);
   const previousLogicalNames = new Set<TransferTableName>(["infrastructureReferenceValues"]);
-  const omittedLogicalNames = manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION ? legacyLogicalNames : manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION ? previousLogicalNames : new Set<TransferTableName>();
+  const solutionEngineeringLogicalNames = new Set<TransferTableName>(["solutionOptions", "solutionOptionSteps", "solutionOptionChangeRequests", "solutionOptionObjectives", "solutionOptionAssessments", "initiativeSolutionDecisions", "initiativeSolutionDecisionRevisions"]);
+  const omittedLogicalNames = new Set<TransferTableName>(manifest.packageVersion === WORKSPACE_PACKAGE_VERSION ? [] : solutionEngineeringLogicalNames);
+  if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) for (const name of legacyLogicalNames) omittedLogicalNames.add(name);
+  if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) for (const name of previousLogicalNames) omittedLogicalNames.add(name);
   const packageSpecs = tableSpecs.filter((spec) => !omittedLogicalNames.has(spec.logicalName));
   const expectedNames = new Set(packageSpecs.map((spec) => spec.name));
   if (manifest.tables.length !== packageSpecs.length || manifest.tables.some((entry) => !expectedNames.has(entry.name))) throw new Error(`The package does not contain the complete version ${manifest.packageVersion} application dataset.`);
@@ -567,6 +579,10 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
         row.renderer_version ??= "legacy";
         row.artifact_document_id ??= null;
       }
+      if (spec.logicalName === "initiatives" && manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
+        row.problem_statement ??= null;
+        row.drivers_constraints ??= null;
+      }
       const keys = Object.keys(row);
       if (keys.length !== spec.columns.length || keys.some((key) => !allowed.has(key))) throw new Error(`The ${entry.name} dataset does not match the version 1 schema.`);
       for (const field of Object.values(row)) {
@@ -581,10 +597,13 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
   if (omittedLogicalNames.size) {
     for (const spec of tableSpecs.filter((item) => omittedLogicalNames.has(item.logicalName))) rowsByTable.set(spec.name, []);
   }
+  await validateSolutionDecisionHistory(rowsByTable);
   if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This version 1 package predates governed infrastructure. Existing baseline data will load; infrastructure can be added after import.");
   } else if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This version 2 package predates governed infrastructure vocabularies. Existing infrastructure will load; storage and file-system classifications can be reviewed after import.");
+  } else if (manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
+    warnings.push("This package predates Solution Engineering options. Existing Initiative data will load; alternatives and adjudication can be added after import.");
   }
 
   const importedSourceNames = (rowsByTable.get("source_package") ?? []).map((row) => String(row.file_name || ""));
@@ -719,6 +738,12 @@ export async function replaceWorkspaceFromPackage(db: Database, bucket: Document
     // parent criteria before their child sign-offs, then restores the signed
     // status after every referenced evidence row is present.
     statements.push(db.prepare("UPDATE acceptance_criterion SET status='in_verification' WHERE status='passed' AND length(trim(coalesce(evidence_reference,'')))=0"));
+    // Decision revisions are append-only during normal operation. The atomic
+    // replacement batch establishes one short-lived maintenance lock, returns
+    // completed decisions to Pending, removes child revisions before parents,
+    // and clears the lock before commit. A failed batch leaves no lock behind.
+    statements.push(db.prepare("INSERT INTO initiative_solution_decision_maintenance_lock (id,operation_id,created_at) VALUES (1,?,?)").bind(importId, at));
+    statements.push(db.prepare("UPDATE initiative_solution_decision SET disposition='pending',selected_option_id=NULL,decision_authority=NULL,decision_date=NULL,rationale=NULL,accepted_residual_risk=NULL,basis_snapshot_json=NULL,basis_hash=NULL WHERE disposition<>'pending'"));
     // Queue every old object in the same atomic transaction that removes its
     // metadata. A committed replacement therefore cannot leave an object with
     // neither a live database reference nor a durable cleanup obligation.
@@ -727,6 +752,7 @@ export async function replaceWorkspaceFromPackage(db: Database, bucket: Document
     // the historical document-id column database-level RESTRICT semantics.
     statements.push(db.prepare("DELETE FROM acceptance_signoff"));
     for (const spec of [...tableSpecs].reverse()) if (spec.logicalName !== "appUsers" && spec.logicalName !== "auditEvents" && spec.logicalName !== "acceptanceSignoffs") statements.push(db.prepare(`DELETE FROM ${q(spec.name)}`));
+    const importedDecisionsById = new Map((parsed.rowsByTable.get("initiative_solution_decision") ?? []).map((row) => [String(row.id || ""), row]));
     for (const spec of tableSpecs) {
       // Evidence rows are historically ordered after sign-offs in the transfer
       // schema. Defer sign-off inserts until the document rows exist so the
@@ -745,6 +771,13 @@ export async function replaceWorkspaceFromPackage(db: Database, bucket: Document
       }
       const rows = topologicalRows(parsed.rowsByTable.get(spec.name) ?? [], spec.selfParentColumn);
       for (const row of rows) {
+        // A completed current decision creates its validated latest revision
+        // through the database trigger. Import only its earlier history; a
+        // Pending decision has no current completed row, so import all history.
+        if (spec.logicalName === "initiativeSolutionDecisionRevisions") {
+          const current = importedDecisionsById.get(String(row.decision_id || ""));
+          if (current?.disposition !== "pending" && Number(row.revision) === Number(current?.decision_revision)) continue;
+        }
         const insertRow = spec.logicalName === "acceptanceCriteria" && deferredPassedCriterionIds.has(String(row.id))
           ? { ...row, status: "in_verification" }
           : row;
@@ -767,6 +800,7 @@ export async function replaceWorkspaceFromPackage(db: Database, bucket: Document
     }
     statements.push(db.prepare("UPDATE program SET name=?,description=?,timezone=?,updated_at=? WHERE id='program-jsf'").bind(parsed.manifest.program.name, parsed.manifest.program.description, parsed.manifest.program.timezone, at));
     statements.push(db.prepare("INSERT INTO audit_event (id,program_id,actor_id,action,entity_kind,entity_id,after_payload,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`audit-${crypto.randomUUID()}`, "program-jsf", actorId, "workspace_package_imported", "baseline_workspace", "workspace-jsf-current", JSON.stringify({ packageVersion: parsed.manifest.packageVersion, exportedAt: parsed.manifest.exportedAt, classification: parsed.manifest.classification, totals: parsed.manifest.totals, signerKeyId: parsed.signature.keyId, manifestSha256: parsed.signature.manifestSha256 }), at));
+    statements.push(db.prepare("DELETE FROM initiative_solution_decision_maintenance_lock WHERE id=1 AND operation_id=?").bind(importId));
     const stagingCompletionIndex = statements.length;
     if (stagingObligations.length) statements.push(completeEvidenceObjectCleanupOperationStatement(db, actorId, stagingOperationId, at));
     const replacementResults = await db.batch(statements);

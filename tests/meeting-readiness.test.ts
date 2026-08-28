@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import JSZip from "jszip";
 import type { BriefSnapshot, EvidenceDocument, ExecutiveBrief } from "../lib/governance-model.js";
-import type { InitiativeAssessment, InitiativeDecisionBundle } from "../lib/initiative-decision-model.js";
+import type { InitiativeAssessment, InitiativeDecisionBundle, InitiativeDecisionWorkspace } from "../lib/initiative-decision-model.js";
 import { EvidenceValidationError, validateEvidenceBytes } from "../lib/evidence-validation.js";
 import { parseBriefMarkdown, prepareBriefDocx, prepareBriefMarkdown, prepareBriefPdf } from "../lib/brief-export.js";
 import { isCurrentBriefSnapshot } from "../lib/brief-publication.js";
@@ -19,6 +19,9 @@ import { GenaiMilError, approvedGenaiMilUrl, askGenaiMil, genaiMilReadiness } fr
 import { buildDependencyBoard } from "../lib/dependency-board-model.js";
 import { buildInfrastructureMermaid } from "../lib/infrastructure-mermaid.js";
 import { parseCdSwMatrix } from "../lib/cd-sw-import.js";
+import { countUniqueRequirements, deriveSolutionOptionRollup } from "../lib/solution-option-rollup.js";
+import { buildSolutionDecisionBasis, canonicalSolutionDecisionBasis, hashSolutionDecisionBasis } from "../lib/solution-decision-basis.js";
+import { validateSolutionDecisionHistory } from "../lib/solution-decision-history.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -137,6 +140,390 @@ test("Initiative scope derives only the explicit affected objects on linked Chan
   assert.equal(scope.unattributedEffectCount, 2);
   assert.deepEqual(scope.transitionReleaseNames, ["Future PMA release"]);
   assert.deepEqual(scope.requestedReleaseNames, ["Future PMA release"]);
+});
+
+test("solution option rollup keeps source families, dependencies, dates, scope gaps, and optional work explicit", () => {
+  const workspace = {
+    initiatives: [{ id: "initiative-1", romHoursPerPoint: 500, romConversionRationale: "Synthetic planning factor" }],
+    solutionOptions: [
+      { id: "option-targeted", initiativeId: "initiative-1" },
+      { id: "option-status-quo", initiativeId: "initiative-1" },
+    ],
+    solutionObjectiveLinks: [
+      { id: "link-1", optionId: "option-targeted", objectiveId: "objective-1", role: "required" },
+      { id: "link-duplicate", optionId: "option-targeted", objectiveId: "objective-1", role: "enabling" },
+      { id: "link-2", optionId: "option-targeted", objectiveId: "objective-2", role: "enabling" },
+      { id: "link-optional", optionId: "option-targeted", objectiveId: "objective-optional", role: "optional" },
+    ],
+    solutionChangeRequestLinks: [
+      { id: "option-cr-1", optionId: "option-targeted", changeRequestId: "cr-1" },
+      { id: "option-cr-2", optionId: "option-targeted", changeRequestId: "cr-2" },
+    ],
+    objectives: [
+      { id: "objective-1", status: "planned", plannedStart: "2026-10-01", plannedFinish: "2026-12-01", estimates: [
+        { id: "inc-1-old", objectiveId: "objective-1", estimateSource: "incumbent", hoursLow: 9000, hoursLikely: 9000, hoursHigh: 9000, asOf: "2026-07-01", createdAt: "2026-09-01T00:00:00Z" },
+        { id: "inc-1", objectiveId: "objective-1", estimateSource: "incumbent", hoursLow: 100, hoursLikely: 150, hoursHigh: null, romPointsLow: 50, romPointsLikely: 50, romPointsHigh: 50, costLow: 10, costLikely: 15, costHigh: 20, asOf: "2026-08-01", createdAt: "2026-08-01T00:00:00Z" },
+        { id: "gov-1", objectiveId: "objective-1", estimateSource: "government", hoursLow: 70, hoursLikely: 80, hoursHigh: 100, costLow: 7, costLikely: 8, costHigh: 10, asOf: "2026-08-02", createdAt: "2026-08-02T00:00:00Z" },
+      ] },
+      { id: "objective-2", status: "planned", plannedStart: "2026-99-99", plannedFinish: "2027-02-01", estimates: [
+        { id: "inc-2", objectiveId: "objective-2", estimateSource: "incumbent", hoursLow: null, hoursLikely: null, hoursHigh: null, romPointsLow: 2, romPointsLikely: 3, romPointsHigh: 4, costLow: null, costLikely: null, costHigh: null, asOf: "2026-08-03", createdAt: "2026-08-03T00:00:00Z" },
+      ] },
+      { id: "objective-optional", status: "planned", plannedStart: null, plannedFinish: null, estimates: [{ id: "inc-optional", objectiveId: "objective-optional", estimateSource: "incumbent", hoursLow: 9999, hoursLikely: 9999, hoursHigh: 9999, asOf: "2026-08-04", createdAt: "2026-08-04T00:00:00Z" }] },
+    ],
+    objectiveEffectAttributions: [
+      { objectiveId: "objective-1", changeEffectId: "effect-1" },
+      { objectiveId: "objective-2", changeEffectId: "effect-2" },
+      { objectiveId: "objective-optional", changeEffectId: "effect-optional" },
+      { objectiveId: "objective-1", changeEffectId: "effect-cross-request" },
+    ],
+    objectiveDependencies: [
+      { id: "gate-internal", dependentChangeRequestId: "cr-2", prerequisiteObjectiveId: "objective-1", relationship: "requires", status: "accepted", rationale: "internal", sourceReference: "GOV://GATE/1" },
+      { id: "gate-inbound", dependentChangeRequestId: "cr-1", prerequisiteObjectiveId: "objective-outside", relationship: "requires", status: "proposed", rationale: "inbound", sourceReference: "GOV://GATE/2" },
+      { id: "gate-rejected", dependentChangeRequestId: "cr-1", prerequisiteObjectiveId: "objective-outside-2", relationship: "requires", status: "rejected", rationale: "inactive", sourceReference: null },
+    ],
+    requirements: [
+      { id: "trace-1", objectiveId: "objective-1", requirementId: "requirement-shared" },
+      { id: "trace-2", objectiveId: "objective-2", requirementId: "requirement-shared" },
+    ],
+    changes: { effects: [
+      { id: "effect-1", changeRequestId: "cr-1", subjectKind: "product", subjectId: "product-1", subjectLabel: "Product 1" },
+      { id: "effect-2", changeRequestId: "cr-1", subjectKind: "product", subjectId: "product-1", subjectLabel: "Product 1" },
+      { id: "effect-unattributed", changeRequestId: "cr-1", subjectKind: "platform", subjectId: "platform-1", subjectLabel: "Platform 1" },
+      { id: "effect-optional", changeRequestId: "cr-1", subjectKind: "platform", subjectId: "platform-optional", subjectLabel: "Optional Platform" },
+      { id: "effect-cross-request", changeRequestId: "cr-3", subjectKind: "platform", subjectId: "platform-cross", subjectLabel: "Cross-request Platform" },
+    ], dependencies: [
+      { id: "change-internal", predecessorRequestId: "cr-1", successorRequestId: "cr-2", dependencyType: "enables", confidence: "confirmed", rationale: "internal", sourceReference: "GOV://DEP/1" },
+      { id: "change-internal-duplicate", predecessorRequestId: "cr-1", successorRequestId: "cr-2", dependencyType: "enables", confidence: "confirmed", rationale: "duplicate source", sourceReference: "GOV://DEP/1B" },
+      { id: "change-inbound", predecessorRequestId: "cr-0", successorRequestId: "cr-1", dependencyType: "requires", confidence: "reported", rationale: "inbound", sourceReference: "LM://DEP/2" },
+      { id: "change-outbound", predecessorRequestId: "cr-2", successorRequestId: "cr-3", dependencyType: "enables", confidence: "assessed", rationale: "outbound", sourceReference: "GOV://DEP/3" },
+    ] },
+  } as unknown as InitiativeDecisionWorkspace;
+  const targeted = deriveSolutionOptionRollup(workspace, "option-targeted");
+  assert.ok(targeted);
+  assert.deepEqual(targeted.coreObjectiveIds, ["objective-1", "objective-2"]);
+  assert.deepEqual(targeted.optionalObjectiveIds, ["objective-optional"]);
+  assert.deepEqual([targeted.incumbent.hours.low, targeted.incumbent.hours.likely, targeted.incumbent.hours.high], [1100, 1650, 2000]);
+  assert.deepEqual([targeted.incumbent.romPoints.low, targeted.incumbent.romPoints.likely, targeted.incumbent.romPoints.high], [52, 53, 54]);
+  assert.equal(targeted.incumbent.hours.likelyCoverage.reported, 2);
+  assert.equal(targeted.incumbent.hours.highCoverage.reported, 1);
+  assert.equal(targeted.incumbent.hours.highCoverage.complete, false);
+  assert.equal(targeted.government.hours.likelyCoverage.reported, 1);
+  assert.equal(targeted.government.hours.likelyCoverage.complete, false);
+  assert.equal(targeted.optional.incumbent.hours.likely, 9999);
+  assert.equal(targeted.schedule.earliestPlannedStart, "2026-10-01");
+  assert.equal(targeted.schedule.latestPlannedFinish, "2027-02-01");
+  assert.deepEqual(targeted.schedule.invalidDateObjectiveIds, ["objective-2"]);
+  assert.deepEqual([targeted.dependencies.internal.length, targeted.dependencies.inbound.length, targeted.dependencies.outbound.length], [2, 2, 1]);
+  assert.equal(targeted.scope.effectCount, 2);
+  assert.equal(targeted.scope.affectedObjectCount, 1);
+  assert.equal(targeted.scope.unattributedChangeEffectCount, 1);
+  assert.equal(targeted.scope.nonCoreAttributedEffectCount, 1);
+  assert.equal(targeted.scope.coreEffectOutsideSelectedChangeCount, 1);
+  assert.equal(countUniqueRequirements(workspace, targeted.coreObjectiveIds), 1);
+  assert.match(targeted.warnings.join(" "), /invalid planned date/);
+  assert.match(targeted.warnings.join(" "), /not selected for this option/);
+  const statusQuo = deriveSolutionOptionRollup(workspace, "option-status-quo");
+  assert.ok(statusQuo);
+  assert.equal(statusQuo.incumbent.hours.likely, null);
+  assert.match(statusQuo.warnings.join(" "), /No sourced transformation estimate/);
+});
+
+test("Solution Engineering migration and portable workspace contract retain adjudication separately from source records", () => {
+  const migration = read("drizzle/0032_solution_engineering.sql");
+  const decisionBasisMigration = read("drizzle/0033_solution_decision_basis.sql");
+  const decisionRevisionMigration = read("drizzle/0035_solution_decision_revisions.sql");
+  const transfer = read("lib/workspace-transfer.ts");
+  const decisionHistory = read("lib/solution-decision-history.ts");
+  const solutionServer = read("lib/initiative-solution-server.ts");
+  const solutionUi = read("components/initiative-solution-engineering.tsx");
+  assert.match(migration, /CREATE TABLE `solution_option`/);
+  assert.match(migration, /CREATE TABLE `solution_option_objective`/);
+  assert.match(migration, /CREATE TABLE `initiative_solution_decision`/);
+  assert.match(migration, /initiative_solution_decision_complete/);
+  assert.doesNotMatch(migration, /'selected','retired'/);
+  assert.match(decisionBasisMigration, /basis_snapshot_json/);
+  assert.match(decisionBasisMigration, /initiative_solution_decision_transition_guard/);
+  assert.match(decisionBasisMigration, /selected_solution_option_update_guard/);
+  assert.match(decisionRevisionMigration, /CREATE TABLE `initiative_solution_decision_revision`/);
+  assert.match(decisionRevisionMigration, /Recorded Initiative decision revisions are immutable/);
+  assert.match(solutionServer, /canonicalSolutionDecisionBasis/);
+  assert.match(solutionServer, /Return the Initiative adjudication to pending before changing a completed decision/);
+  assert.match(solutionServer, /source-backed basis, and adjudication metadata have not changed/);
+  assert.match(solutionServer, /if \(metadataUnchanged\) throw new Error\("Enter fresh decision authority/);
+  assert.match(solutionServer, /option\.status === "retired" \|\| option\.status === "not_selected"/);
+  assert.match(solutionUi, /option\.status !== "retired" && option\.status !== "not_selected"/);
+  assert.match(solutionUi, /SOURCE DRIFT — RE-ADJUDICATION REQUIRED/);
+  assert.match(solutionUi, /Adjudication history/);
+  assert.match(solutionUi, /legacy_unverified/);
+  assert.match(read("app/globals.css"), /solution-decision-revision-legacy/);
+  assert.match(transfer, /WORKSPACE_PACKAGE_VERSION = "5\.0\.0"/);
+  assert.match(decisionRevisionMigration, /legacy_unverified/);
+  assert.match(decisionHistory, /must contain every append-only revision in sequence/);
+  assert.match(decisionHistory, /does not match its latest immutable revision/);
+  assert.doesNotMatch(transfer, /initiativeSolutionDecisionRevisions" \? \["decision_id", "revision"\]/);
+  assert.match(read("lib/demo-workspace-server.ts"), /DELETE FROM initiative_solution_decision_revision WHERE initiative_id=\?/);
+  for (const table of ["solutionOptions", "solutionOptionSteps", "solutionOptionChangeRequests", "solutionOptionObjectives", "solutionOptionAssessments", "initiativeSolutionDecisions", "initiativeSolutionDecisionRevisions"]) assert.match(transfer, new RegExp(`"${table}"`));
+});
+
+test("legacy selected adjudications upgrade to explicit unverified history and clean Pending state", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys=ON");
+  const migrations = readdirSync("drizzle").filter((item) => item.endsWith(".sql")).sort();
+  for (const name of migrations.filter((item) => item < "0033_solution_decision_basis.sql")) database.exec(read(`drizzle/${name}`));
+  const at = "2026-08-27T12:00:00.000Z";
+  database.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("program-test", "Test program", null, "UTC", at, at);
+  database.prepare("INSERT INTO initiative (id,program_id,title,normalized_title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").run("initiative-a", "program-test", "Initiative A", "initiative a", "draft", "medium", at, at);
+  database.prepare("INSERT INTO solution_option (id,initiative_id,title,normalized_title,option_type,status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("option-a", "initiative-a", "Option A", "option a", "candidate", "recommended", 0, at, at);
+  database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,accepted_residual_risk,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run("legacy-decision", "initiative-a", "option-a", "selected", "Legacy authority", "2026-08-20", "Legacy rationale", "Legacy residual risk", at, at);
+  for (const name of migrations.filter((item) => item >= "0033_solution_decision_basis.sql")) database.exec(read(`drizzle/${name}`));
+  const current = database.prepare("SELECT disposition,selected_option_id AS selectedOptionId,decision_authority AS authority,decision_revision AS revision,basis_hash AS basisHash FROM initiative_solution_decision WHERE id=?").get("legacy-decision") as { disposition: string; selectedOptionId: string | null; authority: string | null; revision: number; basisHash: string | null };
+  assert.deepEqual({ ...current }, { disposition: "pending", selectedOptionId: null, authority: null, revision: 1, basisHash: null });
+  const history = database.prepare("SELECT disposition,selected_option_id AS selectedOptionId,decision_authority AS authority,rationale,basis_snapshot_json AS basisSnapshot,basis_hash AS basisHash FROM initiative_solution_decision_revision WHERE decision_id=?").get("legacy-decision") as Record<string, unknown>;
+  assert.deepEqual({ ...history }, { disposition: "legacy_unverified", selectedOptionId: "option-a", authority: "Legacy authority", rationale: "Legacy rationale", basisSnapshot: null, basisHash: null });
+  database.close();
+});
+
+test("pre-history decision counters normalize to only recoverable upgrade state", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys=ON");
+  const migrations = readdirSync("drizzle").filter((item) => item.endsWith(".sql")).sort();
+  for (const name of migrations.filter((item) => item < "0035_solution_decision_revisions.sql")) database.exec(read(`drizzle/${name}`));
+  const at = "2026-08-27T12:00:00.000Z";
+  database.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("program-test", "Test program", null, "UTC", at, at);
+  for (const suffix of ["selected", "pending"]) {
+    database.prepare("INSERT INTO initiative (id,program_id,title,normalized_title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").run(`initiative-${suffix}`, "program-test", `Initiative ${suffix}`, `initiative ${suffix}`, "draft", "medium", at, at);
+    database.prepare("INSERT INTO solution_option (id,initiative_id,title,normalized_title,option_type,status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run(`option-${suffix}`, `initiative-${suffix}`, `Option ${suffix}`, `option ${suffix}`, "candidate", "recommended", 0, at, at);
+  }
+  database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("decision-selected", "initiative-selected", "option-selected", "selected", "Authority", "2026-08-27", "Recoverable current decision", "{}", `sha256:${"0".repeat(64)}`, 2, at, at);
+  database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,disposition,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("decision-pending", "initiative-pending", "pending", 7, at, at);
+  for (const name of migrations.filter((item) => item >= "0035_solution_decision_revisions.sql")) database.exec(read(`drizzle/${name}`));
+  const selected = database.prepare("SELECT decision_revision AS revision FROM initiative_solution_decision WHERE id=?").get("decision-selected") as { revision: number };
+  const pending = database.prepare("SELECT decision_revision AS revision FROM initiative_solution_decision WHERE id=?").get("decision-pending") as { revision: number };
+  assert.equal(selected.revision, 1);
+  assert.equal(pending.revision, 0);
+  assert.deepEqual((database.prepare("SELECT decision_id AS decisionId,revision FROM initiative_solution_decision_revision ORDER BY decision_id").all() as Array<{ decisionId: string; revision: number }>).map((row) => ({ ...row })), [{ decisionId: "decision-selected", revision: 1 }]);
+  database.close();
+});
+
+test("workspace decision-history validation rejects gaps, tampered hashes, and current/revision disagreement", async () => {
+  const basisSnapshot = "{}";
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(basisSnapshot));
+  const basisHash = `sha256:${[...new Uint8Array(digest)].map((item) => item.toString(16).padStart(2, "0")).join("")}`;
+  const current = { id: "decision-1", initiative_id: "initiative-1", selected_option_id: "option-1", disposition: "selected", decision_authority: "Authority", decision_date: "2026-08-27", rationale: "Rationale", accepted_residual_risk: null, basis_snapshot_json: basisSnapshot, basis_hash: basisHash, decision_revision: 1, created_by_user_id: "user-1", updated_at: "2026-08-27T12:00:00.000Z" };
+  const revision = { id: "revision-1", decision_id: "decision-1", initiative_id: "initiative-1", revision: 1, selected_option_id: "option-1", disposition: "selected", decision_authority: "Authority", decision_date: "2026-08-27", rationale: "Rationale", accepted_residual_risk: null, basis_snapshot_json: basisSnapshot, basis_hash: basisHash, created_by_user_id: "user-1", created_at: "2026-08-27T12:00:00.000Z" };
+  const rows = (decision: Record<string, unknown> = current, revisions: Record<string, unknown>[] = [revision]) => new Map<string, Record<string, unknown>[]>([
+    ["solution_option", [{ id: "option-1", initiative_id: "initiative-1" }]],
+    ["initiative_solution_decision", [decision]],
+    ["initiative_solution_decision_revision", revisions],
+  ]);
+  await validateSolutionDecisionHistory(rows());
+  await assert.rejects(validateSolutionDecisionHistory(rows({ ...current, decision_revision: 2 })), /every append-only revision in sequence/);
+  await assert.rejects(validateSolutionDecisionHistory(rows(current, [{ ...revision, basis_hash: `sha256:${"f".repeat(64)}` }])), /invalid frozen-basis hash/);
+  await assert.rejects(validateSolutionDecisionHistory(rows(current, [{ ...revision, rationale: "Different rationale" }])), /does not match its latest immutable revision/);
+  const pending = { ...current, selected_option_id: null, disposition: "pending", decision_authority: null, decision_date: null, rationale: null, accepted_residual_risk: null, basis_snapshot_json: null, basis_hash: null };
+  const legacy = { ...revision, disposition: "legacy_unverified", basis_snapshot_json: null, basis_hash: null };
+  await validateSolutionDecisionHistory(rows(pending, [legacy]));
+  const formattedSnapshot = "{ \"z\": 2, \"a\": 1 }";
+  const semanticHash = await hashSolutionDecisionBasis({ a: 1, z: 2 });
+  const semanticCurrent = { ...current, basis_snapshot_json: formattedSnapshot, basis_hash: semanticHash };
+  const semanticRevision = { ...revision, basis_snapshot_json: formattedSnapshot, basis_hash: semanticHash };
+  await validateSolutionDecisionHistory(rows(semanticCurrent, [semanticRevision]));
+});
+
+test("all migrations apply through the Solution Engineering schema", () => {
+  const database = new DatabaseSync(":memory:");
+  database.exec("PRAGMA foreign_keys=ON");
+  for (const name of readdirSync("drizzle").filter((item) => item.endsWith(".sql")).sort()) database.exec(read(`drizzle/${name}`));
+  const initiativeColumns = database.prepare("SELECT name FROM pragma_table_info('initiative') WHERE name IN ('problem_statement','drivers_constraints') ORDER BY name").all() as Array<{ name: string }>;
+  assert.deepEqual(initiativeColumns.map((item) => item.name), ["drivers_constraints", "problem_statement"]);
+  const solutionTables = database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'solution_%' ORDER BY name").all() as Array<{ name: string }>;
+  assert.deepEqual(solutionTables.map((item) => item.name), ["solution_option", "solution_option_assessment", "solution_option_change_request", "solution_option_objective", "solution_option_step"]);
+  const at = "2026-08-27T12:00:00.000Z";
+  database.prepare("INSERT INTO program (id,name,description,timezone,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("program-test", "Test program", null, "UTC", at, at);
+  database.prepare("INSERT INTO initiative (id,program_id,title,normalized_title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").run("initiative-a", "program-test", "Initiative A", "initiative a", "draft", "medium", at, at);
+  database.prepare("INSERT INTO initiative (id,program_id,title,normalized_title,status,priority,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)").run("initiative-b", "program-test", "Initiative B", "initiative b", "draft", "medium", at, at);
+  database.prepare("INSERT INTO solution_option (id,initiative_id,title,normalized_title,option_type,status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("option-a", "initiative-a", "Option A", "option a", "candidate", "recommended", 0, at, at);
+  database.prepare("INSERT INTO solution_option (id,initiative_id,title,normalized_title,option_type,status,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("option-b", "initiative-b", "Option B", "option b", "candidate", "recommended", 0, at, at);
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("decision-incomplete", "initiative-a", "option-a", "selected", at, at), /CHECK constraint failed|frozen decision basis|valid initial revision/);
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").run("decision-no-basis", "initiative-a", "option-a", "selected", "Decision authority", "2026-08-27", "Documented rationale", at, at), /frozen decision basis|valid initial revision/);
+  const basisHash = `sha256:${"0".repeat(64)}`;
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("decision-null-hash", "initiative-a", "option-a", "selected", "Decision authority", "2026-08-27", "Documented rationale", "{}", null, 1, at, at), /frozen decision basis/);
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("decision-invalid-hash", "initiative-a", "option-a", "selected", "Decision authority", "2026-08-27", "Documented rationale", "{}", `sha256:0${"z".repeat(63)}`, 1, at, at), /frozen decision basis/);
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("decision-cross", "initiative-a", "option-b", "selected", "Decision authority", "2026-08-27", "Documented rationale", "{}", basisHash, 1, at, at), /Selected solution option must belong to the Initiative/);
+  database.prepare("INSERT INTO initiative_solution_decision (id,initiative_id,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,decision_revision,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("decision-valid", "initiative-a", "option-a", "selected", "Decision authority", "2026-08-27", "Documented rationale", "{}", basisHash, 1, at, at);
+  assert.deepEqual((database.prepare("SELECT revision,rationale,basis_snapshot_json AS basisSnapshotJson FROM initiative_solution_decision_revision WHERE decision_id=? ORDER BY revision").all("decision-valid") as Array<{ revision: number; rationale: string; basisSnapshotJson: string }>).map((row) => ({ ...row })), [{ revision: 1, rationale: "Documented rationale", basisSnapshotJson: "{}" }]);
+  database.prepare("INSERT INTO initiative_solution_decision_maintenance_lock (id,operation_id,created_at) VALUES (1,?,?)").run("guard-test", at);
+  database.prepare("DELETE FROM initiative_solution_decision_revision WHERE decision_id=? AND revision=1").run("decision-valid");
+  database.prepare("DELETE FROM initiative_solution_decision_maintenance_lock WHERE id=1").run();
+  assert.throws(() => database.prepare("INSERT INTO initiative_solution_decision_revision (id,decision_id,initiative_id,revision,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("mismatched-revision", "decision-valid", "initiative-a", 1, "option-a", "selected", "Decision authority", "2026-08-27", "Tampered rationale", "{}", basisHash, at), /must match its Initiative, option, and current revision sequence/);
+  database.prepare("INSERT INTO initiative_solution_decision_revision (id,decision_id,initiative_id,revision,selected_option_id,disposition,decision_authority,decision_date,rationale,basis_snapshot_json,basis_hash,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run("restored-revision", "decision-valid", "initiative-a", 1, "option-a", "selected", "Decision authority", "2026-08-27", "Documented rationale", "{}", basisHash, at);
+  assert.throws(() => database.prepare("UPDATE initiative_solution_decision SET selected_option_id=? WHERE id=?").run("option-b", "decision-valid"), /Selected solution option must belong|Return the Initiative adjudication to pending/);
+  assert.throws(() => database.prepare("UPDATE initiative_solution_decision SET decision_authority=?,decision_date=?,rationale=?,basis_snapshot_json=?,basis_hash=?,decision_revision=? WHERE id=?").run("Tampered", "2000-01-01", "Changed", "{\"tampered\":true}", `sha256:${"f".repeat(64)}`, 99, "decision-valid"), /Return the Initiative adjudication to pending/);
+  assert.throws(() => database.prepare("UPDATE solution_option SET summary=? WHERE id=?").run("Changed after decision", "option-a"), /Return the Initiative adjudication to pending/);
+  assert.throws(() => database.prepare("INSERT INTO solution_option_step (id,option_id,title,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?)").run("late-step", "option-a", "Late mutation", 0, at, at), /Return the Initiative adjudication to pending/);
+  assert.equal((database.prepare("SELECT selected_option_id AS selectedOptionId FROM initiative_solution_decision WHERE id=?").get("decision-valid") as { selectedOptionId: string }).selectedOptionId, "option-a");
+  database.prepare("UPDATE initiative_solution_decision SET disposition='pending',selected_option_id=NULL,decision_authority=NULL,decision_date=NULL,rationale=NULL,accepted_residual_risk=NULL,basis_snapshot_json=NULL,basis_hash=NULL WHERE id=?").run("decision-valid");
+  assert.throws(() => database.prepare("UPDATE initiative_solution_decision SET initiative_id=? WHERE id=?").run("initiative-b", "decision-valid"), /revisions must advance exactly once/);
+  assert.throws(() => database.prepare("DELETE FROM initiative_solution_decision WHERE id=?").run("decision-valid"), /revision history cannot be deleted/);
+  assert.throws(() => database.prepare("UPDATE initiative_solution_decision_revision SET rationale=? WHERE decision_id=? AND revision=1").run("Changed history", "decision-valid"), /revisions are immutable/);
+  assert.throws(() => database.prepare("DELETE FROM initiative_solution_decision_revision WHERE decision_id=? AND revision=1").run("decision-valid"), /revisions are append-only/);
+  database.prepare("UPDATE solution_option SET summary=? WHERE id=?").run("Editable after pending", "option-a");
+  assert.equal((database.prepare("SELECT summary FROM solution_option WHERE id=?").get("option-a") as { summary: string }).summary, "Editable after pending");
+  const secondBasisHash = `sha256:${"1".repeat(64)}`;
+  database.prepare("UPDATE initiative_solution_decision SET selected_option_id=?,disposition='selected',decision_authority=?,decision_date=?,rationale=?,basis_snapshot_json=?,basis_hash=?,decision_revision=2 WHERE id=?").run("option-a", "Decision authority", "2026-08-28", "Re-adjudicated after source review", "{\"revision\":2}", secondBasisHash, "decision-valid");
+  assert.deepEqual((database.prepare("SELECT revision,rationale,basis_snapshot_json AS basisSnapshotJson FROM initiative_solution_decision_revision WHERE decision_id=? ORDER BY revision").all("decision-valid") as Array<{ revision: number; rationale: string; basisSnapshotJson: string }>).map((row) => ({ ...row })), [
+    { revision: 1, rationale: "Documented rationale", basisSnapshotJson: "{}" },
+    { revision: 2, rationale: "Re-adjudicated after source review", basisSnapshotJson: "{\"revision\":2}" },
+  ]);
+  database.prepare("INSERT INTO initiative_solution_decision_maintenance_lock (id,operation_id,created_at) VALUES (1,?,?)").run("demo-reset-test", at);
+  database.prepare("UPDATE initiative_solution_decision SET selected_option_id=NULL,disposition='pending',decision_authority=NULL,decision_date=NULL,rationale=NULL,accepted_residual_risk=NULL,basis_snapshot_json=NULL,basis_hash=NULL WHERE id=?").run("decision-valid");
+  database.prepare("DELETE FROM initiative_solution_decision_revision WHERE decision_id=?").run("decision-valid");
+  database.prepare("DELETE FROM initiative_solution_decision WHERE id=?").run("decision-valid");
+  database.prepare("DELETE FROM initiative_solution_decision_maintenance_lock WHERE id=1 AND operation_id=?").run("demo-reset-test");
+  assert.deepEqual({ decisions: (database.prepare("SELECT count(*) AS count FROM initiative_solution_decision WHERE id=?").get("decision-valid") as { count: number }).count, revisions: (database.prepare("SELECT count(*) AS count FROM initiative_solution_decision_revision WHERE decision_id=?").get("decision-valid") as { count: number }).count, locks: (database.prepare("SELECT count(*) AS count FROM initiative_solution_decision_maintenance_lock").get() as { count: number }).count }, { decisions: 0, revisions: 0, locks: 0 });
+  database.close();
+});
+
+function decisionBasisWorkspaceFixture() {
+  const at = "2026-08-27T12:00:00.000Z";
+  const workspace = {
+    actor: { id: "user-1", displayName: "Decision analyst", role: "steward" },
+    initiatives: [{
+      id: "initiative-1", title: "Reduce unsupported runtime exposure", status: "decision_required", priority: "high", owner: "Program office",
+      targetDate: "2027-03-31", consequence: "Unsupported runtime remains", desiredOutcome: "Supported runtime fielded", decisionAsk: "Select an option",
+      asIsStatement: null, toBeStatement: null, successMeasures: null, briefingAudience: null, decisionNeededBy: null,
+      problemStatement: "The current runtime is unsupported.", driversConstraints: "Fielding access is constrained.", romHoursPerPoint: 500,
+      romConversionRationale: "Government planning factor", primaryReleaseId: null, primaryReleaseName: null, updatedAt: at,
+    }],
+    links: [{ id: "initiative-cr-1", initiativeId: "initiative-1", changeRequestId: "cr-1", relationship: "delivers", contributionSummary: null, sortOrder: 0 }],
+    objectives: [{
+      id: "objective-1", changeRequestId: "cr-1", externalSystem: "LM", externalIdentifier: "OBJ-001", title: "Containerize application", summary: null,
+      technicalOwner: "Delivery team", status: "planned", plannedStart: "2026-10-01", plannedFinish: "2027-02-01", actualStart: null, actualFinish: null,
+      sourceLocator: "LM://OBJ-001", sourceAsOf: "2026-08-15", updatedAt: at,
+      estimates: [
+        { id: "estimate-current", objectiveId: "objective-1", estimateSource: "incumbent", hoursLow: null, hoursLikely: null, hoursHigh: null, costLow: null, costLikely: null, costHigh: null, romPointsLow: 3, romPointsLikely: 4, romPointsHigh: 5, basis: "Current supplier ROM", assumptions: null, sourceReference: "LM://ROM/current", asOf: "2026-08-15", confidence: "unassessed", createdAt: at },
+        { id: "estimate-history", objectiveId: "objective-1", estimateSource: "incumbent", hoursLow: 999, hoursLikely: 999, hoursHigh: 999, costLow: null, costLikely: null, costHigh: null, basis: "Superseded supplier ROM", assumptions: null, sourceReference: "LM://ROM/old", asOf: "2026-07-01", confidence: "unassessed", createdAt: "2026-07-01T12:00:00.000Z" },
+      ],
+    }],
+    objectiveFeedSources: [{
+      subjectId: "feed-subject-1", objectiveId: "objective-1", snapshotId: "snapshot-1", feedKey: "OBJ-001", fileName: "FOR_JPO.json",
+      recordContentHash: `sha256:${"a".repeat(64)}`, sourceAsOf: "2026-08-15", observedAt: "2026-08-15T09:00:00.000Z", sourceLocator: "LM://OBJ-001",
+      relatedTo: "MCP-122", roadmapParent: null, scope: "PMA", domains: ["😀-domain", "\uE000-domain", "ä-domain", "z-domain", "A-domain"], itemNumber: 1,
+      targetStart: "2026-10-01", targetFinish: "2027-02-01", rom: null, percentComplete: 0, funding: "Proposed", release: null,
+      overview: "Containerize the application.", background: null,
+    }],
+    initiativeEvidenceFingerprints: [{
+      initiativeId: "initiative-1", documentId: "document-1", governanceRecordId: "record-1", fileName: "analysis.pdf", contentType: "application/pdf",
+      byteSize: 2048, description: "Government analysis", sealedContentHash: `sha256:${"b".repeat(64)}`, quarantined: false, integrityStatus: "verified",
+    }],
+    objectiveChangeRequestLinks: [{ id: "objective-cr-1", objectiveId: "objective-1", changeRequestId: "cr-1", relationship: "primary", sourceSystem: "Government", sourceLocator: null, sourceAsOf: "2026-08-16", updatedAt: at }],
+    objectiveDependencies: [{ id: "objective-gate-1", dependentChangeRequestId: "cr-1", prerequisiteObjectiveId: "objective-1", relationship: "requires", status: "accepted", rationale: "Internal gate", sourceReference: "GOV://GATE/1", sourceAsOf: "2026-08-16", evidenceReference: null, updatedAt: at }],
+    objectiveEffectAttributions: [{ id: "attribution-1", objectiveId: "objective-1", changeEffectId: "effect-1", attribution: "primary", rationale: "Primary implementation effect", sourceReference: "GOV://ATTR/1", sourceAsOf: "2026-08-16", evidenceReference: null, confidence: "high", updatedAt: at }],
+    requirements: [{ id: "trace-1", objectiveId: "objective-1", requirementId: "requirement-1", versionLabel: "v1", externalIdentifier: "REQ-001", title: "Supported runtime", sourceSystem: "Government", sourceLocator: "GOV://REQ/1", sourceAsOf: "2026-08-16", changeAction: "modify", beforeText: "Unsupported", afterText: "Supported", rationale: null, traceStatus: "verified", updatedAt: at }],
+    criteria: [{
+      id: "criterion-1", objectiveId: "objective-1", requirementTraceId: "trace-1", tier: "tier_3", code: "AC-001", statement: "Runtime is supported", verificationMethod: "inspection", status: "passed", plannedDate: "2027-02-01", actualDate: null, evidenceReference: null, updatedAt: at,
+      signoffs: [{ id: "signoff-1", criterionId: "criterion-1", signoffRole: "Government acceptance", signer: "Authority", decision: "accepted", decidedAt: "2027-02-02", rationale: "Evidence reviewed", evidenceDocumentId: "document-1", evidenceIntegrityStatus: "verified", evidenceFingerprint: { documentId: "document-1", fileName: "analysis.pdf", byteSize: 2048, sealedContentHash: `sha256:${"b".repeat(64)}`, quarantined: false, integrityStatus: "verified" }, updatedAt: at }],
+    }],
+    milestones: [{ id: "milestone-1", initiativeId: "initiative-1", changeRequestId: "cr-1", objectiveId: "objective-1", title: "Fielding", milestoneType: "fielding", plannedDate: "2027-03-01", actualDate: null, status: "planned", consequenceIfMissed: null, owner: "Fielding team", sortOrder: 0, updatedAt: at }],
+    solutionOptions: [{ id: "option-1", initiativeId: "initiative-1", title: "Containerize", optionType: "candidate", status: "recommended", summary: "Move to a supported container runtime.", projectedOutcome: "Supported runtime", expectedConsequences: "Migration effort", residualRisks: "Fielding access", assumptions: "Platform capacity is available", sortOrder: 0, updatedAt: at }],
+    solutionSteps: [
+      { id: "step-2", optionId: "option-1", title: "Field", description: null, expectedResult: "Supported runtime fielded", sortOrder: 1, updatedAt: at },
+      { id: "step-1", optionId: "option-1", title: "Containerize", description: null, expectedResult: "Container image", sortOrder: 0, updatedAt: at },
+    ],
+    solutionChangeRequestLinks: [{ id: "option-cr-1", optionId: "option-1", changeRequestId: "cr-1", relationship: "delivers", rationale: null, updatedAt: at }],
+    solutionObjectiveLinks: [{ id: "option-objective-1", optionId: "option-1", objectiveId: "objective-1", role: "required", rationale: null, updatedAt: at }],
+    solutionAssessments: [{ id: "assessment-1", optionId: "option-1", criterion: "outcome_alignment", rating: "favorable", narrative: "Directly supports the outcome.", sourceReference: "GOV://ASSESS/1", confidence: "high", updatedAt: at }],
+    solutionDecisions: [],
+    solutionDecisionRevisions: [],
+    changes: {
+      types: [], releases: [], subjects: [],
+      requests: [{ id: "cr-1", typeId: "type-1", typeCode: "MCP", typeLabel: "MCP", externalSystem: "MCP", externalIdentifier: "MCP-122", title: "Modernize PMA", externalStatus: "Proposed", externalOwner: "LM", sourceLocator: "MCP://122", sourceAsOf: "2026-08-14", requestedReleaseId: null, requestedReleaseName: null, governmentPriority: "high", decisionStatus: "analyze", decisionAuthority: null, decisionAt: null, decisionRationale: null, referenceStatus: "active", lifecycleRationale: null, summary: "Modernize PMA", consequenceIfFunded: null, consequenceIfDeferred: "Risk remains", impactSummary: "Runtime changes", knockOnEffects: null, updatedAt: at }],
+      effects: [{ id: "effect-1", changeRequestId: "cr-1", subjectKind: "product", subjectId: "product-1", subjectLabel: "PMA application", action: "modify", aspect: "runtime", fromReleaseId: null, fromReleaseName: "Windows 10", toReleaseId: null, toReleaseName: "Container runtime", currentState: "Unsupported", targetState: "Supported", consequence: null, rationale: "Reduce lifecycle risk", confidence: "confirmed", sourceOccurrenceId: null, updatedAt: at }],
+      dependencies: [{ id: "dependency-1", predecessorRequestId: "cr-0", successorRequestId: "cr-1", dependencyType: "requires", confidence: "confirmed", rationale: "Platform available first", sourceReference: "GOV://DEP/1", updatedAt: at }],
+    },
+    assessments: {},
+  } as unknown as InitiativeDecisionWorkspace;
+  workspace.objectiveFeedSources!.push({ ...workspace.objectiveFeedSources![0], subjectId: "feed-subject-unrelated", objectiveId: "objective-unrelated", snapshotId: "snapshot-unrelated", feedKey: "OBJ-UNRELATED", recordContentHash: `sha256:${"e".repeat(64)}` });
+  workspace.initiativeEvidenceFingerprints!.push({ ...workspace.initiativeEvidenceFingerprints![0], initiativeId: "initiative-unrelated", documentId: "document-unrelated", governanceRecordId: null, fileName: "unrelated.pdf", sealedContentHash: `sha256:${"f".repeat(64)}` });
+  return workspace;
+}
+
+function rewriteOperationalClocks(value: unknown) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) { value.forEach(rewriteOperationalClocks); return; }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "updatedAt" || key === "createdAt") (value as Record<string, unknown>)[key] = "2099-12-31T23:59:59.999Z";
+    else rewriteOperationalClocks(child);
+  }
+}
+
+test("solution decision basis builder is stable across ordering, write clocks, and superseded estimates", async () => {
+  const left = decisionBasisWorkspaceFixture();
+  const right = structuredClone(left);
+  right.solutionSteps.reverse();
+  right.objectives[0].estimates.reverse();
+  right.objectiveFeedSources![0].domains.reverse();
+  right.objectives[0].estimates.find((estimate) => estimate.id === "estimate-history")!.hoursLikely = 123456;
+  rewriteOperationalClocks(right);
+
+  const leftBasis = buildSolutionDecisionBasis(left, "initiative-1", "option-1") as unknown as {
+    objectives: Array<{ estimates: Array<{ id: string }> }>;
+    objectiveFeedSources: Array<{ subjectId: string; snapshotId: string; rom: string | null; domains: string[] }>;
+    initiativeEvidence: Array<{ documentId: string; integrityStatus: string }>;
+    derivedRollup: { warningCodes: string[]; warnings?: string[] };
+  };
+  const rightBasis = buildSolutionDecisionBasis(right, "initiative-1", "option-1");
+  assert.deepEqual(leftBasis.objectives[0].estimates.map((estimate) => estimate.id), ["estimate-current"]);
+  assert.equal(leftBasis.objectiveFeedSources.length, 1);
+  assert.equal(leftBasis.objectiveFeedSources[0].subjectId, "feed-subject-1");
+  assert.equal(leftBasis.objectiveFeedSources[0].snapshotId, "snapshot-1");
+  assert.equal(leftBasis.objectiveFeedSources[0].rom, null);
+  assert.deepEqual(leftBasis.objectiveFeedSources[0].domains, ["A-domain", "z-domain", "ä-domain", "\uE000-domain", "😀-domain"]);
+  assert.deepEqual(leftBasis.initiativeEvidence.map((document) => document.documentId), ["document-1"]);
+  assert.deepEqual(leftBasis.derivedRollup.warningCodes, []);
+  assert.equal(leftBasis.derivedRollup.warnings, undefined);
+  assert.equal(await hashSolutionDecisionBasis(leftBasis), await hashSolutionDecisionBasis(rightBasis));
+});
+
+test("solution decision basis builder detects semantic estimate, feed, and evidence changes", async () => {
+  const baseline = decisionBasisWorkspaceFixture();
+  const baselineHash = await hashSolutionDecisionBasis(buildSolutionDecisionBasis(baseline, "initiative-1", "option-1"));
+
+  const estimateChanged = structuredClone(baseline);
+  estimateChanged.objectives[0].estimates.find((estimate) => estimate.id === "estimate-current")!.romPointsLikely = 6;
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(estimateChanged, "initiative-1", "option-1")), baselineHash);
+
+  const feedChanged = structuredClone(baseline);
+  feedChanged.objectiveFeedSources![0].recordContentHash = `sha256:${"c".repeat(64)}`;
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(feedChanged, "initiative-1", "option-1")), baselineHash);
+
+  const feedTimestampChanged = structuredClone(baseline);
+  feedTimestampChanged.objectiveFeedSources![0].sourceAsOf = "2026-08-16";
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(feedTimestampChanged, "initiative-1", "option-1")), baselineHash);
+
+  const feedSnapshotChanged = structuredClone(baseline);
+  feedSnapshotChanged.objectiveFeedSources![0].snapshotId = "snapshot-2";
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(feedSnapshotChanged, "initiative-1", "option-1")), baselineHash);
+
+  const evidenceSealChanged = structuredClone(baseline);
+  evidenceSealChanged.initiativeEvidenceFingerprints![0].sealedContentHash = `sha256:${"d".repeat(64)}`;
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(evidenceSealChanged, "initiative-1", "option-1")), baselineHash);
+
+  const evidenceIntegrityChanged = structuredClone(baseline);
+  evidenceIntegrityChanged.initiativeEvidenceFingerprints![0].integrityStatus = "unverified";
+  assert.notEqual(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(evidenceIntegrityChanged, "initiative-1", "option-1")), baselineHash);
+
+  const unrelatedChanged = structuredClone(baseline);
+  unrelatedChanged.objectiveFeedSources![1].recordContentHash = `sha256:${"0".repeat(64)}`;
+  unrelatedChanged.initiativeEvidenceFingerprints![1].integrityStatus = "unverified";
+  assert.equal(await hashSolutionDecisionBasis(buildSolutionDecisionBasis(unrelatedChanged, "initiative-1", "option-1")), baselineHash);
+});
+
+test("solution decision basis canonicalizer remains object-key-order independent", async () => {
+  const left = { option: { id: "option-1", title: "Targeted upgrade" }, objectiveIds: ["objective-1"], rollup: { hours: 100 } };
+  const reordered = { rollup: { hours: 100 }, objectiveIds: ["objective-1"], option: { title: "Targeted upgrade", id: "option-1" } };
+  assert.equal(canonicalSolutionDecisionBasis(left), canonicalSolutionDecisionBasis(reordered));
+  assert.equal(await hashSolutionDecisionBasis(left), await hashSolutionDecisionBasis(reordered));
 });
 
 test("saved leadership report escapes imported markdown and remote-content injection", () => {
