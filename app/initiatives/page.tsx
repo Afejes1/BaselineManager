@@ -3,99 +3,50 @@
 import { useMemo, useState } from "react";
 import Link from "../../components/app-link";
 import { DomainPageShell } from "../../components/domain-shell";
-import { InitiativeScopeHelper } from "../../components/initiative-scope-helper";
 import { useGovernancePortfolio } from "../../lib/governance-client";
-import { displayStatus, initiativePriorities, initiativeStatuses, type InitiativePriority, type InitiativeStatus } from "../../lib/governance-model";
-import { useInitiativeDecisions } from "../../lib/initiative-decision-client";
-import { readable } from "../../lib/initiative-decision-model";
+import { readable, selectInitiativeBundle, type InitiativeLifecycle } from "../../lib/initiative-decision-model";
+import { useSolutionEngineering } from "../../lib/solution-engineering-client";
 
-function dateLabel(value: string | null) {
-  if (!value) return "No target date";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString();
+function lifecycleFor(workspace: NonNullable<ReturnType<typeof useSolutionEngineering>["workspace"]>, initiativeId: string) {
+  const bundle = selectInitiativeBundle(workspace, initiativeId);
+  if (!bundle) return { lifecycle: "draft" as InitiativeLifecycle, gaps: 0, options: 0, selected: null as string | null, disposition: "pending" };
+  const active = bundle.solutionOptions.filter((option) => option.status !== "retired");
+  const action = active.filter((option) => option.optionType !== "status_quo");
+  const gaps = [!bundle.initiative.problemStatement, !bundle.initiative.desiredOutcome, !bundle.initiative.successMeasures, !bundle.initiative.decisionQuestion, !bundle.initiative.decisionNeededBy, !action.length, ...action.map((option) => !bundle.solutionSteps.some((step) => step.optionId === option.id)), ...action.map((option) => !bundle.solutionChangeRequestLinks.some((link) => link.optionId === option.id))].filter(Boolean).length;
+  const decision = bundle.solutionDecision;
+  const lifecycle: InitiativeLifecycle = bundle.initiative.closedAt ? "closed" : decision && decision.disposition !== "pending" ? "decided" : !gaps ? "decision_ready" : active.length > 1 || Boolean(bundle.initiative.problemStatement) ? "in_analysis" : "draft";
+  return { lifecycle, gaps, options: active.length, selected: bundle.solutionOptions.find((option) => option.id === decision?.selectedOptionId)?.title || null, disposition: decision?.disposition || "pending" };
 }
 
 export default function InitiativesPage() {
-  const { portfolio, loading, error, mutate } = useGovernancePortfolio();
-  const decisionWorkspace = useInitiativeDecisions();
+  const solution = useSolutionEngineering();
+  const governance = useGovernancePortfolio();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<InitiativeStatus | "all">("all");
+  const [filter, setFilter] = useState<InitiativeLifecycle | "all">("all");
   const [showCreate, setShowCreate] = useState(false);
+  const [title, setTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
-  const [title, setTitle] = useState("");
-  const [owner, setOwner] = useState("");
-  const [releaseName, setReleaseName] = useState("All releases");
-  const [status, setStatus] = useState<InitiativeStatus>("draft");
-  const [priority, setPriority] = useState<InitiativePriority>("medium");
-  const [targetDate, setTargetDate] = useState("");
-  const [consequence, setConsequence] = useState("");
-  const [desiredOutcome, setDesiredOutcome] = useState("");
-  const [decisionAsk, setDecisionAsk] = useState("");
-  const [problemStatement, setProblemStatement] = useState("");
-  const [driversConstraints, setDriversConstraints] = useState("");
-
-  const releases = useMemo(() => ["All releases", ...(decisionWorkspace.workspace?.changes.releases.map((release) => release.name) || [])], [decisionWorkspace.workspace?.changes.releases]);
-  const initiatives = useMemo(() => portfolio?.initiatives ?? [], [portfolio?.initiatives]);
-  const filtered = useMemo(() => initiatives.filter((initiative) => {
-    if (statusFilter !== "all" && initiative.status !== statusFilter) return false;
-    const terms = `${initiative.title} ${initiative.owner || ""} ${initiative.primaryReleaseName || "All releases"} ${initiative.consequence || ""}`.toLowerCase();
-    return terms.includes(query.trim().toLowerCase());
-  }), [initiatives, query, statusFilter]);
-
-  function openCreate() {
-    setTitle(""); setOwner(""); setReleaseName("All releases"); setStatus("draft"); setPriority("medium"); setTargetDate(""); setConsequence(""); setDesiredOutcome(""); setDecisionAsk(""); setProblemStatement(""); setDriversConstraints(""); setShowCreate(true);
-  }
-
-  function changeRelease(nextRelease: string) {
-    setReleaseName(nextRelease);
-  }
+  const rows = useMemo(() => (solution.workspace?.initiatives || []).map((initiative) => ({ initiative, state: lifecycleFor(solution.workspace!, initiative.id) })).filter(({ initiative, state }) => (filter === "all" || state.lifecycle === filter) && `${initiative.title} ${initiative.owner || ""} ${state.selected || ""}`.toLowerCase().includes(query.trim().toLowerCase())), [solution.workspace, filter, query]);
 
   async function create() {
-    if (!title.trim()) { setNotice("Enter an initiative title before saving."); return; }
+    if (!title.trim()) return;
     setSaving(true);
     try {
-      await mutate("create_initiative", { title, owner, releaseName, status, priority, targetDate, consequence, desiredOutcome, decisionAsk, problemStatement, driversConstraints });
-      await decisionWorkspace.reload();
-      setShowCreate(false);
-      setNotice(`Created initiative ${title.trim()}.`);
-    } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : "The initiative could not be created.");
-    } finally { setSaving(false); }
+      const result = await governance.mutate("create_initiative", { title }, { refresh: false });
+      await solution.reload();
+      setShowCreate(false); setTitle(""); setNotice("Initiative created with its protected status-quo option.");
+      if (result.id) window.location.assign(`/initiatives/${encodeURIComponent(result.id)}`);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : "The Initiative could not be created."); }
+    finally { setSaving(false); }
   }
 
-  return <DomainPageShell title="Initiatives" subtitle="Government problem-and-outcome cases with explicit, source-backed solution alternatives." releaseScope={portfolio ? `${portfolio.actor.displayName} · ${displayStatus(portfolio.actor.role)}` : "Loading records"} contextMode="portfolio" actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search initiatives" /></label><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as InitiativeStatus | "all")}><option value="all">All statuses</option>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select><button className="primary-button" type="button" onClick={openCreate}>＋ New initiative</button></>}>
-    <section className="kpi-grid" aria-label="Initiative summary">
-      <div className="kpi-card"><span>Initiatives</span><strong>{initiatives.length}</strong><small>Government decision records</small></div>
-      <div className="kpi-card"><span>Active</span><strong>{initiatives.filter((item) => item.status === "active").length}</strong><small>Under active review</small></div>
-      <div className="kpi-card"><span>Decision required</span><strong>{initiatives.filter((item) => item.status === "decision_required").length}</strong><small>Needs Government direction</small></div>
-      <div className="kpi-card"><span>Decision ready</span><strong>{Object.values(decisionWorkspace.workspace?.assessments || {}).filter((item) => item.stage === "decision_ready").length}</strong><small>No automated readiness gaps</small></div>
-    </section>
-
-    {loading ? <section className="domain-section"><p className="empty">Loading initiative records…</p></section> : null}
-    {error ? <section className="domain-section"><p className="error-copy">{error}</p></section> : null}
-    {!loading && !error && <section className="domain-list">
-      {filtered.length ? filtered.map((initiative) => { const assessment = decisionWorkspace.workspace?.assessments[initiative.id]; const links = decisionWorkspace.workspace?.links.filter((item) => item.initiativeId === initiative.id).length || 0; return <article key={initiative.id} className="domain-card">
-        <div className="section-toolbar"><div><span className={`status-pill status-${initiative.status}`}>{displayStatus(initiative.status)}</span><h3 style={{ marginTop: 10 }}><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link></h3></div><span className={`status-pill status-${initiative.priority}`}>{displayStatus(initiative.priority)}</span></div>
-        <p className="entity-meta">{initiative.primaryReleaseName || "Cross-release"} · {links} linked Change Requests · {assessment?.blockers || 0} blockers · {assessment ? `${assessment.score}% ${readable(assessment.stage)}` : "Readiness loading"}</p>
-        <p>{initiative.consequence || "Consequence not recorded."}</p>
-        <p className="entity-meta">Owner: {initiative.owner || "Unassigned"} · {dateLabel(initiative.targetDate)} · {initiative.workPackages.length} WBS packages</p>
-        <p className="entity-actions"><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>Open decision workspace</Link><Link href={`/initiatives/${encodeURIComponent(initiative.id)}/one-pager`}>Open leadership one-pager</Link></p>
-      </article>; }) : <article className="domain-card empty-state"><h3>No initiatives in this view</h3><p>Create an Initiative, then link its Change Requests, technical Objectives, requirements, acceptance evidence, and Government WBS.</p><button className="primary-button" type="button" onClick={openCreate}>Create initiative</button></article>}
-    </section>}
-
-    {showCreate && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowCreate(false); }}>
-      <section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="initiative-create-title">
-        <span className="eyebrow">GOVERNMENT DECISION</span><h2 id="initiative-create-title">Create initiative</h2><p>Create the decision record first. Its technical scope is derived from affected objects on linked Change Requests and their LM Objectives; it is never selected here.</p>
-        <InitiativeScopeHelper />
-        <div className="form-grid"><label className="modal-field">Initiative title<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Stabilize mission telemetry stack" /></label><label className="modal-field">Owner<input value={owner} onChange={(event) => setOwner(event.target.value)} placeholder="Lead office / team" /></label><label className="modal-field">Release lens (optional)<select value={releaseName} onChange={(event) => changeRelease(event.target.value)}>{releases.map((item) => <option key={item}>{item}</option>)}</select><small>Organizes the decision view; it does not define technical scope.</small></label><label className="modal-field">Target date<input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><label className="modal-field">Status<select value={status} onChange={(event) => setStatus(event.target.value as InitiativeStatus)}>{initiativeStatuses.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label><label className="modal-field">Priority<select value={priority} onChange={(event) => setPriority(event.target.value as InitiativePriority)}>{initiativePriorities.map((item) => <option key={item} value={item}>{displayStatus(item)}</option>)}</select></label></div>
-        <label className="modal-field">Problem statement<textarea rows={3} value={problemStatement} onChange={(event) => setProblemStatement(event.target.value)} placeholder="Why is the current condition unacceptable?" /><small>Describe the undesirable condition without embedding a preferred solution.</small></label>
-        <label className="modal-field">Desired outcome<textarea rows={3} value={desiredOutcome} onChange={(event) => setDesiredOutcome(event.target.value)} placeholder="Government end state shared by every option" /><small>Every solution option will be evaluated against this same outcome.</small></label>
-        <label className="modal-field">Known drivers / constraints<textarea rows={3} value={driversConstraints} onChange={(event) => setDriversConstraints(event.target.value)} placeholder="EOL dates, security boundaries, fielding windows, policy, or mission constraints" /></label>
-        <label className="modal-field">Consequence<input value={consequence} onChange={(event) => setConsequence(event.target.value)} placeholder="What remains at risk if no action is taken?" /></label><label className="modal-field">Decision required<input value={decisionAsk} onChange={(event) => setDecisionAsk(event.target.value)} placeholder="Specific Government decision or direction requested" /></label>
-        <footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving} onClick={create}>{saving ? "Saving…" : "Create initiative"}</button></footer>
-      </section>
-    </div>}
-    {notice ? <div className="toast" role="status">✓ {notice}</div> : null}
+  const allStates = solution.workspace?.initiatives.map((initiative) => lifecycleFor(solution.workspace!, initiative.id)) || [];
+  return <DomainPageShell title="Initiatives" subtitle="Government problem/outcome decision cases—not an external execution tracker" releaseScope={solution.workspace ? `${solution.workspace.actor.displayName} · ${readable(solution.workspace.actor.role)}` : "Loading"} contextMode="portfolio" actions={<><label className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search decision cases"/></label><select value={filter} onChange={(event) => setFilter(event.target.value as InitiativeLifecycle | "all")}><option value="all">All lifecycle states</option>{["draft", "in_analysis", "decision_ready", "decided", "closed"].map((item) => <option key={item} value={item}>{readable(item)}</option>)}</select><button className="primary-button" type="button" onClick={() => setShowCreate(true)}>＋ New Initiative</button></>}>
+    <section className="kpi-grid"><div className="kpi-card"><span>Decision cases</span><strong>{allStates.length}</strong><small>Government-authored Initiatives</small></div><div className="kpi-card"><span>In analysis</span><strong>{allStates.filter((item) => item.lifecycle === "in_analysis").length}</strong><small>Alternatives being evaluated</small></div><div className="kpi-card"><span>Decision ready</span><strong>{allStates.filter((item) => item.lifecycle === "decision_ready").length}</strong><small>No structural analysis gaps</small></div><div className="kpi-card"><span>Decided</span><strong>{allStates.filter((item) => item.lifecycle === "decided").length}</strong><small>Immutable decision revisions retained</small></div></section>
+    {solution.loading ? <section className="domain-section"><p className="empty">Loading Initiative cases…</p></section> : null}{solution.error ? <section className="domain-section"><p className="error-copy">{solution.error}</p></section> : null}
+    <section className="domain-list">{rows.map(({ initiative, state }) => <article className="domain-card" key={initiative.id}><div className="section-toolbar"><div><span className={`status-pill status-${state.lifecycle}`}>{readable(state.lifecycle)}</span><h3><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>{initiative.title}</Link></h3></div><span>{state.options} options</span></div><p>{initiative.problemStatement || "Problem statement not yet framed."}</p><div className="record-facts"><div><dt>Analysis gaps</dt><dd>{state.gaps}</dd></div><div><dt>Disposition</dt><dd>{readable(state.disposition)}</dd></div><div><dt>Selected option</dt><dd>{state.selected || "None"}</dd></div><div><dt>Owner</dt><dd>{initiative.owner || "Not assigned"}</dd></div></div><p className="entity-actions"><Link href={`/initiatives/${encodeURIComponent(initiative.id)}`}>Open Solution Engineering</Link></p></article>)}{!solution.loading && !rows.length ? <article className="domain-card empty-state"><h3>No Initiative cases in this view</h3><p>Create a title-only decision case. The application will atomically create the required protected status quo, then guide you through problem, alternatives, option plans, comparison, and adjudication.</p><button className="primary-button" type="button" onClick={() => setShowCreate(true)}>Create Initiative</button></article> : null}</section>
+    {showCreate ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setShowCreate(false); }}><section className="import-modal" role="dialog" aria-modal="true" aria-labelledby="create-case-title"><span className="eyebrow">GOVERNMENT DECISION CASE</span><h2 id="create-case-title">Create Initiative</h2><p>Only a title is required. A protected, editable status-quo alternative is created in the same transaction.</p><label className="modal-field">Initiative title<input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g., Reduce PMA downtime and cyber exposure"/></label><footer><button className="ghost-button" type="button" disabled={saving} onClick={() => setShowCreate(false)}>Cancel</button><button className="primary-button" type="button" disabled={saving || !title.trim()} onClick={() => void create()}>{saving ? "Creating…" : "Create and open"}</button></footer></section></div> : null}
+    {notice ? <div className="toast" role="status">{notice}</div> : null}
   </DomainPageShell>;
 }

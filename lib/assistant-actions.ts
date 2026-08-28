@@ -28,15 +28,15 @@ export const assistantActions: readonly AssistantActionDefinition[] = [
     kind: "create_initiative",
     toolName: "a2o_create_initiative",
     label: "Create Initiative",
-    description: "Create a draft Government Initiative. Its technical scope remains derived from later linked Change Request effects.",
-    fields: [field("title", "Initiative title", { required: true }), field("releaseName", "Release lens"), field("owner", "Owner"), field("targetDate", "Target date", { format: "date" }), field("status", "Status"), field("priority", "Priority"), field("consequence", "Consequence"), field("desiredOutcome", "Desired outcome"), field("decisionAsk", "Decision required")],
+    description: "Create a title-only Government problem/outcome decision case with its required protected status-quo option.",
+    fields: [field("title", "Initiative title", { required: true })],
   },
   {
     kind: "update_initiative",
     toolName: "a2o_update_initiative",
     label: "Update Initiative",
-    description: "Update a related Initiative through its existing guarded edit workflow. It cannot set technical scope directly.",
-    fields: [field("initiativeId", "Initiative ID"), field("title", "Initiative title"), field("releaseName", "Release lens"), field("owner", "Owner"), field("targetDate", "Target date", { format: "date" }), field("status", "Status"), field("priority", "Priority"), field("consequence", "Consequence"), field("desiredOutcome", "Desired outcome"), field("decisionAsk", "Decision required")],
+    description: "Update Government-authored problem/outcome case framing. Option sources, plans, assessments, and adjudication remain separate reviewed actions.",
+    fields: [field("initiativeId", "Initiative ID"), field("title", "Initiative title"), field("owner", "Owner"), field("problemStatement", "Problem statement"), field("desiredOutcome", "Shared outcome"), field("successMeasures", "Success measures"), field("driversConstraints", "Drivers and constraints"), field("decisionQuestion", "Decision question"), field("decisionNeededBy", "Decision needed by", { format: "date" }), field("romHoursPerPoint", "ROM hours per point"), field("romConversionRationale", "ROM conversion rationale")],
   },
   {
     kind: "save_objective",
@@ -44,13 +44,6 @@ export const assistantActions: readonly AssistantActionDefinition[] = [
     label: "Save LM Objective",
     description: "Create or update an LM Objective under a Change Request related to the current record.",
     fields: [field("id", "Objective ID"), field("changeRequestId", "Change Request ID"), field("externalSystem", "External system", { required: true }), field("externalIdentifier", "Objective identifier", { required: true }), field("externalItemType", "Item type"), field("title", "Objective title", { required: true }), field("summary", "Summary"), field("technicalOwner", "Technical owner"), field("status", "Status"), field("plannedStart", "Planned start", { format: "date" }), field("plannedFinish", "Planned finish", { format: "date" }), field("actualStart", "Actual start", { format: "date" }), field("actualFinish", "Actual finish", { format: "date" }), field("sourceLocator", "Source locator"), field("sourceAsOf", "Source as of", { format: "date" }), field("reparentReason", "Reparent reason")],
-  },
-  {
-    kind: "save_milestone",
-    toolName: "a2o_save_milestone",
-    label: "Save Initiative Milestone",
-    description: "Create or update an Initiative milestone associated with the current related delivery work.",
-    fields: [field("id", "Milestone ID"), field("initiativeId", "Initiative ID"), field("changeRequestId", "Change Request ID"), field("objectiveId", "Objective ID"), field("title", "Milestone title", { required: true }), field("milestoneType", "Milestone type"), field("plannedDate", "Planned date", { required: true, format: "date" }), field("actualDate", "Actual date", { format: "date" }), field("status", "Status"), field("consequenceIfMissed", "Consequence if missed"), field("owner", "Owner")],
   },
   {
     kind: "create_call_note",

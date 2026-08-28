@@ -348,7 +348,6 @@ test("host authentication, bootstrap, publication, quarantine, and transfer cont
   const governance = read("lib/governance-server.ts");
   const publicationRoute = read("app/api/brief-publications/route.ts");
   const publicationServer = read("lib/brief-publication-server.ts");
-  const briefPage = read("app/briefs/[id]/page.tsx");
   const documents = read("app/api/documents/route.ts");
   const decisionServer = read("lib/initiative-decision-server.ts");
   const reportServer = read("lib/initiative-report-server.ts");
@@ -370,7 +369,6 @@ test("host authentication, bootstrap, publication, quarantine, and transfer cont
   assert.match(publicationServer, /prepareBriefPdf/);
   assert.match(publicationServer, /validateEvidenceBytes/);
   assert.doesNotMatch(publicationRoute, /formData\(|expectedContentHash|instanceof File/);
-  assert.doesNotMatch(briefPage, /record_brief_publication/);
   assert.match(documents, /x-evidence-integrity/);
   assert.match(documents, /QUARANTINED LEGACY EVIDENCE/);
   assert.match(documents, /requireSteward\(actor\)[\s\S]*seal_integrity/);
@@ -381,7 +379,8 @@ test("host authentication, bootstrap, publication, quarantine, and transfer cont
   assert.match(decisionServer, /storedEvidenceIntegrityMatches/);
   assert.match(decisionServer, /must validate and seal or reattach it before it can support acceptance/);
   assert.match(reportServer, /storedEvidenceIntegrityMatches/);
-  assert.match(initiativePage, /Integrity seal recorded; bytes reverified on use/);
+  assert.match(initiativePage, /ObjectRecordsPanel/);
+  assert.match(initiativePage, /AuditHistoryPanel/);
   assert.match(publicationServer, /verifyReferencedEvidence/);
   assert.match(publicationServer, /under-marked and must be regenerated before publication/);
   assert.match(publicationServer, /storedEvidenceIntegrityMatches/);

@@ -682,6 +682,7 @@ export const initiatives = sqliteTable("initiative", {
   consequence: text("consequence"),
   desiredOutcome: text("desired_outcome"),
   decisionAsk: text("decision_ask"),
+  decisionQuestion: text("decision_question"),
   asIsStatement: text("as_is_statement"),
   toBeStatement: text("to_be_statement"),
   successMeasures: text("success_measures"),
@@ -691,6 +692,7 @@ export const initiatives = sqliteTable("initiative", {
   driversConstraints: text("drivers_constraints"),
   romHoursPerPoint: real("rom_hours_per_point").notNull().default(500),
   romConversionRationale: text("rom_conversion_rationale"),
+  closedAt: text("closed_at"),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
 }, (t) => [
@@ -861,10 +863,78 @@ export const solutionOptionSteps = sqliteTable("solution_option_step", {
   title: text("title").notNull(),
   description: text("description"),
   expectedResult: text("expected_result"),
+  parentStepId: text("parent_step_id"),
+  wbsCode: text("wbs_code"),
+  owner: text("owner"),
+  planningStart: text("planning_start"),
+  planningFinish: text("planning_finish"),
+  planningEffortHours: real("planning_effort_hours"),
+  planningEffortBasis: text("planning_effort_basis"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdByUserId: text("created_by_user_id").references(() => appUsers.id),
   ...timestamps,
-}, (t) => [uniqueIndex("solution_option_step_order_uq").on(t.optionId, t.sortOrder)]);
+}, (t) => [
+  uniqueIndex("solution_option_step_order_uq").on(t.optionId, t.sortOrder),
+  uniqueIndex("solution_option_step_wbs_uq").on(t.optionId, t.wbsCode),
+  index("solution_option_step_parent_ix").on(t.optionId, t.parentStepId, t.sortOrder),
+]);
+
+export const solutionStepReferences = sqliteTable("solution_step_reference", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  stepId: text("step_id").notNull().references(() => solutionOptionSteps.id),
+  referenceKind: text("reference_kind").notNull(),
+  sourceId: text("source_id"),
+  reference: text("reference"),
+  label: text("label").notNull(),
+  rationale: text("rationale"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_step_reference_kind", sql`${t.referenceKind} IN ('change_request','objective','jira','confluence','other')`),
+  check("solution_step_reference_target", sql`${t.sourceId} IS NOT NULL OR LENGTH(TRIM(COALESCE(${t.reference},'')))>0`),
+  index("solution_step_reference_option_ix").on(t.optionId, t.stepId),
+]);
+
+export const solutionStepDependencies = sqliteTable("solution_step_dependency", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  predecessorStepId: text("predecessor_step_id").notNull().references(() => solutionOptionSteps.id),
+  successorStepId: text("successor_step_id").notNull().references(() => solutionOptionSteps.id),
+  relationship: text("relationship").notNull().default("FS"),
+  lagDays: integer("lag_days").notNull().default(0),
+  rationale: text("rationale").notNull(),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_step_dependency_relationship", sql`${t.relationship} IN ('FS','SS','FF','SF')`),
+  check("solution_step_dependency_not_self", sql`${t.predecessorStepId}<>${t.successorStepId}`),
+  uniqueIndex("solution_step_dependency_uq").on(t.predecessorStepId, t.successorStepId, t.relationship),
+  index("solution_step_dependency_option_ix").on(t.optionId, t.successorStepId),
+]);
+
+export const solutionOptionKnockOns = sqliteTable("solution_option_knock_on", {
+  id: text("id").primaryKey(),
+  optionId: text("option_id").notNull().references(() => solutionOptions.id),
+  classification: text("classification").notNull(),
+  affectedKind: text("affected_kind"),
+  affectedId: text("affected_id"),
+  affectedReference: text("affected_reference"),
+  timing: text("timing"),
+  likelihood: text("likelihood").notNull().default("unassessed"),
+  impact: text("impact").notNull().default("unassessed"),
+  confidence: text("confidence").notNull().default("unassessed"),
+  narrative: text("narrative").notNull(),
+  mitigation: text("mitigation"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("solution_option_knock_on_classification", sql`${t.classification} IN ('benefit','risk','constraint','dependency','second_order_effect')`),
+  check("solution_option_knock_on_likelihood", sql`${t.likelihood} IN ('low','medium','high','unassessed')`),
+  check("solution_option_knock_on_impact", sql`${t.impact} IN ('low','medium','high','unassessed')`),
+  check("solution_option_knock_on_confidence", sql`${t.confidence} IN ('low','medium','high','unassessed')`),
+  index("solution_option_knock_on_option_ix").on(t.optionId, t.classification, t.updatedAt),
+]);
 
 export const solutionOptionChangeRequests = sqliteTable("solution_option_change_request", {
   id: text("id").primaryKey(),
@@ -1603,8 +1673,11 @@ export const schema = {
   objectiveEffectAttributions,
   solutionOptions,
   solutionOptionSteps,
+  solutionStepReferences,
+  solutionStepDependencies,
   solutionOptionChangeRequests,
   solutionOptionObjectives,
+  solutionOptionKnockOns,
   solutionOptionAssessments,
   initiativeSolutionDecisions,
   initiativeSolutionDecisionRevisions,

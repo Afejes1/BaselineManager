@@ -1,6 +1,6 @@
 export const assistantContextKinds = ["initiative", "change_request", "objective", "product", "platform", "release"] as const;
 export type AssistantContextKind = typeof assistantContextKinds[number];
-export const assistantProposalKinds = ["create_initiative", "update_initiative", "save_objective", "save_milestone", "create_call_note"] as const;
+export const assistantProposalKinds = ["create_initiative", "update_initiative", "save_objective", "create_call_note"] as const;
 export type AssistantProposalKind = typeof assistantProposalKinds[number];
 
 export type AssistantContext = { kind: AssistantContextKind; id: string; label: string };

@@ -22,6 +22,10 @@ export type SolutionObjectiveRole = "required" | "enabling" | "optional";
 export type SolutionAssessmentCriterion = "outcome_alignment" | "delivery_effort" | "schedule_feasibility" | "cyber_lifecycle" | "mission_operational_impact" | "stakeholder_impact" | "requirements_acceptance";
 export type SolutionAssessmentRating = "favorable" | "mixed" | "unfavorable" | "unassessed";
 export type SolutionDecisionDisposition = "pending" | "selected" | "deferred" | "no_action";
+export type InitiativeLifecycle = "draft" | "in_analysis" | "decision_ready" | "decided" | "closed";
+export type SolutionKnockOnClassification = "benefit" | "risk" | "constraint" | "dependency" | "second_order_effect";
+export type SolutionStepReferenceKind = "change_request" | "objective" | "jira" | "confluence" | "other";
+export type SolutionStepDependencyType = "FS" | "SS" | "FF" | "SF";
 
 export type InitiativeDecisionProfile = {
   id: string;
@@ -38,6 +42,7 @@ export type InitiativeDecisionProfile = {
   successMeasures: string | null;
   briefingAudience: string | null;
   decisionNeededBy: string | null;
+  decisionQuestion: string | null;
   /** Government-authored present condition; distinct from source claims. */
   problemStatement: string | null;
   /** Known boundaries or drivers, not uncertain risks. */
@@ -45,9 +50,18 @@ export type InitiativeDecisionProfile = {
   /** Government planning assumption; it does not alter the Lockheed source ROM. */
   romHoursPerPoint: number;
   romConversionRationale: string | null;
+  closedAt: string | null;
   primaryReleaseId: string | null;
   primaryReleaseName: string | null;
   updatedAt: string;
+};
+
+/** Government-authored decision framing. Lifecycle is derived, never manually promoted. */
+export type InitiativeCase = InitiativeDecisionProfile & {
+  lifecycle: InitiativeLifecycle;
+  analysisGapCount: number;
+  optionCount: number;
+  selectedOptionTitle: string | null;
 };
 
 export type InitiativeChangeLink = {
@@ -280,7 +294,56 @@ export type SolutionOptionStep = {
   title: string;
   description: string | null;
   expectedResult: string | null;
+  parentStepId: string | null;
+  wbsCode: string | null;
+  owner: string | null;
+  planningStart: string | null;
+  planningFinish: string | null;
+  planningEffortHours: number | null;
+  planningEffortBasis: string | null;
   sortOrder: number;
+  updatedAt: string;
+};
+
+export type SolutionStepReference = {
+  id: string;
+  optionId: string;
+  stepId: string;
+  referenceKind: SolutionStepReferenceKind;
+  sourceId: string | null;
+  reference: string | null;
+  label: string;
+  rationale: string | null;
+  updatedAt: string;
+};
+
+export type SolutionStepDependency = {
+  id: string;
+  optionId: string;
+  predecessorStepId: string;
+  successorStepId: string;
+  relationship: SolutionStepDependencyType;
+  lagDays: number;
+  rationale: string;
+  updatedAt: string;
+};
+
+export type SolutionKnockOn = {
+  id: string;
+  optionId: string;
+  origin: "government" | "derived";
+  classification: SolutionKnockOnClassification;
+  affectedKind: string | null;
+  affectedId: string | null;
+  affectedReference: string | null;
+  timing: string | null;
+  likelihood: EstimateConfidence;
+  impact: EstimateConfidence;
+  confidence: EstimateConfidence;
+  narrative: string;
+  mitigation: string | null;
+  sourceAuthority: string;
+  sourceReference: string | null;
   updatedAt: string;
 };
 
@@ -388,9 +451,12 @@ export type InitiativeDecisionWorkspace = {
   milestones: InitiativeMilestone[];
   solutionOptions: SolutionOption[];
   solutionSteps: SolutionOptionStep[];
+  solutionStepReferences: SolutionStepReference[];
+  solutionStepDependencies: SolutionStepDependency[];
   solutionChangeRequestLinks: SolutionOptionChangeRequestLink[];
   solutionObjectiveLinks: SolutionOptionObjectiveLink[];
   solutionAssessments: SolutionOptionAssessment[];
+  solutionKnockOns: SolutionKnockOn[];
   solutionDecisions: InitiativeSolutionDecision[];
   solutionDecisionRevisions: InitiativeSolutionDecisionRevision[];
   changes: ChangePortfolio;
@@ -410,9 +476,12 @@ export type InitiativeDecisionBundle = {
   milestones: InitiativeMilestone[];
   solutionOptions: SolutionOption[];
   solutionSteps: SolutionOptionStep[];
+  solutionStepReferences: SolutionStepReference[];
+  solutionStepDependencies: SolutionStepDependency[];
   solutionChangeRequestLinks: SolutionOptionChangeRequestLink[];
   solutionObjectiveLinks: SolutionOptionObjectiveLink[];
   solutionAssessments: SolutionOptionAssessment[];
+  solutionKnockOns: SolutionKnockOn[];
   solutionDecision: InitiativeSolutionDecision | null;
   solutionDecisionRevisions: InitiativeSolutionDecisionRevision[];
   changes: ChangePortfolio;
@@ -446,11 +515,13 @@ export function selectInitiativeBundle(workspace: InitiativeDecisionWorkspace, i
   const initiative = workspace.initiatives.find((item) => item.id === initiativeId);
   if (!initiative) return null;
   const links = workspace.links.filter((item) => item.initiativeId === initiativeId);
-  const requestIds = new Set(links.map((item) => item.changeRequestId));
+  const solutionOptions = workspace.solutionOptions.filter((item) => item.initiativeId === initiativeId);
+  const solutionOptionIds = new Set(solutionOptions.map((item) => item.id));
+  const scopedChangeLinks = workspace.solutionChangeRequestLinks.filter((item) => solutionOptionIds.has(item.optionId));
+  const scopedObjectiveLinks = workspace.solutionObjectiveLinks.filter((item) => solutionOptionIds.has(item.optionId));
+  const requestIds = new Set(scopedChangeLinks.map((item) => item.changeRequestId));
   const objectiveChangeRequestLinks = workspace.objectiveChangeRequestLinks ?? [];
   const objectives = workspace.objectives.filter((item) => objectiveRelatedChangeRequestIds(item, objectiveChangeRequestLinks).some((requestId) => requestIds.has(requestId)));
   const objectiveIds = new Set(objectives.map((item) => item.id));
-  const solutionOptions = workspace.solutionOptions.filter((item) => item.initiativeId === initiativeId);
-  const solutionOptionIds = new Set(solutionOptions.map((item) => item.id));
-  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: workspace.milestones.filter((item) => item.initiativeId === initiativeId), solutionOptions, solutionSteps: workspace.solutionSteps.filter((item) => solutionOptionIds.has(item.optionId)), solutionChangeRequestLinks: workspace.solutionChangeRequestLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionObjectiveLinks: workspace.solutionObjectiveLinks.filter((item) => solutionOptionIds.has(item.optionId)), solutionAssessments: workspace.solutionAssessments.filter((item) => solutionOptionIds.has(item.optionId)), solutionDecision: workspace.solutionDecisions.find((item) => item.initiativeId === initiativeId) || null, solutionDecisionRevisions: workspace.solutionDecisionRevisions.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
+  return { initiative, links, changeRequests: workspace.changes.requests.filter((item) => requestIds.has(item.id)), objectives, objectiveChangeRequestLinks: objectiveChangeRequestLinks.filter((link) => objectiveIds.has(link.objectiveId)), objectiveDependencies: (workspace.objectiveDependencies ?? []).filter((item) => requestIds.has(item.dependentChangeRequestId) || objectiveIds.has(item.prerequisiteObjectiveId)), objectiveEffectAttributions: (workspace.objectiveEffectAttributions ?? []).filter((item) => objectiveIds.has(item.objectiveId)), requirements: workspace.requirements.filter((item) => objectiveIds.has(item.objectiveId)), criteria: workspace.criteria.filter((item) => objectiveIds.has(item.objectiveId)), milestones: [], solutionOptions, solutionSteps: (workspace.solutionSteps ?? []).filter((item) => solutionOptionIds.has(item.optionId)), solutionStepReferences: (workspace.solutionStepReferences ?? []).filter((item) => solutionOptionIds.has(item.optionId)), solutionStepDependencies: (workspace.solutionStepDependencies ?? []).filter((item) => solutionOptionIds.has(item.optionId)), solutionChangeRequestLinks: scopedChangeLinks, solutionObjectiveLinks: scopedObjectiveLinks, solutionAssessments: (workspace.solutionAssessments ?? []).filter((item) => solutionOptionIds.has(item.optionId)), solutionKnockOns: (workspace.solutionKnockOns ?? []).filter((item) => solutionOptionIds.has(item.optionId)), solutionDecision: workspace.solutionDecisions.find((item) => item.initiativeId === initiativeId) || null, solutionDecisionRevisions: workspace.solutionDecisionRevisions.filter((item) => item.initiativeId === initiativeId), changes: workspace.changes };
 }

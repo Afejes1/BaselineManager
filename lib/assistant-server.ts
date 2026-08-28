@@ -4,13 +4,12 @@ import { assistantActionCatalogText, assistantActionFieldNames } from "./assista
 import { groundAssistantContext, type GroundedAssistantContext } from "./assistant-grounding";
 import { askGenaiMil, genaiMilReadiness, type GenaiMilEnvironment } from "./genai-mil";
 import { audit, createGovernanceRecord, createInitiative, PROGRAM_ID, requireWriter, type Actor, updateInitiative } from "./governance-server";
-import { saveInitiativeMilestone, saveObjective } from "./initiative-decision-server";
+import { saveDecisionProfile, saveObjective } from "./initiative-decision-server";
 
 type Database = typeof env.DB;
 type PromptRow = { id: string; scope_kind: string | null; title: string; prompt_text: string; updated_at: string };
 type ScratchpadRow = { id: string; context_kind: string; context_id: string; context_label: string; title: string; prompt_text: string; response_text: string; model_name: string | null; grounding_summary: string; created_at: string };
 type ObjectiveRow = { id: string; change_request_id: string | null; external_system: string; external_identifier: string; external_item_type: string; title: string; summary: string | null; technical_owner: string | null; status: string; planned_start: string | null; planned_finish: string | null; actual_start: string | null; actual_finish: string | null; source_locator: string | null; source_as_of: string | null };
-type MilestoneRow = { id: string; initiative_id: string; change_request_id: string | null; objective_id: string | null; title: string; milestone_type: string; planned_date: string; actual_date: string | null; status: string; consequence_if_missed: string | null; owner: string | null };
 
 const now = () => new Date().toISOString();
 const makeId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
@@ -144,9 +143,7 @@ function proposalAllowed(grounded: GroundedAssistantContext, proposal: Assistant
     const requestId = asText(fields.changeRequestId) || (grounded.context.kind === "change_request" ? grounded.context.id : "");
     return Boolean(objectiveId ? grounded.allowed.objectiveIds.includes(objectiveId) : grounded.allowed.changeRequestIds.includes(requestId));
   }
-  const milestoneId = asText(fields.id);
-  const initiativeId = asText(fields.initiativeId) || (grounded.context.kind === "initiative" ? grounded.context.id : "");
-  return Boolean(milestoneId ? grounded.allowed.milestoneIds.includes(milestoneId) : grounded.allowed.initiativeIds.includes(initiativeId));
+  return false;
 }
 
 export async function askAssistant(db: Database, actor: Actor, contextValue: unknown, body: Record<string, unknown>) {
@@ -163,7 +160,7 @@ export async function askAssistant(db: Database, actor: Actor, contextValue: unk
     "Do not invent dates, estimates, relationships, technical effects, evidence, or approvals. Call out missing data and recommend the smallest governed next action.",
     "You may suggest a change, but never claim it was applied. A proposal will be reviewed and explicitly applied by a user through existing audited controls.",
     proposalInstruction,
-    "For update_initiative use initiativeId only when not already in the Initiative context. For save_objective use id for an existing Objective or changeRequestId to create one. For save_milestone use initiativeId when not already in Initiative context. A create_call_note proposal is a Government-recorded technical-call draft, never a decision; do not invent dates, participants, actions, or approvals.",
+    "For update_initiative use initiativeId only when not already in the Initiative context. For save_objective use id for an existing Objective or changeRequestId to create one. A create_call_note proposal is a Government-recorded technical-call draft, never a decision; do not invent dates, participants, actions, option selections, or approvals.",
   ].join("\n");
   const result = await askGenaiMil(env as unknown as GenaiMilEnvironment, { system, prompt: `QUESTION:\n${prompt}\n\nGROUNDING_DATA:\n${groundingText(grounded)}` });
   const proposals = result.answer.proposals.filter((proposal) => proposalAllowed(grounded, proposal));
@@ -188,7 +185,9 @@ export async function applyAssistantProposal(db: Database, actor: Actor, context
     appliedId = await createInitiative(db, actor, assistantFields(fields, assistantActionFieldNames(proposal.kind)));
   } else if (proposal.kind === "update_initiative") {
     const initiativeId = asText(fields.initiativeId) || (grounded.context.kind === "initiative" ? grounded.context.id : "");
-    await updateInitiative(db, actor, { initiativeId, ...assistantFields(fields, assistantActionFieldNames(proposal.kind)) });
+    const updates = assistantFields(fields, assistantActionFieldNames(proposal.kind));
+    if (clean(updates.title)) await updateInitiative(db, actor, { initiativeId, title: updates.title });
+    await saveDecisionProfile(db, actor, { initiativeId, ...updates });
     appliedId = initiativeId;
   } else if (proposal.kind === "save_objective") {
     const objectiveId = asText(fields.id);
@@ -198,18 +197,6 @@ export async function applyAssistantProposal(db: Database, actor: Actor, context
     if (!grounded.allowed.changeRequestIds.includes(changeRequestId)) throw new Error("The proposed Objective must remain within a Change Request related to the current context.");
     const merged = { id: current?.id || "", changeRequestId, externalSystem: current?.external_system || "", externalIdentifier: current?.external_identifier || "", externalItemType: current?.external_item_type || "Objective", title: current?.title || "", summary: current?.summary || "", technicalOwner: current?.technical_owner || "", status: current?.status || "proposed", plannedStart: current?.planned_start || "", plannedFinish: current?.planned_finish || "", actualStart: current?.actual_start || "", actualFinish: current?.actual_finish || "", sourceLocator: current?.source_locator || "", sourceAsOf: current?.source_as_of || "", ...assistantFields(fields, assistantActionFieldNames(proposal.kind)) };
     appliedId = await saveObjective(db, actor, merged);
-  } else if (proposal.kind === "save_milestone") {
-    const milestoneId = asText(fields.id);
-    const current = milestoneId ? await db.prepare("SELECT id,initiative_id,change_request_id,objective_id,title,milestone_type,planned_date,actual_date,status,consequence_if_missed,owner FROM initiative_milestone WHERE id=?").bind(milestoneId).first<MilestoneRow>() : null;
-    if (milestoneId && !current) throw new Error("The proposed milestone no longer exists. Refresh and ask again.");
-    const initiativeId = asText(fields.initiativeId) || current?.initiative_id || (grounded.context.kind === "initiative" ? grounded.context.id : "");
-    const changeRequestId = asText(fields.changeRequestId) || current?.change_request_id || "";
-    const objectiveId = asText(fields.objectiveId) || current?.objective_id || "";
-    if (!grounded.allowed.initiativeIds.includes(initiativeId)) throw new Error("The proposed milestone must belong to an Initiative related to the current context.");
-    if (changeRequestId && !grounded.allowed.changeRequestIds.includes(changeRequestId)) throw new Error("The proposed milestone Change Request is outside the current context.");
-    if (objectiveId && !grounded.allowed.objectiveIds.includes(objectiveId)) throw new Error("The proposed milestone Objective is outside the current context.");
-    const merged = { id: current?.id || "", initiativeId, changeRequestId, objectiveId, title: current?.title || "", milestoneType: current?.milestone_type || "delivery", plannedDate: current?.planned_date || "", actualDate: current?.actual_date || "", status: current?.status || "planned", consequenceIfMissed: current?.consequence_if_missed || "", owner: current?.owner || "", ...assistantFields(fields, assistantActionFieldNames(proposal.kind)) };
-    appliedId = await saveInitiativeMilestone(db, actor, merged);
   } else {
     const callNote = assistantFields(fields, assistantActionFieldNames(proposal.kind));
     if (!clean(callNote.summary)) throw new Error("A proposed technical call record needs a discussion summary before it can be applied.");

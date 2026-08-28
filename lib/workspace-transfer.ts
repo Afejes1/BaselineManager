@@ -15,8 +15,9 @@ import { cleanupEvidenceObjectsForWorkspaceOperation, completeEvidenceObjectClea
 import { validateSolutionDecisionHistory } from "./solution-decision-history";
 
 export const WORKSPACE_PACKAGE_TYPE = "a2o.workspace-transfer";
-export const WORKSPACE_PACKAGE_VERSION = "5.0.0";
-const PRIOR_WORKSPACE_PACKAGE_VERSION = "4.0.0";
+export const WORKSPACE_PACKAGE_VERSION = "6.0.0";
+const PRIOR_WORKSPACE_PACKAGE_VERSION = "5.0.0";
+const LEGACY_FULL_CASE_PACKAGE_VERSION = "4.0.0";
 const FULL_SCHEMA_UNSIGNED_VERSION = "3.0.0";
 const PREVIOUS_WORKSPACE_PACKAGE_VERSION = "2.0.0";
 const LEGACY_WORKSPACE_PACKAGE_VERSION = "1.0.0";
@@ -112,13 +113,14 @@ const tableOrder: TransferTableName[] = [
   "changeEffects",
   "changeDependencies",
   "initiatives",
-  "initiativeScopes",
-  "initiativeChangeRequests",
   "incumbentObjectives",
   "solutionOptions",
   "solutionOptionSteps",
+  "solutionStepReferences",
+  "solutionStepDependencies",
   "solutionOptionChangeRequests",
   "solutionOptionObjectives",
+  "solutionOptionKnockOns",
   "solutionOptionAssessments",
   "initiativeSolutionDecisions",
   "initiativeSolutionDecisionRevisions",
@@ -143,15 +145,9 @@ const tableOrder: TransferTableName[] = [
   "objectiveRequirements",
   "acceptanceCriteria",
   "acceptanceSignoffs",
-  "initiativeMilestones",
-  "workPackages",
-  "workPackageObjectives",
-  "workPackageDependencies",
   "governanceRecords",
   "governanceRecordLinks",
   "evidenceDocuments",
-  "executiveBriefs",
-  "briefPublications",
   "ingestionRuns",
   "ingestionItems",
   "externalChangeSourceStates",
@@ -168,7 +164,7 @@ const selfParentColumns: Partial<Record<TransferTableName, string>> = {
   capabilities: "parent_id",
   platforms: "parent_id",
   releaseInfrastructureNodes: "parent_state_id",
-  workPackages: "parent_id",
+  solutionOptionSteps: "parent_step_id",
 };
 
 const tableSpecs = tableOrder.map((logicalName) => {
@@ -487,7 +483,7 @@ function isManifest(value: unknown): value is WorkspacePackageManifest {
   const candidate = value as Partial<WorkspacePackageManifest>;
   const totals = candidate.totals as Partial<WorkspacePackageManifest["totals"]> | undefined;
   return candidate.packageType === WORKSPACE_PACKAGE_TYPE
-    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
+    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_FULL_CASE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
     && (candidate.classification === "SYNTHETIC DEMONSTRATION DATA" || candidate.classification === "PROGRAM WORKING DATA")
     && Array.isArray(candidate.tables)
     && Array.isArray(candidate.documents)
@@ -541,8 +537,9 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
   if (manifest.documents.length > MAX_WORKSPACE_DOCUMENTS || manifest.totals.rows > MAX_WORKSPACE_TOTAL_ROWS || manifest.totals.documentBytes > MAX_WORKSPACE_EXPANDED_BYTES) throw new Error("The package exceeds workspace import limits.");
   const legacyLogicalNames = new Set<TransferTableName>(["infrastructureNodes", "infrastructureReferenceValues", "releaseInfrastructureNodes", "infrastructureProductInstallations", "infrastructureConnections"]);
   const previousLogicalNames = new Set<TransferTableName>(["infrastructureReferenceValues"]);
-  const solutionEngineeringLogicalNames = new Set<TransferTableName>(["solutionOptions", "solutionOptionSteps", "solutionOptionChangeRequests", "solutionOptionObjectives", "solutionOptionAssessments", "initiativeSolutionDecisions", "initiativeSolutionDecisionRevisions"]);
-  const omittedLogicalNames = new Set<TransferTableName>(manifest.packageVersion === WORKSPACE_PACKAGE_VERSION ? [] : solutionEngineeringLogicalNames);
+  const solutionEngineeringLogicalNames = new Set<TransferTableName>(["solutionOptions", "solutionOptionSteps", "solutionStepReferences", "solutionStepDependencies", "solutionOptionChangeRequests", "solutionOptionObjectives", "solutionOptionKnockOns", "solutionOptionAssessments", "initiativeSolutionDecisions", "initiativeSolutionDecisionRevisions"]);
+  const fullCaseOnlyLogicalNames = new Set<TransferTableName>(["solutionStepReferences", "solutionStepDependencies", "solutionOptionKnockOns"]);
+  const omittedLogicalNames = new Set<TransferTableName>(manifest.packageVersion === WORKSPACE_PACKAGE_VERSION ? [] : manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION ? fullCaseOnlyLogicalNames : solutionEngineeringLogicalNames);
   if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) for (const name of legacyLogicalNames) omittedLogicalNames.add(name);
   if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) for (const name of previousLogicalNames) omittedLogicalNames.add(name);
   const packageSpecs = tableSpecs.filter((spec) => !omittedLogicalNames.has(spec.logicalName));
@@ -582,6 +579,17 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
       if (spec.logicalName === "initiatives" && manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
         row.problem_statement ??= null;
         row.drivers_constraints ??= null;
+        row.decision_question ??= row.decision_ask ?? null;
+        row.closed_at ??= null;
+      }
+      if (spec.logicalName === "solutionOptionSteps" && manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
+        row.parent_step_id ??= null;
+        row.wbs_code ??= null;
+        row.owner ??= null;
+        row.planning_start ??= null;
+        row.planning_finish ??= null;
+        row.planning_effort_hours ??= null;
+        row.planning_effort_basis ??= null;
       }
       const keys = Object.keys(row);
       if (keys.length !== spec.columns.length || keys.some((key) => !allowed.has(key))) throw new Error(`The ${entry.name} dataset does not match the version 1 schema.`);
@@ -602,6 +610,8 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
     warnings.push("This version 1 package predates governed infrastructure. Existing baseline data will load; infrastructure can be added after import.");
   } else if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This version 2 package predates governed infrastructure vocabularies. Existing infrastructure will load; storage and file-system classifications can be reviewed after import.");
+  } else if (manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION) {
+    warnings.push("This version 5 package predates option WBS references, event-level dependencies, and structured knock-ons. Existing Initiative alternatives are retained; the new planning overlays begin empty.");
   } else if (manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This package predates Solution Engineering options. Existing Initiative data will load; alternatives and adjudication can be added after import.");
   }

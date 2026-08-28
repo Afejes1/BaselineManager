@@ -1,9 +1,8 @@
 import { env } from "cloudflare:workers";
 import { ensureActor } from "../../../lib/governance-server";
-import { addObjectiveEstimate, initiativeDecisionWorkspace, linkChangeRequest, recordAcceptanceSignoff, saveAcceptanceCriterion, saveDecisionProfile, saveInitiativeMilestone, saveObjective, saveObjectiveDependency, saveObjectiveEffectAttribution, saveRequirementTrace, unlinkChangeRequest } from "../../../lib/initiative-decision-server";
+import { addObjectiveEstimate, initiativeDecisionWorkspace, recordAcceptanceSignoff, saveAcceptanceCriterion, saveObjective, saveObjectiveDependency, saveObjectiveEffectAttribution, saveRequirementTrace } from "../../../lib/initiative-decision-server";
 import { enrichDemonstrationWorkspace } from "../../../lib/demo-workspace-server";
 import { demoEnabledFromValue } from "../../../lib/runtime-policy";
-import { removeSolutionChangeRequest, removeSolutionObjective, saveSolutionAssessment, saveSolutionDecision, saveSolutionOption, saveSolutionStep, setSolutionChangeRequest, setSolutionObjective } from "../../../lib/initiative-solution-server";
 
 export async function GET(request: Request) {
   try {
@@ -35,25 +34,13 @@ export async function POST(request: Request) {
     const actor = await ensureActor(env.DB, request);
     const body = await request.json() as Record<string, unknown>;
     const action = clean(body.action);
-    const id = action === "save_profile" ? await saveDecisionProfile(env.DB, actor, body)
-      : action === "link_change_request" ? await linkChangeRequest(env.DB, actor, body)
-      : action === "unlink_change_request" ? await unlinkChangeRequest(env.DB, actor, body)
-      : action === "save_objective" ? await saveObjective(env.DB, actor, body)
+    const id = action === "save_objective" ? await saveObjective(env.DB, actor, body)
       : action === "save_objective_dependency" ? await saveObjectiveDependency(env.DB, actor, body)
       : action === "save_objective_effect_attribution" ? await saveObjectiveEffectAttribution(env.DB, actor, body)
       : action === "add_estimate" ? await addObjectiveEstimate(env.DB, actor, body)
       : action === "save_requirement" ? await saveRequirementTrace(env.DB, actor, body)
       : action === "save_criterion" ? await saveAcceptanceCriterion(env.DB, actor, body)
-      : action === "record_signoff" ? await recordAcceptanceSignoff(env.DB, actor, body)
-      : action === "save_milestone" ? await saveInitiativeMilestone(env.DB, actor, body)
-      : action === "save_solution_option" ? await saveSolutionOption(env.DB, actor, body)
-      : action === "save_solution_step" ? await saveSolutionStep(env.DB, actor, body)
-      : action === "set_solution_change_request" ? await setSolutionChangeRequest(env.DB, actor, body)
-      : action === "remove_solution_change_request" ? await removeSolutionChangeRequest(env.DB, actor, body)
-      : action === "set_solution_objective" ? await setSolutionObjective(env.DB, actor, body)
-      : action === "remove_solution_objective" ? await removeSolutionObjective(env.DB, actor, body)
-      : action === "save_solution_assessment" ? await saveSolutionAssessment(env.DB, actor, body)
-      : action === "save_solution_decision" ? await saveSolutionDecision(env.DB, actor, body) : null;
+      : action === "record_signoff" ? await recordAcceptanceSignoff(env.DB, actor, body) : null;
     if (!id) return Response.json({ error: "Unknown Initiative decision action." }, { status: 400 });
     return Response.json({ ok: true, id });
   } catch (error) {

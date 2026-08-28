@@ -2,7 +2,7 @@ import type { AcceptanceSignoff, InitiativeDecisionWorkspace, ObjectiveEstimate 
 import { selectInitiativeBundle } from "./initiative-decision-model.js";
 import { deriveSolutionOptionRollup, type NumericRangeRollup, type RollupCoverage, type SolutionOptionDependency, type SolutionOptionRollup, type SourceEstimateRollup } from "./solution-option-rollup.js";
 
-export const SOLUTION_DECISION_BASIS_VERSION = 2 as const;
+export const SOLUTION_DECISION_BASIS_VERSION = 3 as const;
 
 /** Locale-independent Unicode code-point order for persisted set-like arrays. */
 function compareText(left: string, right: string) {
@@ -193,18 +193,47 @@ export function buildSolutionDecisionBasis(workspace: InitiativeDecisionWorkspac
     .filter((item) => item.initiativeId === initiativeId)
     .sort((left, right) => compareText(`${left.documentId}\u0000${left.governanceRecordId || ""}`, `${right.documentId}\u0000${right.governanceRecordId || ""}`))
     .map(semanticValue);
+  const activeOptions = byOrderThenId(bundle.solutionOptions.filter((item) => item.status !== "retired"));
+  const activeOptionRollups = new Map(activeOptions.map((candidate) => [candidate.id, deriveSolutionOptionRollup(workspace, candidate.id)]));
+  const evaluatedAlternatives = activeOptions.map((candidate) => {
+    const candidateRollup = activeOptionRollups.get(candidate.id) || null;
+    return {
+      option: semanticValue(candidate),
+      steps: byOrderThenId(bundle.solutionSteps.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      stepReferences: byId(bundle.solutionStepReferences.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      stepDependencies: byId(bundle.solutionStepDependencies.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      changeRequestLinks: byId(bundle.solutionChangeRequestLinks.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      objectiveLinks: byId(bundle.solutionObjectiveLinks.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      knockOns: byId(bundle.solutionKnockOns.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      governmentAssessments: byId(bundle.solutionAssessments.filter((item) => item.optionId === candidate.id)).map(semanticValue),
+      derivedRollup: candidateRollup ? semanticRollup(candidateRollup) : null,
+    };
+  });
+  const evaluatedRequestIds = new Set(bundle.solutionChangeRequestLinks.filter((item) => activeOptions.some((option) => option.id === item.optionId)).map((item) => item.changeRequestId));
+  const evaluatedObjectiveIds = new Set(bundle.solutionObjectiveLinks.filter((item) => activeOptions.some((option) => option.id === item.optionId)).map((item) => item.objectiveId));
+  const evaluatedEstimateIds = new Set([...activeOptionRollups.values()].flatMap((candidateRollup) => candidateRollup ? [...currentEstimateIds(candidateRollup)] : []));
 
   return {
     basisVersion: SOLUTION_DECISION_BASIS_VERSION,
     initiative: {
       id: bundle.initiative.id,
+      title: bundle.initiative.title,
+      owner: bundle.initiative.owner,
       problemStatement: bundle.initiative.problemStatement,
       desiredOutcome: bundle.initiative.desiredOutcome,
+      successMeasures: bundle.initiative.successMeasures,
       driversConstraints: bundle.initiative.driversConstraints,
-      consequence: bundle.initiative.consequence,
-      targetDate: bundle.initiative.targetDate,
+      decisionQuestion: bundle.initiative.decisionQuestion,
+      decisionNeededBy: bundle.initiative.decisionNeededBy,
       romHoursPerPoint: bundle.initiative.romHoursPerPoint,
       romConversionRationale: bundle.initiative.romConversionRationale,
+    },
+    selectedOptionId: optionId,
+    evaluatedAlternatives,
+    evaluatedSourceRecords: {
+      changeRequests: byId(workspace.changes.requests.filter((item) => evaluatedRequestIds.has(item.id))).map(semanticValue),
+      objectives: byId(workspace.objectives.filter((item) => evaluatedObjectiveIds.has(item.id))).map((objective) => semanticValue({ ...objective, estimates: byId((objective.estimates || []).filter((estimate) => evaluatedEstimateIds.has(estimate.id))).map(semanticEstimate) })),
+      objectiveFeedSources: [...(workspace.objectiveFeedSources || [])].filter((item) => evaluatedObjectiveIds.has(item.objectiveId)).sort((left, right) => compareText(`${left.subjectId}\u0000${left.snapshotId}`, `${right.subjectId}\u0000${right.snapshotId}`)).map((item) => semanticValue({ ...item, domains: sortedText(item.domains) })),
     },
     option: semanticValue(option),
     steps: stepRows.map(semanticValue),

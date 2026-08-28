@@ -23,7 +23,7 @@ type AssistantAnswer = { context: AssistantContext; groundingSummary: string; gr
 const suggestions: Record<AssistantContext["kind"], Array<{ title: string; prompt: string }>> = {
   initiative: [
     { title: "Decision readiness", prompt: "What decision is being requested, what grounded facts support it, and what smallest missing information would make the decision more defensible?" },
-    { title: "Milestone proposal", prompt: "Using only the linked Objectives, dependencies, and stated dates, propose a minimal set of draft milestones. Mark each uncertainty and do not invent dates." },
+    { title: "Option-plan gaps", prompt: "Using only the selected sources and Government planning overlay, identify missing option steps, references, dates, dependencies, knock-ons, and assessments. Do not invent dates or execution status." },
   ],
   change_request: [
     { title: "Scope check", prompt: "Summarize the explicit affected objects, delivery Objectives, dependencies, and missing traceability for this Change Request." },

@@ -300,17 +300,16 @@ export async function createInitiative(db: Database, actor: Actor, body: Record<
   requireWriter(actor);
   const title = clean(body.title);
   if (!title) throw new Error("An initiative title is required.");
-  const status = initiativeStatusSet.has(body.status as InitiativeStatus) ? body.status as InitiativeStatus : "draft";
-  const priority = initiativePrioritySet.has(body.priority as InitiativePriority) ? body.priority as InitiativePriority : "medium";
-  const releaseId = await releaseIdFor(db, body.releaseName);
   const initiativeId = id("initiative");
+  const statusQuoId = id("solution-option");
   const at = now();
-  if (body.productScopes !== undefined || body.entireReleaseScope !== undefined) throw new Error("Initiative technical scope is derived from linked Change Request effects; do not submit a manual Product or Release scope.");
   const statements: D1PreparedStatement[] = [
-    db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,owner,target_date,consequence,desired_outcome,decision_ask,problem_statement,drivers_constraints,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(initiativeId, PROGRAM_ID, releaseId, title, normalized(title), status, priority, nullable(body.owner), nullable(body.targetDate), nullable(body.consequence), nullable(body.desiredOutcome), nullable(body.decisionAsk), nullable(body.problemStatement), nullable(body.driversConstraints), actor.id, at, at),
+    db.prepare("INSERT INTO initiative (id,program_id,primary_release_id,title,normalized_title,status,priority,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,'draft','medium',?,?,?)")
+      .bind(initiativeId, PROGRAM_ID, null, title, normalized(title), actor.id, at, at),
+    db.prepare("INSERT INTO solution_option (id,initiative_id,title,normalized_title,option_type,status,summary,projected_outcome,expected_consequences,residual_risks,assumptions,sort_order,created_by_user_id,created_at,updated_at) VALUES (?,?,?,'status quo','status_quo','draft',NULL,NULL,NULL,NULL,NULL,0,?,?,?)")
+      .bind(statusQuoId, initiativeId, "Status quo / no new action", actor.id, at, at),
   ];
-  statements.push(audit(db, actor, "initiative_created", "initiative", initiativeId, { title, status, priority, releaseId, technicalScope: "derived_from_linked_change_request_effects" }));
+  statements.push(audit(db, actor, "initiative_case_created", "initiative", initiativeId, { title, statusQuoOptionId: statusQuoId, technicalScope: "derived_per_solution_option" }));
   await db.batch(statements);
   return initiativeId;
 }

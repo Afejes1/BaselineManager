@@ -1233,7 +1233,7 @@ export function BaselineManager() {
         <button className="modal-close" type="button" aria-label="Close workspace menu" disabled={demoLoading} onClick={() => setShowStewardMenu(false)}>×</button>
         <span className="eyebrow">WORKSPACE</span>
         <h2 id="steward-title">{demoEnabled ? "Demo workspace" : "Operational workspace"}</h2>
-        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, traceability, Initiative one-pagers, and leadership reports. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import A2O XLSX to establish or replace the active baseline."}</p>
+        <p>{demoEnabled ? "Load demonstration data to test release comparisons, topology, data quality, traceability, Solution Engineering decision cases, and leadership reports. Demonstration data is not program data." : "Demonstration data is disabled in this environment. Use Import A2O XLSX to establish or replace the active baseline."}</p>
         <div className="import-stats three">
           <div><strong>{DEMONSTRATION_ROWS.length}</strong><span>Baseline records</span></div>
           <div><strong>3</strong><span>Releases</span></div>
