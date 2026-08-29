@@ -135,6 +135,9 @@ export type IncumbentObjective = {
   externalItemType?: string;
   title: string;
   summary: string | null;
+  sourceDescription: string | null;
+  governmentSynopsis: string | null;
+  descriptionAuthority: "reported" | "analyst_transcribed" | "migrated_unclassified";
   technicalOwner: string | null;
   status: ObjectiveStatus;
   plannedStart: string | null;

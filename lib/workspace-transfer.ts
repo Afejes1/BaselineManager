@@ -15,8 +15,9 @@ import { cleanupEvidenceObjectsForWorkspaceOperation, completeEvidenceObjectClea
 import { validateSolutionDecisionHistory } from "./solution-decision-history";
 
 export const WORKSPACE_PACKAGE_TYPE = "a2o.workspace-transfer";
-export const WORKSPACE_PACKAGE_VERSION = "6.0.0";
-const PRIOR_WORKSPACE_PACKAGE_VERSION = "5.0.0";
+export const WORKSPACE_PACKAGE_VERSION = "7.0.0";
+const PRIOR_WORKSPACE_PACKAGE_VERSION = "6.0.0";
+const OPTION_PLANNING_PACKAGE_VERSION = "5.0.0";
 const LEGACY_FULL_CASE_PACKAGE_VERSION = "4.0.0";
 const FULL_SCHEMA_UNSIGNED_VERSION = "3.0.0";
 const PREVIOUS_WORKSPACE_PACKAGE_VERSION = "2.0.0";
@@ -124,6 +125,7 @@ const tableOrder: TransferTableName[] = [
   "solutionOptionAssessments",
   "initiativeSolutionDecisions",
   "initiativeSolutionDecisionRevisions",
+  "assistantSolutionGenerations",
   "objectiveChangeRequestLinks",
   "changeRequestObjectiveDependencies",
   "objectiveEffectAttributions",
@@ -483,7 +485,7 @@ function isManifest(value: unknown): value is WorkspacePackageManifest {
   const candidate = value as Partial<WorkspacePackageManifest>;
   const totals = candidate.totals as Partial<WorkspacePackageManifest["totals"]> | undefined;
   return candidate.packageType === WORKSPACE_PACKAGE_TYPE
-    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_FULL_CASE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
+    && (candidate.packageVersion === WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === OPTION_PLANNING_PACKAGE_VERSION || candidate.packageVersion === LEGACY_FULL_CASE_PACKAGE_VERSION || candidate.packageVersion === FULL_SCHEMA_UNSIGNED_VERSION || candidate.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION || candidate.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION)
     && (candidate.classification === "SYNTHETIC DEMONSTRATION DATA" || candidate.classification === "PROGRAM WORKING DATA")
     && Array.isArray(candidate.tables)
     && Array.isArray(candidate.documents)
@@ -539,7 +541,8 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
   const previousLogicalNames = new Set<TransferTableName>(["infrastructureReferenceValues"]);
   const solutionEngineeringLogicalNames = new Set<TransferTableName>(["solutionOptions", "solutionOptionSteps", "solutionStepReferences", "solutionStepDependencies", "solutionOptionChangeRequests", "solutionOptionObjectives", "solutionOptionKnockOns", "solutionOptionAssessments", "initiativeSolutionDecisions", "initiativeSolutionDecisionRevisions"]);
   const fullCaseOnlyLogicalNames = new Set<TransferTableName>(["solutionStepReferences", "solutionStepDependencies", "solutionOptionKnockOns"]);
-  const omittedLogicalNames = new Set<TransferTableName>(manifest.packageVersion === WORKSPACE_PACKAGE_VERSION ? [] : manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION ? fullCaseOnlyLogicalNames : solutionEngineeringLogicalNames);
+  const aiLogicalNames = new Set<TransferTableName>(["assistantSolutionGenerations"]);
+  const omittedLogicalNames = new Set<TransferTableName>(manifest.packageVersion === WORKSPACE_PACKAGE_VERSION ? [] : manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION ? aiLogicalNames : manifest.packageVersion === OPTION_PLANNING_PACKAGE_VERSION ? [...aiLogicalNames, ...fullCaseOnlyLogicalNames] : [...aiLogicalNames, ...solutionEngineeringLogicalNames]);
   if (manifest.packageVersion === LEGACY_WORKSPACE_PACKAGE_VERSION) for (const name of legacyLogicalNames) omittedLogicalNames.add(name);
   if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) for (const name of previousLogicalNames) omittedLogicalNames.add(name);
   const packageSpecs = tableSpecs.filter((spec) => !omittedLogicalNames.has(spec.logicalName));
@@ -591,6 +594,16 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
         row.planning_effort_hours ??= null;
         row.planning_effort_basis ??= null;
       }
+      if (spec.logicalName === "changeRequests" && manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
+        row.source_description ??= row.summary ?? null;
+        row.government_synopsis ??= null;
+        row.description_authority ??= "migrated_unclassified";
+      }
+      if (spec.logicalName === "incumbentObjectives" && manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
+        row.source_description ??= row.summary ?? null;
+        row.government_synopsis ??= null;
+        row.description_authority ??= "migrated_unclassified";
+      }
       const keys = Object.keys(row);
       if (keys.length !== spec.columns.length || keys.some((key) => !allowed.has(key))) throw new Error(`The ${entry.name} dataset does not match the version 1 schema.`);
       for (const field of Object.values(row)) {
@@ -610,8 +623,10 @@ export async function parseWorkspacePackage(bytes: ArrayBuffer, signingConfig: W
     warnings.push("This version 1 package predates governed infrastructure. Existing baseline data will load; infrastructure can be added after import.");
   } else if (manifest.packageVersion === PREVIOUS_WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This version 2 package predates governed infrastructure vocabularies. Existing infrastructure will load; storage and file-system classifications can be reviewed after import.");
-  } else if (manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION) {
+  } else if (manifest.packageVersion === OPTION_PLANNING_PACKAGE_VERSION) {
     warnings.push("This version 5 package predates option WBS references, event-level dependencies, and structured knock-ons. Existing Initiative alternatives are retained; the new planning overlays begin empty.");
+  } else if (manifest.packageVersion === PRIOR_WORKSPACE_PACKAGE_VERSION) {
+    warnings.push("This version 6 package predates separated source/Government descriptions and persisted AI solution drafts. Existing analysis is retained and labeled migrated-unclassified.");
   } else if (manifest.packageVersion !== WORKSPACE_PACKAGE_VERSION) {
     warnings.push("This package predates Solution Engineering options. Existing Initiative data will load; alternatives and adjudication can be added after import.");
   }

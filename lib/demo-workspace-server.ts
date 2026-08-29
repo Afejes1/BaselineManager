@@ -374,6 +374,7 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
   statements.push(db.prepare("UPDATE initiative_solution_decision SET selected_option_id=NULL,disposition='pending',decision_authority=NULL,decision_date=NULL,rationale=NULL,accepted_residual_risk=NULL,basis_snapshot_json=NULL,basis_hash=NULL WHERE initiative_id=? AND disposition<>'pending'").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM initiative_solution_decision_revision WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM initiative_solution_decision WHERE initiative_id=?").bind(javaInitiativeId));
+  statements.push(db.prepare("DELETE FROM assistant_solution_generation WHERE initiative_id=?").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM solution_step_reference WHERE option_id IN (SELECT id FROM solution_option WHERE initiative_id=?)").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM solution_step_dependency WHERE option_id IN (SELECT id FROM solution_option WHERE initiative_id=?)").bind(javaInitiativeId));
   statements.push(db.prepare("DELETE FROM solution_option_knock_on WHERE option_id IN (SELECT id FROM solution_option WHERE initiative_id=?)").bind(javaInitiativeId));
@@ -725,6 +726,10 @@ export async function enrichDemonstrationWorkspace(db: Database, actor: Actor) {
     ["demo-wbs-dependency-analytics-report-retirement", "demo-analytics-wbs-1", "demo-analytics-wbs-2", "FS", 0, "accepted", "Gateway retirement recommendation requires the analytics report to validate the target operating picture.", "DEMO://WBS-LOGIC/ANALYTICS"],
   ] as const) statements.push(db.prepare("INSERT INTO work_package_dependency (id,predecessor_work_package_id,successor_work_package_id,relationship,lag_days,status,rationale,source_reference,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(...dependency, actor.id, at, at));
 
+  // Demonstration source narratives remain visibly distinct from the Government
+  // synopsis used to frame analysis and AI-assisted alternative generation.
+  statements.push(db.prepare("UPDATE change_request SET source_description=summary,government_synopsis=CASE WHEN impact_summary IS NOT NULL AND trim(impact_summary)<>'' THEN impact_summary ELSE summary END,description_authority='reported' WHERE source_locator LIKE 'DEMO://%'"));
+  statements.push(db.prepare("UPDATE incumbent_objective SET source_description=summary,government_synopsis=NULL,description_authority='reported' WHERE source_locator LIKE 'DEMO://%'"));
   statements.push(audit(db, actor, "demonstration_workspace_enriched", "baseline_workspace", WORKSPACE_ID, { occurrences: rows.length, governedInfrastructure: true, infrastructureNodes: infrastructureNodes.length, releaseConfigurations: releaseConfigurations.length, managedTopology: true, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length, initiatives: 3, objectives: objectivePlan.length + supplementalObjectives.length, requirements: requirementPlan.length + supplementalRequirements.length, acceptanceCriteria: criterionPlan.length + supplementalCriteria.length }));
   await db.batch(statements);
   return { occurrences: rows.length, hostProfiles: seenHosts.size, deploymentProfiles: rows.filter((row) => row.productId).length, infrastructureNodes: infrastructureNodes.length, releaseConfigurations: releaseConfigurations.length, rationaleRecords: rationaleRecordCount, platforms: platformPlan.length, changeRequests: changePlan.length };

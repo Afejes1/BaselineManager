@@ -608,6 +608,9 @@ export const changeRequests = sqliteTable("change_request", {
   referenceStatus: text("reference_status").notNull().default("active"),
   lifecycleRationale: text("lifecycle_rationale"),
   summary: text("summary"),
+  sourceDescription: text("source_description"),
+  governmentSynopsis: text("government_synopsis"),
+  descriptionAuthority: text("description_authority").notNull().default("migrated_unclassified"),
   consequenceIfFunded: text("consequence_if_funded"),
   consequenceIfDeferred: text("consequence_if_deferred"),
   impactSummary: text("impact_summary"),
@@ -618,6 +621,7 @@ export const changeRequests = sqliteTable("change_request", {
   check("change_request_priority", sql`${t.governmentPriority} IN ('unranked','low','medium','high','critical')`),
   check("change_request_decision", sql`${t.decisionStatus} IN ('pending','fund','defer','decline')`),
   check("change_request_reference_status", sql`${t.referenceStatus} IN ('active','closed','superseded')`),
+  check("change_request_description_authority", sql`${t.descriptionAuthority} IN ('reported','analyst_transcribed','migrated_unclassified')`),
   uniqueIndex("change_request_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
   index("change_request_decision_ix").on(t.programId, t.decisionStatus, t.governmentPriority),
   index("change_request_release_ix").on(t.programId, t.requestedReleaseId),
@@ -747,6 +751,9 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   externalItemType: text("external_item_type").notNull().default("Objective"),
   title: text("title").notNull(),
   summary: text("summary"),
+  sourceDescription: text("source_description"),
+  governmentSynopsis: text("government_synopsis"),
+  descriptionAuthority: text("description_authority").notNull().default("migrated_unclassified"),
   technicalOwner: text("technical_owner"),
   status: text("status").notNull().default("proposed"),
   plannedStart: text("planned_start"),
@@ -759,6 +766,7 @@ export const incumbentObjectives = sqliteTable("incumbent_objective", {
   ...timestamps,
 }, (t) => [
   check("incumbent_objective_status", sql`${t.status} IN ('proposed','planned','in_progress','blocked','verification','complete','cancelled')`),
+  check("incumbent_objective_description_authority", sql`${t.descriptionAuthority} IN ('reported','analyst_transcribed','migrated_unclassified')`),
   uniqueIndex("incumbent_objective_external_uq").on(t.programId, t.externalSystem, t.externalIdentifier),
   index("incumbent_objective_request_ix").on(t.changeRequestId, t.status, t.plannedFinish),
 ]);
@@ -1619,6 +1627,33 @@ export const externalSourceRelations = sqliteTable("external_source_relation", {
   index("external_source_relation_target_ix").on(t.targetSubjectId, t.targetReference),
 ]);
 
+// Persisted GenAI output is an analysis draft, not source evidence, a
+// Government assessment, or an adjudicated decision. Revisions are immutable
+// model responses; review/application state is retained alongside each one.
+export const assistantSolutionGenerations = sqliteTable("assistant_solution_generation", {
+  id: text("id").primaryKey(),
+  programId: text("program_id").notNull().references(() => programs.id),
+  initiativeId: text("initiative_id").notNull().references(() => initiatives.id),
+  revision: integer("revision").notNull(),
+  discoveryMode: text("discovery_mode").notNull(),
+  promptText: text("prompt_text").notNull(),
+  candidateManifestJson: text("candidate_manifest_json").notNull(),
+  groundingFingerprint: text("grounding_fingerprint").notNull(),
+  modelName: text("model_name").notNull(),
+  responsePayloadJson: text("response_payload_json").notNull(),
+  reviewedPayloadJson: text("reviewed_payload_json"),
+  appliedPayloadJson: text("applied_payload_json"),
+  payloadHash: text("payload_hash").notNull(),
+  status: text("status").notNull().default("generated"),
+  createdByUserId: text("created_by_user_id").references(() => appUsers.id),
+  ...timestamps,
+}, (t) => [
+  check("assistant_solution_generation_mode", sql`${t.discoveryMode} IN ('portfolio','shortlist')`),
+  check("assistant_solution_generation_status", sql`${t.status} IN ('generated','reviewed','partially_applied','applied','dismissed','stale')`),
+  uniqueIndex("assistant_solution_generation_revision_uq").on(t.initiativeId, t.revision),
+  index("assistant_solution_generation_initiative_ix").on(t.initiativeId, t.createdAt),
+]);
+
 export const auditEvents = sqliteTable("audit_event", {
   id: text("id").primaryKey(), programId: text("program_id").notNull().references(() => programs.id), actorId: text("actor_id"), action: text("action").notNull(), entityKind: text("entity_kind").notNull(), entityId: text("entity_id").notNull(), beforePayload: text("before_payload"), afterPayload: text("after_payload"), createdAt: text("created_at").notNull(),
 }, (t) => [index("audit_entity_ix").on(t.programId, t.entityKind, t.entityId, t.createdAt), index("audit_actor_ix").on(t.programId, t.actorId, t.createdAt)]);
@@ -1713,5 +1748,6 @@ export const schema = {
   externalSourceObservations,
   externalSourceDeltas,
   externalSourceRelations,
+  assistantSolutionGenerations,
   auditEvents,
 };

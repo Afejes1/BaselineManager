@@ -26,7 +26,8 @@ function objectiveSummary(objective: Awaited<ReturnType<typeof initiativeDecisio
   return {
     id: objective.id, externalIdentifier: objective.externalIdentifier, title: short(objective.title, 220), status: objective.status,
     technicalOwner: short(objective.technicalOwner, 160), ...dates(objective), source: { system: short(objective.externalSystem, 120), locator: short(objective.sourceLocator, 240), asOf: objective.sourceAsOf || null },
-    summary: short(objective.summary, 500),
+    sourceDescription: { text: short(objective.sourceDescription ?? objective.summary, 1_200), authority: objective.descriptionAuthority },
+    governmentSynopsis: short(objective.governmentSynopsis, 900),
     estimates: take(objective.estimates, 4).map((estimate) => ({ source: estimate.estimateSource, romPointsLikely: estimate.romPointsLikely ?? null, hoursLikely: estimate.hoursLikely, costLikely: estimate.costLikely, asOf: estimate.asOf, confidence: estimate.confidence, basis: short(estimate.basis, 240), assumptions: short(estimate.assumptions, 240) })),
   };
 }
@@ -35,7 +36,7 @@ function requestSummary(request: Awaited<ReturnType<typeof changePortfolio>>["re
   return {
     id: request.id, externalIdentifier: request.externalIdentifier, title: short(request.title, 220), externalSystem: short(request.externalSystem, 120), externalStatus: short(request.externalStatus, 120), externalOwner: short(request.externalOwner, 120),
     requestedRelease: request.requestedReleaseName || null, governmentPriority: request.governmentPriority, decision: request.decisionStatus, decisionAuthority: short(request.decisionAuthority, 120),
-    source: { locator: short(request.sourceLocator, 240), asOf: request.sourceAsOf || null }, summary: short(request.summary, 500), impact: short(request.impactSummary, 500), fundedConsequence: short(request.consequenceIfFunded, 360), deferredConsequence: short(request.consequenceIfDeferred, 360), knockOnEffects: short(request.knockOnEffects, 360),
+    source: { locator: short(request.sourceLocator, 240), asOf: request.sourceAsOf || null }, sourceDescription: { text: short(request.sourceDescription ?? request.summary, 1_200), authority: request.descriptionAuthority }, governmentSynopsis: short(request.governmentSynopsis, 900), impact: short(request.impactSummary, 500), fundedConsequence: short(request.consequenceIfFunded, 360), deferredConsequence: short(request.consequenceIfDeferred, 360), knockOnEffects: short(request.knockOnEffects, 360),
   };
 }
 

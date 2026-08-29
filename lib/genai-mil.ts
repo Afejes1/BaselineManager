@@ -152,3 +152,38 @@ export async function askGenaiMil(input: GenaiMilEnvironment, request: Completio
     throw new GenaiMilError("unavailable", "GenAI.mil could not be reached. Check the approved workspace proxy, endpoint, and active API key, then try again. Your workspace data was not changed.");
   }
 }
+
+/** Structured solution engineering uses a nested, versioned JSON contract
+ * rather than the flat assistant action registry. It retains the identical
+ * endpoint allow-list, explicit-call boundary, TLS behavior, and timeout. */
+export async function askGenaiMilStructured(input: GenaiMilEnvironment, request: CompletionRequest, fetcher: FetchLike = fetch): Promise<{ content: string; model: string }> {
+  const readiness = genaiMilReadiness(input);
+  if (!readiness.configured) throw new GenaiMilError("not_configured", readiness.message);
+  const endpoint = approvedGenaiMilUrl(clean(input.GENAI_MIL_API_URL));
+  const model = clean(input.GENAI_MIL_MODEL);
+  const developmentBypass = readiness.tlsMode === "development-insecure";
+  try {
+    const response = await fetcher(developmentBypass ? localDevelopmentProxyUrl() : endpoint.toString(), {
+      method: "POST",
+      headers: developmentBypass
+        ? { "content-type": "application/json", "x-a2o-genai-proxy-token": clean(input.GENAI_MIL_LOCAL_PROXY_TOKEN) }
+        : { "content-type": "application/json", authorization: `Bearer ${clean(input.GENAI_MIL_API_KEY)}` },
+      body: JSON.stringify({ model, temperature: 0.15, max_tokens: request.maxTokens || 6_000, response_format: { type: "json_object" }, messages: [{ role: "system", content: request.system }, { role: "user", content: request.prompt }] }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      if ([401, 403, 429].includes(response.status)) throw new GenaiMilError("unavailable", "GenAI.mil did not accept the active API key. Re-enable or refresh the key, then try again.");
+      throw new GenaiMilError("unavailable", `GenAI.mil is unavailable (${response.status}). Your workspace data was not changed.`);
+    }
+    const content = contentFromPayload(payload);
+    if (!content) throw new GenaiMilError("invalid_response", "GenAI.mil returned an unsupported completion shape for the structured solution draft.");
+    return { content, model };
+  } catch (error) {
+    if (error instanceof GenaiMilError) throw error;
+    const message = error instanceof Error ? error.message : "Unknown connection error";
+    if (developmentBypass) throw new GenaiMilError("unavailable", "The local GenAI.mil development TLS proxy could not be reached. Stop the app, run npm run local:genai:tls-bypass, then use npm run local:start.");
+    if (/certificate|self.signed|unable to verify|tls|revocation/i.test(message)) throw new GenaiMilError("unavailable", "GenAI.mil could not validate the workspace certificate chain. Enroll the approved CA or use the explicit development-only TLS bypass.");
+    throw new GenaiMilError("unavailable", "GenAI.mil could not be reached. Check the approved workspace proxy, endpoint, and active API key, then try again. Your workspace data was not changed.");
+  }
+}

@@ -226,15 +226,15 @@ export class CanonicalImportMaterializer {
     if (matches.length === 1) {
       const current = matches[0];
       if (input.updateSourceFields !== false) {
-        this.statements.push(this.db.prepare("UPDATE incumbent_objective SET title=?,summary=?,technical_owner=?,status=?,planned_start=?,planned_finish=?,actual_start=?,actual_finish=?,source_locator=?,source_as_of=?,updated_at=? WHERE id=? AND program_id=?")
-          .bind(title, clean(input.summary) || null, clean(input.technicalOwner) || null, status, validDate(dates[0]) ? dates[0] : null, validDate(dates[1]) ? dates[1] : null, validDate(dates[2]) ? dates[2] : null, validDate(dates[3]) ? dates[3] : null, input.sourceLocator || null, input.sourceAsOf || null, this.at, current.id, PROGRAM_ID));
+        this.statements.push(this.db.prepare("UPDATE incumbent_objective SET title=?,summary=?,source_description=?,description_authority='reported',technical_owner=?,status=?,planned_start=?,planned_finish=?,actual_start=?,actual_finish=?,source_locator=?,source_as_of=?,updated_at=? WHERE id=? AND program_id=?")
+          .bind(title, clean(input.summary) || null, clean(input.summary) || null, clean(input.technicalOwner) || null, status, validDate(dates[0]) ? dates[0] : null, validDate(dates[1]) ? dates[1] : null, validDate(dates[2]) ? dates[2] : null, validDate(dates[3]) ? dates[3] : null, input.sourceLocator || null, input.sourceAsOf || null, this.at, current.id, PROGRAM_ID));
       }
       return { id: current.id, created: false };
     }
     const id = `objective-${crypto.randomUUID()}`;
     const row: ObjectiveRow = { id, external_system: externalSystem, external_identifier: externalIdentifier, change_request_id: input.primaryChangeRequestId || null };
-    this.statements.push(this.db.prepare("INSERT INTO incumbent_objective (id,program_id,change_request_id,external_system,external_identifier,external_item_type,title,summary,technical_owner,status,planned_start,planned_finish,actual_start,actual_finish,source_locator,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(id, PROGRAM_ID, row.change_request_id, externalSystem, externalIdentifier, "Objective", title, clean(input.summary) || null, clean(input.technicalOwner) || null, status, validDate(dates[0]) ? dates[0] : null, validDate(dates[1]) ? dates[1] : null, validDate(dates[2]) ? dates[2] : null, validDate(dates[3]) ? dates[3] : null, input.sourceLocator || null, input.sourceAsOf || null, this.actorId, this.at, this.at));
+    this.statements.push(this.db.prepare("INSERT INTO incumbent_objective (id,program_id,change_request_id,external_system,external_identifier,external_item_type,title,summary,source_description,description_authority,technical_owner,status,planned_start,planned_finish,actual_start,actual_finish,source_locator,source_as_of,created_by_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, PROGRAM_ID, row.change_request_id, externalSystem, externalIdentifier, "Objective", title, clean(input.summary) || null, clean(input.summary) || null, "reported", clean(input.technicalOwner) || null, status, validDate(dates[0]) ? dates[0] : null, validDate(dates[1]) ? dates[1] : null, validDate(dates[2]) ? dates[2] : null, validDate(dates[3]) ? dates[3] : null, input.sourceLocator || null, input.sourceAsOf || null, this.actorId, this.at, this.at));
     this.addObjective(row);
     return { id, created: true };
   }

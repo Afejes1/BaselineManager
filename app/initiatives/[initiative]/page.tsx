@@ -61,7 +61,7 @@ export default function InitiativeCasePage() {
       <a href="#problem">Problem</a><a href="#alternatives">Alternatives</a><a href="#decision-map">Decision map</a><a href="#option-plans">Option plans</a><a href="#comparison">Comparison</a><a href="#adjudication">Adjudication</a><a href="#evidence-history">Evidence &amp; history</a>
     </nav>
     <section className="kpi-grid" aria-label="Decision case state"><div className="kpi-card"><span>Lifecycle</span><strong>{readable(state.lifecycle)}</strong><small>Derived from case completeness and adjudication</small></div><div className="kpi-card"><span>Active alternatives</span><strong>{state.activeOptions.length}</strong><small>Status quo is mandatory</small></div><div className="kpi-card"><span>Analysis gaps</span><strong>{state.gaps.length}</strong><small>{state.gaps.slice(0, 2).join(" · ") || "No structural gaps"}</small></div><div className="kpi-card"><span>Disposition</span><strong>{readable(bundle.solutionDecision?.disposition || "pending")}</strong><small>{selected ? `Selected: ${selected}` : "No selected option"}</small></div></section>
-    <InitiativeSolutionEngineering workspace={solution.workspace} bundle={bundle} mutate={solution.mutate}/>
+    <InitiativeSolutionEngineering workspace={solution.workspace} bundle={bundle} mutate={solution.mutate} reload={solution.reload}/>
     <section id="evidence-history" className="initiative-evidence-history"><ObjectRecordsPanel context={context}/><AuditHistoryPanel kind="initiative" id={bundle.initiative.id} label={bundle.initiative.title}/></section>
   </DomainPageShell>;
 }

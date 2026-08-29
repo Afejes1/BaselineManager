@@ -4,6 +4,7 @@ export type ChangeRequestReferenceStatus = "active" | "closed" | "superseded";
 export type ChangeSubjectKind = "product" | "platform" | "configuration_node" | "occurrence" | "release" | "organization";
 export type ChangeAction = "add" | "remove" | "move" | "modify" | "assess";
 export type DependencyType = "requires" | "enables" | "blocks" | "conflicts" | "overlaps";
+export type NarrativeAuthority = "reported" | "analyst_transcribed" | "migrated_unclassified";
 
 export type ChangeRequestType = { id: string; code: string; label: string; description: string | null; active: boolean; sortOrder: number };
 export type ChangeRequest = {
@@ -28,6 +29,9 @@ export type ChangeRequest = {
   referenceStatus: ChangeRequestReferenceStatus;
   lifecycleRationale: string | null;
   summary: string | null;
+  sourceDescription: string | null;
+  governmentSynopsis: string | null;
+  descriptionAuthority: NarrativeAuthority;
   consequenceIfFunded: string | null;
   consequenceIfDeferred: string | null;
   impactSummary: string | null;

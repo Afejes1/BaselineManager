@@ -15,6 +15,7 @@ import { parseReportedRom } from "../lib/lm-objective-feed.js";
 import { milestoneLifecycleIssues, objectiveIdsLeavingInitiativeScope, objectiveLifecycleIssues, requirementHasAcceptancePath, requirementNeedsAcceptancePath } from "../lib/initiative-workflow-invariants.js";
 import { DEMONSTRATION_SOURCE_FILE_NAME, PROGRAM_HANDLING_MARKING, SYNTHETIC_HANDLING_MARKING, handlingMarkingFromSourceLineage, handlingMarkingFromSourceNames, sourceKeyIsSynthetic, sourceNameIsSynthetic, workspaceClassificationFromSourceLineage } from "../lib/output-handling.js";
 import { parseAssistantAnswer } from "../lib/assistant-model.js";
+import { ASSISTANT_SOLUTION_SCHEMA, parseAssistantSolutionDraft } from "../lib/assistant-solution-model.js";
 import { GenaiMilError, approvedGenaiMilUrl, askGenaiMil, genaiMilReadiness } from "../lib/genai-mil.js";
 import { buildDependencyBoard } from "../lib/dependency-board-model.js";
 import { buildInfrastructureMermaid } from "../lib/infrastructure-mermaid.js";
@@ -24,6 +25,41 @@ import { buildSolutionDecisionBasis, canonicalSolutionDecisionBasis, hashSolutio
 import { validateSolutionDecisionHistory } from "../lib/solution-decision-history.js";
 
 const read = (path: string) => readFileSync(path, "utf8");
+
+test("structured solution drafts preserve reviewable sources, WBS, dependencies, and judgments", () => {
+  const draft = parseAssistantSolutionDraft({
+    schema: ASSISTANT_SOLUTION_SCHEMA,
+    answer: "Two bounded alternatives are ready for Government review.",
+    insufficiencies: ["Acceptance authority is not identified."],
+    bundles: [{
+      key: "rehost",
+      target: "new_option",
+      title: "Containerize and rehost",
+      summary: "Rehost the selected workload without changing mission behavior.",
+      projectedOutcome: "Remove the unsupported operating-system dependency.",
+      changeRequests: [{ id: "cr-1", relationship: "delivers", rationale: "Funds the technical change." }],
+      objectives: [{ id: "objective-1", role: "required", rationale: "Implements the rehost." }],
+      steps: [{ key: "build", parentKey: null, wbsCode: "1.1", title: "Build container", planningStart: "2027-01-10", planningFinish: "2027-02-10", planningEffortHours: 120, references: [{ kind: "objective", sourceId: "objective-1", label: "Delivery objective" }] }],
+      dependencies: [],
+      knockOns: [{ classification: "risk", likelihood: "medium", impact: "high", confidence: "medium", narrative: "Regression scope may expand.", sourceReferences: ["OBJ-1"] }],
+      assessmentSuggestions: [{ criterion: "schedule_feasibility", rating: "mixed", confidence: "medium", narrative: "Source dates leave little integration margin.", sourceReferences: ["OBJ-1"] }],
+      gaps: ["Fielding window is not recorded."],
+    }],
+  });
+  assert.equal(draft.schema, ASSISTANT_SOLUTION_SCHEMA);
+  assert.equal(draft.bundles[0]?.steps[0]?.references[0]?.sourceId, "objective-1");
+  assert.equal(draft.bundles[0]?.knockOns[0]?.classification, "risk");
+  assert.equal(draft.bundles[0]?.assessmentSuggestions[0]?.rating, "mixed");
+  assert.equal(draft.insufficiencies[0], "Acceptance authority is not identified.");
+});
+
+test("structured solution drafts fail closed on missing bundles and duplicate status quo", () => {
+  assert.throws(() => parseAssistantSolutionDraft({ answer: "No usable structure", bundles: [] }), /no valid option bundle/i);
+  assert.throws(() => parseAssistantSolutionDraft({ bundles: [
+    { target: "status_quo", title: "Retain current state" },
+    { target: "status_quo", title: "Also retain current state" },
+  ] }), /only one status-quo/i);
+});
 
 test("CD SW parser finds staggered machine headers and materializes X placements", () => {
   const matrix = [
@@ -848,7 +884,7 @@ test("Initiatives are re-anchored to one continuous Solution Engineering workspa
   const api = read("app/api/solution-engineering/route.ts");
   const creation = read("lib/governance-server.ts");
   const transfer = read("lib/workspace-transfer.ts");
-  assert.match(page, /Problem<\/a>.*Alternatives<\/a>.*Decision map<\/a>.*Option plans<\/a>.*Comparison<\/a>.*Adjudication<\/a>/s);
+  assert.match(page, /Problem<\/a>[\s\S]*Alternatives<\/a>[\s\S]*Decision map<\/a>[\s\S]*Option plans<\/a>[\s\S]*Comparison<\/a>[\s\S]*Adjudication<\/a>/);
   assert.match(page, /Government problem\/outcome decision case/);
   assert.match(component, /Government planning overlay/);
   assert.match(component, /No dates inferred/);

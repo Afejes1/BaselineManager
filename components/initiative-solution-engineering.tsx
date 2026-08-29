@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "./app-link";
 import { objectiveRelatedChangeRequestIds, readable, type InitiativeDecisionBundle, type InitiativeDecisionWorkspace, type SolutionAssessmentCriterion, type SolutionOption, } from "../lib/initiative-decision-model";
 import { countUniqueRequirements, deriveSolutionOptionRollup, type NumericRangeRollup } from "../lib/solution-option-rollup";
+import { AssistantSolutionGenerator } from "./assistant-solution-generator";
 type Mutate = (action: string, payload: Record<string, unknown>) => Promise<unknown>;
 type Draft = Record<string, string>;
 const assessmentCriteria: Array<{
@@ -48,10 +49,11 @@ function likelyLabel(range: NumericRangeRollup, kind: "hours" | "cost" | "points
     const suffix = kind === "hours" ? " h" : kind === "points" ? " pts" : "";
     return `Likely ${format(value)}${suffix}${range.likelyCoverage.complete ? "" : ` known partial (${range.likelyCoverage.reported}/${range.likelyCoverage.eligible})`}`;
 }
-export function InitiativeSolutionEngineering({ workspace, bundle, mutate }: {
+export function InitiativeSolutionEngineering({ workspace, bundle, mutate, reload }: {
     workspace: InitiativeDecisionWorkspace;
     bundle: InitiativeDecisionBundle;
     mutate: Mutate;
+    reload?: () => Promise<void>;
 }) {
     const [selectedOptionId, setSelectedOptionId] = useState(bundle.solutionOptions.find((option) => option.status !== "retired")?.id || bundle.solutionOptions[0]?.id || "");
     const [optionDraft, setOptionDraft] = useState<Draft>(blankOption());
@@ -168,6 +170,8 @@ export function InitiativeSolutionEngineering({ workspace, bundle, mutate }: {
       </div>
       <button type="button" className="primary-button" disabled={busy} onClick={() => void saveCase()}>Save decision case</button>
     </section>
+
+    <AssistantSolutionGenerator workspace={workspace} bundle={bundle} onChanged={reload || (async () => undefined)}/>
 
     <div className="solution-option-layout">
       <section className="solution-option-register" id="alternatives">
